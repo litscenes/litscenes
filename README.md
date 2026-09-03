@@ -1,10 +1,12 @@
-
-
-https://github.com/user-attachments/assets/1c14cadd-f37f-41b1-963f-0f8a3be6f203
-
 # LitScenes
 
-An open-source A.I. first desktop app for macOS — for stories longer than a prompt.
+An open-source A.I. first desktop app for macOS — for stories longer than a prompt. With Aloha from [oahu.ai](https://oahu.ai)
+
+
+
+https://github.com/user-attachments/assets/0c371be6-f1b8-4f61-ad32-45be4e5ae80b
+
+
 
 
 ## A letter from the maker
@@ -17,7 +19,7 @@ I need to make a living, so paid services and products exist alongside this free
 
 If you find LitScenes useful, and it helps you drive a good story into the world, I would be delighted. That is the point.
 
-Kevin Riggen
+Kevin Riggen - kevin@oahu.ai
 
 ## Features
 
