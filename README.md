@@ -1,10 +1,11 @@
+
+
+https://github.com/user-attachments/assets/1c14cadd-f37f-41b1-963f-0f8a3be6f203
+
 # LitScenes
 
-An open-source, local-first filmmaking system for macOS — for stories longer than a prompt.
+An open-source A.I. first desktop app for macOS — for stories longer than a prompt.
 
-<!-- TODO before launch: add the 90-second demo video link and a Scenes
-     workbench screenshot here, with the caption:
-     "A 90-second demo: from a written goal to a rendered multi-scene story." -->
 
 ## A letter from the maker
 
