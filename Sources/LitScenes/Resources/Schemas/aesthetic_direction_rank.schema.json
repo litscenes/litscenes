@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/aesthetic_direction_rank.v0.3.schema.json",
+  "title": "AestheticDirectionRankResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "directions"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "litscenes.aesthetic_direction_rank.v0.3" },
+    "directions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "primary_aesthetic_id",
+          "supporting_aesthetic_ids",
+          "visual_summary",
+          "treatment_notes",
+          "best_applied_to",
+          "fit_reason",
+          "support_status",
+          "support_note",
+          "evidence",
+          "gaps",
+          "conflicts"
+        ],
+        "properties": {
+          "primary_aesthetic_id": { "type": "string" },
+          "supporting_aesthetic_ids": { "type": "array", "items": { "type": "string" }, "maxItems": 3 },
+          "visual_summary": { "type": "string" },
+          "treatment_notes": { "type": "array", "items": { "type": "string" }, "maxItems": 8 },
+          "best_applied_to": { "type": "array", "items": { "type": "string" }, "maxItems": 8 },
+          "fit_reason": { "type": "string" },
+          "support_status": {
+            "type": "string",
+            "enum": ["archive_supported", "goal_led_stretch", "conflict_risk", "exploratory"]
+          },
+          "support_note": { "type": "string" },
+          "evidence": { "type": "array", "items": { "type": "string" }, "maxItems": 8 },
+          "gaps": { "type": "array", "items": { "type": "string" }, "maxItems": 8 },
+          "conflicts": { "type": "array", "items": { "type": "string" }, "maxItems": 8 }
+        }
+      }
+    }
+  }
+}

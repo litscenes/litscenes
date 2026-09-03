@@ -1,0 +1,25 @@
+{
+  "schema_version": "screen_graph.openai_pricing.v0.1",
+  "updated_at": "2026-08-30",
+  "source": "https://developers.openai.com/api/docs/pricing",
+  "models": [
+    {
+      "model": "gpt-5.5",
+      "input_per_million": 5.0,
+      "cached_input_per_million": 0.5,
+      "output_per_million": 30.0
+    },
+    {
+      "model": "gpt-5",
+      "input_per_million": 1.25,
+      "cached_input_per_million": 0.125,
+      "output_per_million": 10.0
+    },
+    {
+      "model": "gpt-5-mini",
+      "input_per_million": 0.25,
+      "cached_input_per_million": 0.025,
+      "output_per_million": 2.0
+    }
+  ]
+}

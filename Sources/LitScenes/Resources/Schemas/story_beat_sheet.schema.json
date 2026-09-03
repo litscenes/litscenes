@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/story_beat_sheet.v0.1.schema.json",
+  "title": "StoryBeatSheet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project_id",
+    "beat_sheet_id",
+    "scope",
+    "title",
+    "summary",
+    "beats",
+    "generated_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "litscenes.story_beat_sheet.v0.1"
+    },
+    "project_id": { "type": "string" },
+    "beat_sheet_id": { "type": "string" },
+    "scope": {
+      "type": "string",
+      "enum": ["enabled_media"]
+    },
+    "title": { "type": "string" },
+    "summary": { "type": "string" },
+    "beats": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "beat_id",
+          "order",
+          "title",
+          "narrative_function",
+          "emotional_turn",
+          "visual_opportunity",
+          "support_status",
+          "meaning_refs",
+          "constraints"
+        ],
+        "properties": {
+          "beat_id": { "type": "string" },
+          "order": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 7
+          },
+          "title": { "type": "string" },
+          "narrative_function": { "type": "string" },
+          "emotional_turn": { "type": "string" },
+          "visual_opportunity": { "type": "string" },
+          "support_status": {
+            "type": "string",
+            "enum": ["unsupported", "weak", "possible", "strong"]
+          },
+          "meaning_refs": {
+            "type": "array",
+            "items": { "type": "string" },
+            "maxItems": 8
+          },
+          "constraints": {
+            "type": "array",
+            "items": { "type": "string" },
+            "maxItems": 8
+          }
+        }
+      }
+    },
+    "generated_at": { "type": "string" },
+    "updated_at": { "type": "string" }
+  }
+}

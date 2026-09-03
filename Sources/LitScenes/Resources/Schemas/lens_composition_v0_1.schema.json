@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/lens_composition.v0.1.schema.json",
+  "title": "LensCompositionResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "lens"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "litscenes.lens_composition.v0.1" },
+    "lens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title", "claim", "visual_summary",
+        "look", "palette", "materials", "motifs", "composition", "pacing_energy", "avoid",
+        "must_preserve", "must_avoid",
+        "scene_image_prompts", "character_image_prompts", "object_image_prompts",
+        "primary_style_index", "accent_style_indexes", "blend_profile", "style_rationale"
+      ],
+      "properties": {
+        "title": { "type": "string" },
+        "claim": { "type": "string" },
+        "visual_summary": { "type": "string" },
+        "look": { "type": "string" },
+        "palette": { "type": "array", "items": { "type": "string" }, "maxItems": 8 },
+        "materials": { "type": "array", "items": { "type": "string" }, "maxItems": 6 },
+        "motifs": { "type": "array", "items": { "type": "string" }, "maxItems": 8 },
+        "composition": { "type": "array", "items": { "type": "string" }, "maxItems": 6 },
+        "pacing_energy": { "type": "array", "items": { "type": "string" }, "maxItems": 4 },
+        "avoid": { "type": "array", "items": { "type": "string" }, "maxItems": 8 },
+        "must_preserve": { "type": "array", "items": { "type": "string" }, "maxItems": 6 },
+        "must_avoid": { "type": "array", "items": { "type": "string" }, "maxItems": 6 },
+        "scene_image_prompts": { "type": "array", "minItems": 2, "maxItems": 3, "items": { "type": "string" } },
+        "character_image_prompts": { "type": "array", "minItems": 2, "maxItems": 3, "items": { "type": "string" } },
+        "object_image_prompts": { "type": "array", "minItems": 2, "maxItems": 3, "items": { "type": "string" } },
+        "primary_style_index": { "type": "integer" },
+        "accent_style_indexes": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "type": "integer" }
+        },
+        "blend_profile": { "type": "string", "enum": ["dominant", "anchored", "ensemble"] },
+        "style_rationale": { "type": "string" }
+      }
+    }
+  }
+}

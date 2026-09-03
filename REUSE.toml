@@ -1,0 +1,49 @@
+version = 1
+
+[[annotations]]
+path = [
+    "Package.swift",
+    "Package.resolved",
+    "README.md",
+    "Sources/**",
+    "Tests/**",
+    "design/community/**",
+    "scripts/**",
+    "CONTRIBUTING.md",
+    "CHANGELOG.md",
+    ".gitignore",
+    ".github/**",
+    "LICENSING.md",
+    "NOTICE",
+    "SECURITY.md",
+    "TRADEMARKS.md",
+    "EXPORT-MANIFEST.sha256",
+    "UNRELEASED-PREVIEW",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Kevin Riggen"
+SPDX-License-Identifier = "AGPL-3.0-only"
+
+[[annotations]]
+path = ["Vendor/PhosphorSwift/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "Phosphor Icons contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = ["CLA.md", "THIRD_PARTY_LICENSES.md", "REUSE.toml"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Kevin Riggen"
+SPDX-License-Identifier = "AGPL-3.0-only"
+
+[[annotations]]
+path = ["Sources/LitScenes/Resources/meaning_choice_index.json"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Kevin Riggen; aesthetic term names derived from the Aesthetics Wiki (aesthetics.fandom.com), CC BY-SA 3.0"
+SPDX-License-Identifier = "AGPL-3.0-only AND CC-BY-SA-3.0"
+
+[[annotations]]
+path = ["CODE_OF_CONDUCT.md"]
+precedence = "override"
+SPDX-FileCopyrightText = "Contributor Covenant contributors"
+SPDX-License-Identifier = "CC-BY-4.0"

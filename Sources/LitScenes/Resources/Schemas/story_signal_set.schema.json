@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/story_signal_set.v0.2.schema.json",
+  "title": "StorySignalSet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project_id",
+    "signal_set_id",
+    "scope",
+    "summary",
+    "friendly_chips",
+    "motifs",
+    "tensions",
+    "moods",
+    "scene_forces",
+    "constraints",
+    "implications",
+    "evidence_media_ids",
+    "confidence0_to1",
+    "input_fingerprint",
+    "generated_at",
+    "updated_at",
+    "artifact_status",
+    "legacy_source_path",
+    "legacy_raw_scope"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "litscenes.story_signal_set.v0.2" },
+    "project_id": { "type": "string" },
+    "signal_set_id": { "type": "string" },
+    "scope": { "type": "string", "const": "enabled_media" },
+    "summary": { "type": "string" },
+    "friendly_chips": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+    "motifs": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+    "tensions": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+    "moods": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+    "scene_forces": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+    "constraints": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+    "implications": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+    "evidence_media_ids": { "type": "array", "maxItems": 64, "items": { "type": "string" } },
+    "confidence0_to1": { "type": "number", "minimum": 0, "maximum": 1 },
+    "input_fingerprint": { "$ref": "#/$defs/fingerprint" },
+    "generated_at": { "type": "string" },
+    "updated_at": { "type": "string" },
+    "artifact_status": { "type": "string", "enum": ["fresh", "stale", "missing", "legacy"] },
+    "legacy_source_path": { "type": "string" },
+    "legacy_raw_scope": { "type": "string" }
+  },
+  "$defs": {
+    "fingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "goal_version_id",
+        "goal_updated_at",
+        "aesthetic_brief_updated_at",
+        "chosen_recipe_id",
+        "chosen_recipe_version",
+        "story_world_hash",
+        "source_context_hash",
+        "enabled_media_hash",
+        "media_observations_hash",
+        "story_setup_hash",
+        "story_pattern_index_version"
+      ],
+      "properties": {
+        "goal_version_id": { "type": "string" },
+        "goal_updated_at": { "type": "string" },
+        "aesthetic_brief_updated_at": { "type": "string" },
+        "chosen_recipe_id": { "type": "string" },
+        "chosen_recipe_version": { "type": "string" },
+        "story_world_hash": { "type": "string" },
+        "source_context_hash": { "type": "string" },
+        "enabled_media_hash": { "type": "string" },
+        "media_observations_hash": { "type": "string" },
+        "story_setup_hash": { "type": "string" },
+        "story_pattern_index_version": { "type": "string" }
+      }
+    }
+  }
+}

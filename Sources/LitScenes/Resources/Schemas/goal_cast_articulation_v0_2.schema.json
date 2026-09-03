@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/goal_cast_articulation.v0.2.schema.json",
+  "title": "GoalCastArticulationResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "members",
+    "casting_note"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "litscenes.goal_cast_articulation.v0.2"
+    },
+    "members": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 4,
+      "items": {
+        "$ref": "#/$defs/member"
+      }
+    },
+    "casting_note": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "essence",
+        "public_function",
+        "desire",
+        "operating_rule",
+        "cost",
+        "signature",
+        "formative_pressure",
+        "strangeness",
+        "visual_description",
+        "changed_fields",
+        "reference_media_ids"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "essence": {
+          "type": "string"
+        },
+        "public_function": {
+          "type": "string"
+        },
+        "desire": {
+          "type": "string"
+        },
+        "operating_rule": {
+          "type": "string"
+        },
+        "cost": {
+          "type": "string"
+        },
+        "signature": {
+          "type": "string"
+        },
+        "formative_pressure": {
+          "type": "string"
+        },
+        "strangeness": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "visual_description": {
+          "type": "string"
+        },
+        "changed_fields": {
+          "type": "array",
+          "maxItems": 9,
+          "items": {
+            "type": "string",
+            "enum": [
+              "essence",
+              "public_function",
+              "desire",
+              "operating_rule",
+              "cost",
+              "signature",
+              "formative_pressure",
+              "strangeness",
+              "visual_description"
+            ]
+          }
+        },
+        "reference_media_ids": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

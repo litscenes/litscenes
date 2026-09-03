@@ -1,0 +1,6 @@
+.build/
+dist/
+.DS_Store
+credentials.env
+*.xcodeproj
+.swiftpm/

@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/project_goal_interview.v0.1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "assistant_message",
+    "brief",
+    "change_summary"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "litscenes.project_goal_interview_response.v0.2"
+    },
+    "assistant_message": {
+      "type": "string"
+    },
+    "brief": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "content_type",
+        "goal",
+        "audience",
+        "desired_action",
+        "distribution_context",
+        "success_criteria",
+        "story_promise",
+        "constraints",
+        "open_questions",
+        "aesthetic_intent",
+        "story_setup_suggestions",
+        "confidence_0_to_1"
+      ],
+      "properties": {
+        "content_type": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "brand",
+                "product",
+                "service",
+                "personal_story",
+                "documentary",
+                "narrative",
+                "ambient",
+                "experimental"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "goal": {
+          "type": "string"
+        },
+        "audience": {
+          "type": "string"
+        },
+        "desired_action": {
+          "type": "string"
+        },
+        "distribution_context": {
+          "type": "string"
+        },
+        "success_criteria": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8
+        },
+        "story_promise": {
+          "type": "string"
+        },
+        "constraints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8
+        },
+        "open_questions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 6
+        },
+        "aesthetic_intent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "emotional_targets",
+            "narrative_values",
+            "visual_mood",
+            "palette_hints",
+            "motif_hints",
+            "era_hints",
+            "energy",
+            "avoid",
+            "open_style_questions",
+            "confidence_0_to_1"
+          ],
+          "properties": {
+            "emotional_targets": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 8
+            },
+            "narrative_values": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 8
+            },
+            "visual_mood": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 8
+            },
+            "palette_hints": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 8
+            },
+            "motif_hints": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 8
+            },
+            "era_hints": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 6
+            },
+            "energy": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 6
+            },
+            "avoid": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 8
+            },
+            "open_style_questions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 4
+            },
+            "confidence_0_to_1": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        "story_setup_suggestions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pov_options",
+            "engine_options",
+            "ending_options"
+          ],
+          "properties": {
+            "pov_options": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/story_setup_option" },
+              "maxItems": 6
+            },
+            "engine_options": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/story_setup_option" },
+              "maxItems": 6
+            },
+            "ending_options": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/story_setup_option" },
+              "maxItems": 6
+            }
+          }
+        },
+        "confidence_0_to_1": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "change_summary": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "story_setup_option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "option_id",
+        "label",
+        "prompt_value",
+        "rationale"
+      ],
+      "properties": {
+        "option_id": { "type": "string" },
+        "label": { "type": "string" },
+        "prompt_value": { "type": "string" },
+        "rationale": { "type": "string" }
+      }
+    }
+  }
+}

@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.screen-graph/schemas/screen_graph_hydration_draft.v0.1.schema.json",
+  "title": "ScreenGraphHydrationDraft",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "observation_goal",
+    "subject",
+    "surfaces",
+    "evidence",
+    "claims",
+    "north_star_signals",
+    "seed_nodes",
+    "seed_edges",
+    "open_questions_for_user",
+    "uncertainty_notes",
+    "privacy_warnings",
+    "operator_summary"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "litscenes.screen_graph_hydration_draft.v0.1" },
+    "observation_goal": { "type": "string" },
+    "subject": { "$ref": "#/$defs/ObservedSubjectProfile" },
+    "surfaces": { "type": "array", "items": { "$ref": "#/$defs/ObservedScreenSurface" } },
+    "evidence": { "type": "array", "items": { "$ref": "#/$defs/ScreenEvidence" } },
+    "claims": { "type": "array", "items": { "$ref": "#/$defs/KnowledgeClaim" } },
+    "north_star_signals": { "$ref": "#/$defs/NorthStarSignals" },
+    "seed_nodes": { "type": "array", "items": { "$ref": "#/$defs/ScreenGraphSeedNode" } },
+    "seed_edges": { "type": "array", "items": { "$ref": "#/$defs/ScreenGraphSeedEdge" } },
+    "open_questions_for_user": { "type": "array", "items": { "type": "string" } },
+    "uncertainty_notes": { "type": "array", "items": { "type": "string" } },
+    "privacy_warnings": { "type": "array", "items": { "type": "string" } },
+    "operator_summary": { "type": "string" }
+  },
+  "$defs": {
+    "SubjectScope": {
+      "type": "string",
+      "enum": ["brand", "business", "self", "person", "project", "product", "event", "story_world", "unknown"]
+    },
+    "SurfaceKind": {
+      "type": "string",
+      "enum": ["website", "app", "document", "deck", "social_profile", "media_library", "canvas", "code_repo", "file_browser", "unknown"]
+    },
+    "EvidenceKind": {
+      "type": "string",
+      "enum": ["on_screen_text", "visible_ui", "visible_media", "url_or_window_metadata", "user_provided", "agent_inference"]
+    },
+    "PIIRisk": {
+      "type": "string",
+      "enum": ["none", "low", "medium", "high"]
+    },
+    "NodeKind": {
+      "type": "string",
+      "enum": ["symbol", "motif", "theme", "meaning_claim", "value_tension", "archetypal_situation", "transformation", "mood", "genre_force", "beat_function", "scene_role"]
+    },
+    "AbstractionLevel": {
+      "type": "string",
+      "enum": ["literal", "symbolic", "dramatic", "thematic", "mythic", "philosophical"]
+    },
+    "EdgeRelation": {
+      "type": "string",
+      "enum": ["specializes", "expresses", "symbolizes", "implies", "evokes", "contrasts_with", "inverts", "depends_on", "intensifies", "resolves", "corrupts", "foreshadows", "transforms_into", "is_example_of", "co_occurs_with"]
+    },
+    "ObservedScreenSurface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "app_or_site", "title_or_url", "capture_ref", "visible_text_summary", "literal_visual_summary", "pii_risk", "redaction_notes", "confidence_0_to_1"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/SurfaceKind" },
+        "app_or_site": { "type": "string" },
+        "title_or_url": { "type": "string" },
+        "capture_ref": { "type": "string" },
+        "visible_text_summary": { "type": "string" },
+        "literal_visual_summary": { "type": "string" },
+        "pii_risk": { "$ref": "#/$defs/PIIRisk" },
+        "redaction_notes": { "type": "array", "items": { "type": "string" } },
+        "confidence_0_to_1": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "ScreenEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["surface_index", "kind", "quote_or_summary", "where_seen", "confidence_0_to_1"],
+      "properties": {
+        "surface_index": { "type": ["integer", "null"], "minimum": 0 },
+        "kind": { "$ref": "#/$defs/EvidenceKind" },
+        "quote_or_summary": { "type": "string" },
+        "where_seen": { "type": "string" },
+        "confidence_0_to_1": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "ObservedSubjectProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "canonical_name", "aliases", "one_line_identity", "domains", "visible_offerings", "visible_audiences", "people_or_roles", "places", "channels", "visual_identity_signals", "voice_tone_signals", "evidence_indices"],
+      "properties": {
+        "scope": { "$ref": "#/$defs/SubjectScope" },
+        "canonical_name": { "type": "string" },
+        "aliases": { "type": "array", "items": { "type": "string" } },
+        "one_line_identity": { "type": "string" },
+        "domains": { "type": "array", "items": { "type": "string" } },
+        "visible_offerings": { "type": "array", "items": { "type": "string" } },
+        "visible_audiences": { "type": "array", "items": { "type": "string" } },
+        "people_or_roles": { "type": "array", "items": { "type": "string" } },
+        "places": { "type": "array", "items": { "type": "string" } },
+        "channels": { "type": "array", "items": { "type": "string" } },
+        "visual_identity_signals": { "type": "array", "items": { "type": "string" } },
+        "voice_tone_signals": { "type": "array", "items": { "type": "string" } },
+        "evidence_indices": { "type": "array", "items": { "type": "integer", "minimum": 0 } }
+      }
+    },
+    "KnowledgeClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim", "status", "evidence_indices", "confidence_0_to_1"],
+      "properties": {
+        "claim": { "type": "string" },
+        "status": { "type": "string", "enum": ["observed", "inferred", "user_provided", "needs_review"] },
+        "evidence_indices": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "confidence_0_to_1": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "NorthStarSignals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["literally_showing", "implied_archetypal_situations", "active_symbols", "value_tensions", "expressed_thoughts", "supported_themes", "transformation_potential", "likely_beat_functions", "negative_constraints"],
+      "properties": {
+        "literally_showing": { "type": "array", "items": { "type": "string" } },
+        "implied_archetypal_situations": { "type": "array", "items": { "type": "string" } },
+        "active_symbols": { "type": "array", "items": { "type": "string" } },
+        "value_tensions": { "type": "array", "items": { "type": "string" } },
+        "expressed_thoughts": { "type": "array", "items": { "type": "string" } },
+        "supported_themes": { "type": "array", "items": { "type": "string" } },
+        "transformation_potential": { "type": "array", "items": { "type": "string" } },
+        "likely_beat_functions": { "type": "array", "items": { "type": "string" } },
+        "negative_constraints": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "ScreenGraphSeedNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "abstraction_level", "name", "definition", "meaning_claim", "positive_expression", "negative_expression", "boundary", "aliases", "tags", "evidence_indices", "confidence_score", "reuse_score", "review_note"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/NodeKind" },
+        "abstraction_level": { "$ref": "#/$defs/AbstractionLevel" },
+        "name": { "type": "string" },
+        "definition": { "type": "string" },
+        "meaning_claim": { "type": "string" },
+        "positive_expression": { "type": "string" },
+        "negative_expression": { "type": "string" },
+        "boundary": { "type": "string" },
+        "aliases": { "type": "array", "items": { "type": "string" } },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "evidence_indices": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "confidence_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "reuse_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "review_note": { "type": "string" }
+      }
+    },
+    "ScreenGraphSeedEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_seed_node_index", "target_seed_node_index", "relation_type", "rationale", "evidence_indices", "confidence_score"],
+      "properties": {
+        "source_seed_node_index": { "type": "integer", "minimum": 0 },
+        "target_seed_node_index": { "type": "integer", "minimum": 0 },
+        "relation_type": { "$ref": "#/$defs/EdgeRelation" },
+        "rationale": { "type": "string" },
+        "evidence_indices": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "confidence_score": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    }
+  }
+}

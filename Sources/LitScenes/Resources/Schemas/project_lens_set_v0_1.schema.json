@@ -1,0 +1,517 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/project_lens_set.v0.1.schema.json",
+  "title": "ProjectLensSetDocument",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project_id",
+    "messages",
+    "lens_edit_messages",
+    "lens_body_versions",
+    "versions",
+    "active_version_id",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "litscenes.project_lens_set.v0.1" },
+    "project_id": { "type": "string" },
+    "messages": { "type": "array", "items": { "$ref": "#/$defs/message" } },
+    "lens_edit_messages": { "type": "array", "items": { "$ref": "#/$defs/lens_edit_message" } },
+    "lens_body_versions": { "type": "array", "items": { "$ref": "#/$defs/lens_body_version" } },
+    "versions": { "type": "array", "items": { "$ref": "#/$defs/version" } },
+    "active_version_id": { "type": "string" },
+    "updated_at": { "type": "string" }
+  },
+  "$defs": {
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_id",
+        "role",
+        "text",
+        "target_scratch_id",
+        "target_lens_id",
+        "media_ids",
+        "created_at"
+      ],
+      "properties": {
+        "message_id": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "assistant"] },
+        "text": { "type": "string" },
+        "target_scratch_id": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+        "target_lens_id": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+        "media_ids": { "type": "array", "items": { "type": "string" } },
+        "created_at": { "type": "string" }
+      }
+    },
+    "lens_edit_message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_id",
+        "lens_id",
+        "role",
+        "text",
+        "media_ids",
+        "created_at"
+      ],
+      "properties": {
+        "message_id": { "type": "string" },
+        "lens_id": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "assistant"] },
+        "text": { "type": "string" },
+        "media_ids": { "type": "array", "items": { "type": "string" } },
+        "created_at": { "type": "string" }
+      }
+    },
+    "lens_body_version": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version_id",
+        "lens_id",
+        "source_lens_set_version_id",
+        "turn_index",
+        "change_summary",
+        "model",
+        "created_at",
+        "content_fingerprint",
+        "is_active"
+      ],
+      "properties": {
+        "version_id": { "type": "string" },
+        "lens_id": { "type": "string" },
+        "source_lens_set_version_id": { "type": "string" },
+        "turn_index": { "type": "integer", "minimum": 0 },
+        "change_summary": { "type": "string" },
+        "model": { "type": "string" },
+        "created_at": { "type": "string" },
+        "content_fingerprint": { "type": "string" },
+        "is_active": { "type": "boolean" }
+      }
+    },
+    "version": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version_id",
+        "turn_index",
+        "lenses",
+        "scratch_drafts",
+        "selected_lens_id",
+        "selected_scratch_id",
+        "change_summary",
+        "created_at",
+        "model"
+      ],
+      "properties": {
+        "version_id": { "type": "string" },
+        "turn_index": { "type": "integer", "minimum": 0 },
+        "lenses": { "type": "array", "items": { "$ref": "#/$defs/lens" } },
+        "scratch_drafts": { "type": "array", "items": { "$ref": "#/$defs/scratch_draft" } },
+        "selected_lens_id": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+        "selected_scratch_id": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+        "change_summary": { "type": "string" },
+        "created_at": { "type": "string" },
+        "model": { "type": "string" }
+      }
+    },
+    "scratch_draft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scratch_id", "body", "created_at", "updated_at"],
+      "properties": {
+        "scratch_id": { "type": "string" },
+        "body": { "$ref": "#/$defs/body" },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      }
+    },
+    "lens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lens_id",
+        "status",
+        "enabled",
+        "body",
+        "relation_summary",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "lens_id": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "ready"] },
+        "enabled": { "type": "boolean" },
+        "body": { "$ref": "#/$defs/body" },
+        "hero_image": {
+          "anyOf": [
+            { "$ref": "#/$defs/hero_image" },
+            { "type": "null" }
+          ]
+        },
+        "hero_images": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/hero_image" }
+        },
+        "relation_summary": { "$ref": "#/$defs/relation_summary" },
+        "ready_readiness_issues": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "missing_title",
+              "missing_claim",
+              "missing_visual_hydration",
+              "missing_resolved_look",
+              "missing_resolved_production_language",
+              "source_taxonomy_in_resolved_language",
+              "incomplete_resolved_phrase",
+              "positive_requirement_in_must_avoid",
+              "contradictory_preserve_avoid",
+              "provenance_phrase_in_production_field",
+              "composition_missing_guidance",
+              "raw_scraped_prose_in_production_field",
+              "no_must_avoid",
+              "no_must_preserve",
+              "no_style_ingredients",
+              "no_reference_media",
+              "open_questions_remain",
+              "thin_visual_summary",
+              "no_palette_or_motif",
+              "legacy_resolved_fallback",
+              "no_pacing_guidance"
+            ]
+          }
+        },
+        "generation_run_id": { "type": "string" },
+        "generation_phase": { "type": "string" },
+        "generation_error": { "type": "string" },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      }
+    },
+    "hero_image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image_id",
+        "image_path",
+        "prompt",
+        "status",
+        "request_id",
+        "source_route_key",
+        "source_recipe_id",
+        "source_recipe_version",
+        "source_aesthetic_ids",
+        "generated_at",
+        "updated_at"
+      ],
+      "properties": {
+        "image_id": { "type": "string" },
+        "image_index": { "type": "integer", "minimum": 0 },
+        "label": { "type": "string" },
+        "provider": { "type": "string" },
+        "model": { "type": "string" },
+        "image_path": { "type": "string" },
+        "prompt": { "type": "string" },
+        "status": { "type": "string" },
+        "request_id": { "type": "string" },
+        "trace_id": { "type": "string" },
+        "error_message": { "type": "string" },
+        "source_route_key": { "type": "string" },
+        "source_recipe_id": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+        "source_recipe_version": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+        "source_aesthetic_ids": { "type": "array", "items": { "type": "string" } },
+        "subject": { "$ref": "#/$defs/generated_subject" },
+        "style_authorities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/style_authority" }
+        },
+        "render_recipe": { "$ref": "#/$defs/render_recipe" },
+        "source_dependencies": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/source_dependency" }
+        },
+        "motion_artifact": {
+          "anyOf": [
+            { "$ref": "#/$defs/motion_artifact" },
+            { "type": "null" }
+          ]
+        },
+        "generated_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      }
+    },
+    "motion_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "model",
+        "status",
+        "video_path",
+        "prompt",
+        "request_id",
+        "trace_id",
+        "error_message",
+        "generated_at",
+        "updated_at"
+      ],
+      "properties": {
+        "provider": { "type": "string" },
+        "model": { "type": "string" },
+        "status": { "type": "string" },
+        "video_path": { "type": "string" },
+        "prompt": { "type": "string" },
+        "request_id": { "type": "string" },
+        "trace_id": { "type": "string" },
+        "error_message": { "type": "string" },
+        "generated_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      }
+    },
+    "generated_subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "description"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["scene", "character", "object"] },
+        "description": { "type": "string" },
+        "canon_role_candidate": {
+          "anyOf": [
+            { "type": "string", "enum": ["plate", "actor", "prop", "style", "shot"] },
+            { "type": "null" }
+          ]
+        },
+        "stage_eligibility": { "$ref": "#/$defs/stage_eligibility" }
+      }
+    },
+    "stage_eligibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "can_become_plate",
+        "can_become_actor",
+        "can_become_prop",
+        "can_become_style_authority"
+      ],
+      "properties": {
+        "can_become_plate": { "type": "boolean" },
+        "can_become_actor": { "type": "boolean" },
+        "can_become_prop": { "type": "boolean" },
+        "can_become_style_authority": { "type": "boolean" }
+      }
+    },
+    "style_authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority_id",
+        "role",
+        "source",
+        "reference_id",
+        "source_reference_id",
+        "title",
+        "image_url",
+        "image_path",
+        "one_line_style_summary"
+      ],
+      "properties": {
+        "authority_id": { "type": "string" },
+        "role": { "type": "string" },
+        "source": { "type": "string", "enum": ["sref", "style_catalog", "uploaded_reference", "unknown"] },
+        "reference_id": { "type": "string" },
+        "source_reference_id": { "type": "string" },
+        "title": { "type": "string" },
+        "image_url": { "type": "string" },
+        "image_path": { "type": "string" },
+        "one_line_style_summary": { "type": "string" },
+        "weight": { "anyOf": [{ "type": "integer", "minimum": 0, "maximum": 100 }, { "type": "null" }] }
+      }
+    },
+    "render_recipe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "provider", "model", "parameters", "capabilities"],
+      "properties": {
+        "label": { "type": "string" },
+        "provider": { "type": "string" },
+        "model": { "type": "string" },
+        "stack_id": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+        "parameters": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/render_recipe_parameter" }
+        },
+        "capabilities": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "render_recipe_parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "value", "value_type"],
+      "properties": {
+        "key": { "type": "string" },
+        "value": { "type": "string" },
+        "value_type": { "type": "string" }
+      }
+    },
+    "source_dependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dependency_id", "kind", "source_id", "required", "role", "label", "image_path_or_url"],
+      "properties": {
+        "dependency_id": { "type": "string" },
+        "kind": { "type": "string" },
+        "source_id": { "type": "string" },
+        "required": { "type": "boolean" },
+        "role": { "type": "string" },
+        "label": { "type": "string" },
+        "image_path_or_url": { "type": "string" }
+      }
+    },
+    "relation_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "storyline_count",
+        "beat_board_count",
+        "project_story_count",
+        "scene_workspace_count",
+        "scene_asset_count",
+        "audio_track_count",
+        "updated_at"
+      ],
+      "properties": {
+        "storyline_count": { "type": "integer", "minimum": 0 },
+        "beat_board_count": { "type": "integer", "minimum": 0 },
+        "project_story_count": { "type": "integer", "minimum": 0 },
+        "scene_workspace_count": { "type": "integer", "minimum": 0 },
+        "scene_asset_count": { "type": "integer", "minimum": 0 },
+        "audio_track_count": { "type": "integer", "minimum": 0 },
+        "updated_at": { "type": "string" }
+      }
+    },
+    "body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "claim",
+        "user_notes",
+        "visual_summary",
+        "color_palette",
+        "style_ingredients",
+        "palette_terms",
+        "motif_terms",
+        "texture_material_terms",
+        "composition_terms",
+        "pacing_energy_terms",
+        "must_preserve",
+        "must_avoid",
+        "reference_media_ids",
+        "open_questions",
+        "readiness_summary",
+        "derived_virtues"
+      ],
+      "properties": {
+        "title": { "type": "string" },
+        "claim": { "type": "string" },
+        "user_notes": { "type": "string" },
+        "visual_summary": { "type": "string" },
+        "resolved_visual_language": { "$ref": "#/$defs/resolved_visual_language" },
+        "color_palette": { "type": "array", "maxItems": 6, "items": { "$ref": "#/$defs/color_swatch" } },
+        "style_ingredients": { "type": "array", "items": { "$ref": "#/$defs/style_ingredient" } },
+        "palette_terms": { "type": "array", "items": { "type": "string" } },
+        "motif_terms": { "type": "array", "items": { "type": "string" } },
+        "texture_material_terms": { "type": "array", "items": { "type": "string" } },
+        "composition_terms": { "type": "array", "items": { "type": "string" } },
+        "pacing_energy_terms": { "type": "array", "items": { "type": "string" } },
+        "must_preserve": { "type": "array", "items": { "type": "string" } },
+        "must_avoid": { "type": "array", "items": { "type": "string" } },
+        "reference_media_ids": { "type": "array", "items": { "type": "string" } },
+        "open_questions": { "type": "array", "items": { "type": "string" } },
+        "readiness_summary": { "type": "string" },
+        "derived_virtues": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "color_swatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "hex", "role", "note"],
+      "properties": {
+        "name": { "type": "string" },
+        "hex": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "role": { "type": "string" },
+        "note": { "type": "string" }
+      }
+    },
+    "resolved_visual_language": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "look",
+        "palette",
+        "materials",
+        "product_treatment",
+        "motifs",
+        "composition",
+        "pacing_energy",
+        "avoid"
+      ],
+      "properties": {
+        "look": { "type": "string" },
+        "palette": { "type": "array", "items": { "type": "string" } },
+        "materials": { "type": "array", "items": { "type": "string" } },
+        "product_treatment": { "type": "array", "items": { "type": "string" } },
+        "motifs": { "type": "array", "items": { "type": "string" } },
+        "composition": { "type": "array", "items": { "type": "string" } },
+        "pacing_energy": { "type": "array", "items": { "type": "string" } },
+        "avoid": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "style_ingredient": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ingredient_id",
+        "order",
+        "enabled",
+        "title",
+        "role",
+        "narrative_use",
+        "presentation_use",
+        "notes",
+        "palette_terms",
+        "motif_terms",
+        "avoid_terms",
+        "reference_aesthetic_ids",
+        "source_recipe_id",
+        "source_recipe_version",
+        "source_reference_ids",
+        "updated_at"
+      ],
+      "properties": {
+        "ingredient_id": { "type": "string" },
+        "order": { "type": "integer", "minimum": 0 },
+        "enabled": { "type": "boolean" },
+        "title": { "type": "string" },
+        "role": { "type": "string" },
+        "narrative_use": { "type": "string" },
+        "presentation_use": { "type": "string" },
+        "notes": { "type": "string" },
+        "palette_terms": { "type": "array", "items": { "type": "string" } },
+        "motif_terms": { "type": "array", "items": { "type": "string" } },
+        "avoid_terms": { "type": "array", "items": { "type": "string" } },
+        "reference_aesthetic_ids": { "type": "array", "items": { "type": "string" } },
+        "source_recipe_id": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+        "source_recipe_version": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+        "source_reference_ids": { "type": "array", "items": { "type": "string" } },
+        "updated_at": { "type": "string" }
+      }
+    }
+  }
+}

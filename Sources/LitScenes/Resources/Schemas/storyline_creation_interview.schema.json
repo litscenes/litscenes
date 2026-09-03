@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/storyline_creation_interview.v0.1.schema.json",
+  "title": "StorylineCreationInterviewResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "assistant_message",
+    "draft",
+    "change_summary"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "litscenes.storyline_creation_interview_response.v0.1"
+    },
+    "assistant_message": {
+      "type": "string"
+    },
+    "draft": {
+      "$ref": "#/$defs/draft"
+    },
+    "change_summary": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "draft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "storyline_title",
+        "storyline_intent",
+        "readiness_summary",
+        "open_questions",
+        "is_ready_to_generate",
+        "confidence_0_to_1"
+      ],
+      "properties": {
+        "storyline_title": {
+          "type": "string"
+        },
+        "storyline_intent": {
+          "type": "string"
+        },
+        "readiness_summary": {
+          "type": "string"
+        },
+        "open_questions": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "string"
+          }
+        },
+        "is_ready_to_generate": {
+          "type": "boolean"
+        },
+        "confidence_0_to_1": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    }
+  }
+}

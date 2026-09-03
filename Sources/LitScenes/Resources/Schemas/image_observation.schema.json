@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/image_observation.v0.2.schema.json",
+  "title": "ImageObservationResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "media_id",
+    "frame_id",
+    "source_path",
+    "image_hash",
+    "observation_provider",
+    "model",
+    "prompt_version",
+    "created_at",
+    "plain_caption",
+    "literal_description",
+    "objects",
+    "object_descriptions",
+    "people_visible",
+    "people_count_estimate",
+    "people_roles_visible",
+    "activities",
+    "setting",
+    "lighting",
+    "mood",
+    "palette_terms",
+    "place_cues",
+    "era_cues",
+    "motif_cues",
+    "energy_cues",
+    "composition_cues",
+    "materials",
+    "visual_specificity",
+    "visible_text",
+    "logos_brands_organizations",
+    "flags_symbols_signage",
+    "event_context",
+    "media_role",
+    "media_role_assessment",
+    "source_kind_notes",
+    "domain_tags",
+    "local_context_tags",
+    "technical_context_tags",
+    "story_observation_tags",
+    "possible_meanings",
+    "negative_constraints",
+    "uncertainties",
+    "human_review",
+    "detail_pass_used",
+    "detail_pass_reason",
+    "detail_observation_notes",
+    "object_description_pass_used",
+    "object_description_prompt_version",
+    "user_provided_context",
+    "source_image_path",
+    "source_image_sha256",
+    "vision_input_kind",
+    "vision_input_path",
+    "vision_input_sha256",
+    "vision_input_width",
+    "vision_input_height",
+    "vision_input_bytes",
+    "vision_thumbnail_profile",
+    "fullres_vision_allowed",
+    "thumbnail_policy_version",
+    "detail_vision_input_kind",
+    "detail_vision_input_path",
+    "detail_vision_input_sha256",
+    "detail_vision_input_width",
+    "detail_vision_input_height",
+    "detail_vision_input_bytes",
+    "detail_vision_thumbnail_profile"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "litscenes.image_observation.v0.2" },
+    "media_id": { "type": "string" },
+    "frame_id": { "type": "string" },
+    "source_path": { "type": "string" },
+    "image_hash": { "type": "string" },
+    "observation_provider": { "type": "string" },
+    "model": { "type": "string" },
+    "prompt_version": { "type": "string" },
+    "created_at": { "type": "string" },
+    "plain_caption": { "type": "string" },
+    "literal_description": { "type": "string" },
+    "objects": { "type": "array", "items": { "type": "string" }, "maxItems": 24 },
+    "object_descriptions": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["accurate_title", "thorough_description"],
+        "properties": {
+          "accurate_title": { "type": "string" },
+          "thorough_description": { "type": "string" }
+        }
+      }
+    },
+    "people_visible": { "type": "boolean" },
+    "people_count_estimate": { "type": ["integer", "null"], "minimum": 0 },
+    "people_roles_visible": { "type": "array", "items": { "type": "string" }, "maxItems": 12 },
+    "activities": { "type": "array", "items": { "type": "string" }, "maxItems": 16 },
+    "setting": { "type": "string" },
+    "lighting": { "type": "string" },
+    "mood": { "type": "array", "items": { "type": "string" }, "maxItems": 12 },
+    "palette_terms": { "type": "array", "items": { "type": "string" }, "maxItems": 12 },
+    "place_cues": { "type": "array", "items": { "type": "string" }, "maxItems": 12 },
+    "era_cues": { "type": "array", "items": { "type": "string" }, "maxItems": 12 },
+    "motif_cues": { "type": "array", "items": { "type": "string" }, "maxItems": 12 },
+    "energy_cues": { "type": "array", "items": { "type": "string" }, "maxItems": 12 },
+    "composition_cues": { "type": "array", "items": { "type": "string" }, "maxItems": 12 },
+    "materials": { "type": "array", "items": { "type": "string" }, "maxItems": 16 },
+    "visual_specificity": { "type": "array", "items": { "type": "string" }, "maxItems": 16 },
+    "visible_text": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text", "where_seen", "confidence_0_to_1"],
+        "properties": {
+          "text": { "type": "string" },
+          "where_seen": { "type": "string" },
+          "confidence_0_to_1": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "logos_brands_organizations": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "kind", "visible_evidence", "confidence_0_to_1"],
+        "properties": {
+          "name": { "type": "string" },
+          "kind": { "type": "string", "enum": ["brand", "organization", "team", "school", "government", "product", "unknown"] },
+          "visible_evidence": { "type": "string" },
+          "confidence_0_to_1": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "flags_symbols_signage": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "kind", "visible_evidence", "confidence_0_to_1"],
+        "properties": {
+          "name": { "type": "string" },
+          "kind": { "type": "string", "enum": ["flag", "symbol", "signage", "uniform", "medal", "poster", "other"] },
+          "visible_evidence": { "type": "string" },
+          "confidence_0_to_1": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "event_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_type", "event_name_guess", "competition_or_program_guess", "why", "confidence_0_to_1"],
+      "properties": {
+        "event_type": { "type": "string", "enum": ["competition", "performance", "ceremony", "meeting", "travel", "family_gathering", "workshop", "classroom", "sports", "everyday", "none", "unknown"] },
+        "event_name_guess": { "type": "string" },
+        "competition_or_program_guess": { "type": "string" },
+        "why": { "type": "string" },
+        "confidence_0_to_1": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "media_role": { "type": "string", "enum": ["primary_subject", "supporting_context", "background_texture", "screen_mediated", "reference_image", "generated_or_staged_reference", "animal_domestic", "robotics_competition", "unknown"] },
+    "media_role_assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["media_role", "why", "confidence_0_to_1"],
+      "properties": {
+        "media_role": { "type": "string", "enum": ["primary_subject", "supporting_context", "background_texture", "screen_mediated", "reference_image", "generated_or_staged_reference", "animal_domestic", "robotics_competition", "unknown"] },
+        "why": { "type": "string" },
+        "confidence_0_to_1": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "source_kind_notes": { "type": "string" },
+    "domain_tags": { "type": "array", "items": { "type": "string" }, "maxItems": 16 },
+    "local_context_tags": { "type": "array", "items": { "type": "string" }, "maxItems": 16 },
+    "technical_context_tags": { "type": "array", "items": { "type": "string" }, "maxItems": 16 },
+    "story_observation_tags": { "type": "array", "items": { "type": "string" }, "maxItems": 16 },
+    "possible_meanings": { "type": "array", "items": { "type": "string" }, "maxItems": 16 },
+    "negative_constraints": { "type": "array", "items": { "type": "string" }, "maxItems": 16 },
+    "uncertainties": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field", "question", "why_uncertain"],
+        "properties": {
+          "field": { "type": "string" },
+          "question": { "type": "string" },
+          "why_uncertain": { "type": "string" }
+        }
+      }
+    },
+    "human_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["needs_review", "review_reason", "suggested_question"],
+      "properties": {
+        "needs_review": { "type": "boolean" },
+        "review_reason": { "type": "string" },
+        "suggested_question": { "type": "string" }
+      }
+    },
+    "detail_pass_used": { "type": "boolean" },
+    "detail_pass_reason": { "type": "string" },
+    "detail_observation_notes": { "type": "string" },
+    "object_description_pass_used": { "type": "boolean" },
+    "object_description_prompt_version": { "type": "string" },
+    "user_provided_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["known_context", "domain_tags", "preferred_media_role", "notes"],
+      "properties": {
+        "known_context": { "type": "string" },
+        "domain_tags": { "type": "array", "items": { "type": "string" }, "maxItems": 12 },
+        "preferred_media_role": { "type": "string" },
+        "notes": { "type": "string" }
+      }
+    },
+    "source_image_path": { "type": "string" },
+    "source_image_sha256": { "type": "string" },
+    "vision_input_kind": { "type": "string", "enum": ["thumbnail_base", "thumbnail_detail", "fullres", "legacy_prepared_thumbnail", ""] },
+    "vision_input_path": { "type": "string" },
+    "vision_input_sha256": { "type": "string" },
+    "vision_input_width": { "type": "integer", "minimum": 0 },
+    "vision_input_height": { "type": "integer", "minimum": 0 },
+    "vision_input_bytes": { "type": "integer", "minimum": 0 },
+    "vision_thumbnail_profile": { "type": "string", "enum": ["base", "detail", "fullres", "legacy_prepared", ""] },
+    "fullres_vision_allowed": { "type": "boolean" },
+    "thumbnail_policy_version": { "type": "string" },
+    "detail_vision_input_kind": { "type": "string", "enum": ["thumbnail_base", "thumbnail_detail", "fullres", "legacy_prepared_thumbnail", ""] },
+    "detail_vision_input_path": { "type": "string" },
+    "detail_vision_input_sha256": { "type": "string" },
+    "detail_vision_input_width": { "type": "integer", "minimum": 0 },
+    "detail_vision_input_height": { "type": "integer", "minimum": 0 },
+    "detail_vision_input_bytes": { "type": "integer", "minimum": 0 },
+    "detail_vision_thumbnail_profile": { "type": "string", "enum": ["base", "detail", "fullres", "legacy_prepared", ""] }
+  }
+}

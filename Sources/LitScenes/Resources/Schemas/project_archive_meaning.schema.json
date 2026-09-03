@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/project_archive_meaning.v0.1.schema.json",
+  "title": "ProjectArchiveMeaningGraph",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project_id",
+    "scope",
+    "summary",
+    "motifs",
+    "tensions",
+    "moods",
+    "scene_forces",
+    "constraints",
+    "implications",
+    "evidence_media_ids",
+    "confidence_0_to_1",
+    "generated_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "litscenes.project_archive_meaning.v0.1"
+    },
+    "project_id": { "type": "string" },
+    "scope": {
+      "type": "string",
+      "enum": ["enabled_media"]
+    },
+    "summary": { "type": "string" },
+    "motifs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 12
+    },
+    "tensions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 12
+    },
+    "moods": {
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 12
+    },
+    "scene_forces": {
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 12
+    },
+    "constraints": {
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 12
+    },
+    "implications": {
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 12
+    },
+    "evidence_media_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 64
+    },
+    "confidence_0_to_1": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "generated_at": { "type": "string" },
+    "updated_at": { "type": "string" }
+  }
+}

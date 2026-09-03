@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/aesthetic_direction_shortlist.v0.1.schema.json",
+  "title": "AestheticDirectionShortlistResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "candidates"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "litscenes.aesthetic_direction_shortlist.v0.1" },
+    "candidates": {
+      "type": "array",
+      "minItems": 20,
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["aesthetic_id", "rationale"],
+        "properties": {
+          "aesthetic_id": { "type": "string" },
+          "rationale": { "type": "string" }
+        }
+      }
+    }
+  }
+}

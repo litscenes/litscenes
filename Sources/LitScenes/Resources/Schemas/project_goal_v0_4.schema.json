@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/project_goal.v0.4.schema.json",
+  "title": "ProjectGoalDocumentV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project_id",
+    "messages",
+    "versions",
+    "active_version_id",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "litscenes.project_goal.v0.4" },
+    "project_id": { "type": "string" },
+    "messages": { "type": "array", "items": { "$ref": "#/$defs/message" } },
+    "versions": { "type": "array", "items": { "$ref": "#/$defs/version" } },
+    "active_version_id": { "type": "string" },
+    "updated_at": { "type": "string" }
+  },
+  "$defs": {
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["message_id", "role", "text", "media_ids", "created_at"],
+      "properties": {
+        "message_id": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "assistant"] },
+        "text": { "type": "string" },
+        "media_ids": { "type": "array", "items": { "type": "string" } },
+        "created_at": { "type": "string" }
+      }
+    },
+    "version": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version_id", "turn_index", "brief", "change_summary", "created_at", "model"],
+      "properties": {
+        "version_id": { "type": "string" },
+        "turn_index": { "type": "integer", "minimum": 0 },
+        "brief": { "$ref": "#/$defs/brief" },
+        "change_summary": { "type": "string" },
+        "created_at": { "type": "string" },
+        "model": { "type": "string" },
+        "validation_warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "brief": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "content_type",
+        "goal",
+        "audience",
+        "desired_response",
+        "viewer_experience",
+        "moodboard_articulation",
+        "success_criteria",
+        "constraints",
+        "open_questions",
+        "lens_seed_summary",
+        "lens_seed_terms"
+      ],
+      "properties": {
+        "content_type": {
+          "anyOf": [
+            { "type": "string", "enum": ["brand", "product", "service", "personal_story", "documentary", "narrative", "ambient", "experimental"] },
+            { "type": "null" }
+          ]
+        },
+        "goal": { "type": "string" },
+        "audience": { "type": "string" },
+        "desired_response": { "type": "string" },
+        "viewer_experience": { "type": "string" },
+        "moodboard_articulation": { "type": "string" },
+        "success_criteria": { "type": "array", "maxItems": 8, "items": { "type": "string" } },
+        "constraints": { "type": "array", "maxItems": 8, "items": { "type": "string" } },
+        "required_entities": { "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/required_entity" } },
+        "open_questions": { "type": "array", "maxItems": 8, "items": { "type": "string" } },
+        "lens_seed_summary": { "type": "string" },
+        "lens_seed_terms": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+        "meaning_node_refs": { "type": "array", "maxItems": 18, "items": { "$ref": "#/$defs/meaning_node_ref" } },
+        "aesthetic_term_refs": { "type": "array", "maxItems": 24, "items": { "$ref": "#/$defs/aesthetic_term_ref" } },
+        "style_term_refs": { "type": "array", "maxItems": 24, "items": { "$ref": "#/$defs/style_term_ref" } }
+      }
+    },
+    "required_entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "role", "required"],
+      "properties": {
+        "name": { "type": "string", "maxLength": 120 },
+        "role": { "type": "string", "maxLength": 120 },
+        "required": { "type": "boolean", "const": true }
+      }
+    },
+    "meaning_node_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slug", "kind", "name", "role", "source", "evidence"],
+      "properties": {
+        "slug": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "symbol",
+            "motif",
+            "theme",
+            "meaning_claim",
+            "value_tension",
+            "archetypal_situation",
+            "transformation",
+            "mood",
+            "genre_force",
+            "beat_function",
+            "scene_role"
+          ]
+        },
+        "name": { "type": "string" },
+        "role": {
+          "type": "string",
+          "enum": [
+            "literal_symbol",
+            "visual_motif",
+            "value_tension",
+            "meaning_claim",
+            "theme_seed",
+            "archetypal_situation",
+            "transformation",
+            "mood",
+            "avoidance",
+            "other"
+          ]
+        },
+        "source": { "type": "string", "enum": ["goal", "media", "goal_and_media", "operator"] },
+        "evidence": { "type": "string" }
+      }
+    },
+    "aesthetic_term_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["facet_type", "slug", "display_name", "role", "source", "evidence"],
+      "properties": {
+        "facet_type": { "type": "string", "enum": ["key_motif", "key_value", "key_colour", "origin_decade"] },
+        "slug": { "type": "string" },
+        "display_name": { "type": "string" },
+        "role": {
+          "type": "string",
+          "enum": ["motif", "value", "palette", "era", "material_or_texture", "mood", "avoidance", "other"]
+        },
+        "source": { "type": "string", "enum": ["goal", "media", "goal_and_media", "operator"] },
+        "evidence": { "type": "string" }
+      }
+    },
+    "style_term_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["term", "kind", "weight", "rationale"],
+      "properties": {
+        "term": { "type": "string" },
+        "kind": { "type": "string", "enum": ["mood", "hue", "collection", "medium", "phrase"] },
+        "weight": { "type": "number" },
+        "rationale": { "type": "string" }
+      }
+    }
+  }
+}
+

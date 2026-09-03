@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/image_prompt_enrichment.v0.1.schema.json",
+  "title": "ImagePromptEnrichmentResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "provider",
+    "model",
+    "enhanced_prompt",
+    "negative_prompt",
+    "change_summary"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "litscenes.image_prompt_enrichment_response.v0.1" },
+    "provider": { "type": "string" },
+    "model": { "type": "string" },
+    "enhanced_prompt": { "type": "string", "minLength": 1 },
+    "negative_prompt": { "type": "string" },
+    "change_summary": { "type": "string" }
+  }
+}

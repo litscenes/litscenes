@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">LitScenes Community application icon</title>
+  <desc id="desc">Three offset story frames crossed by a warm narrative path on a deep green field.</desc>
+  <defs>
+    <linearGradient id="field" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#0e1415"/>
+      <stop offset="1" stop-color="#1a332d"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="220" fill="url(#field)"/>
+  <g fill="none" stroke="#eee0b8" stroke-width="24">
+    <rect x="160" y="230" width="636" height="636" rx="48" opacity=".45"/>
+    <rect x="258" y="160" width="636" height="636" rx="48" opacity=".68"/>
+    <rect x="348" y="118" width="520" height="520" rx="48" opacity=".92"/>
+  </g>
+  <path d="M286 730C398 310 606 718 738 294" fill="none" stroke="#faab52" stroke-width="24" stroke-linecap="round"/>
+</svg>

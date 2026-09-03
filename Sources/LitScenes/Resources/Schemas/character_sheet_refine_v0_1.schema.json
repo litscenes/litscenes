@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/character_sheet_refine.v0.1.schema.json",
+  "title": "CharacterSheetRefineResponseV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "assistant_message",
+    "visual_description",
+    "signature_props",
+    "sheet_directives",
+    "source_image_notes",
+    "change_summary"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "litscenes.character_sheet_refine_response.v0.1" },
+    "assistant_message": { "type": "string" },
+    "visual_description": { "type": "string" },
+    "signature_props": { "type": "array", "maxItems": 3, "items": { "type": "string" } },
+    "sheet_directives": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+    "source_image_notes": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["media_id", "label"],
+        "properties": {
+          "media_id": { "type": "string" },
+          "label": { "type": "string" }
+        }
+      }
+    },
+    "change_summary": { "type": "string" }
+  }
+}

@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/character_frame_suggestions.v0.1.schema.json",
+  "title": "CharacterFrameSuggestionsResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "scenes",
+    "casting_note"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "litscenes.character_frame_suggestions.v0.1"
+    },
+    "scenes": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "$ref": "#/$defs/suggested_scene"
+      }
+    },
+    "casting_note": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "scene_setting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "location_name",
+        "location_type",
+        "time_of_day",
+        "weather",
+        "spatial_layout",
+        "foreground_details",
+        "background_details",
+        "notable_features"
+      ],
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "location_name": {
+          "type": "string"
+        },
+        "location_type": {
+          "type": "string"
+        },
+        "time_of_day": {
+          "type": "string"
+        },
+        "weather": {
+          "type": "string"
+        },
+        "spatial_layout": {
+          "type": "string"
+        },
+        "foreground_details": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 6,
+          "items": {
+            "type": "string"
+          }
+        },
+        "background_details": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 6,
+          "items": {
+            "type": "string"
+          }
+        },
+        "notable_features": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "scene_cast_member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "presence"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "presence": {
+          "type": "string"
+        }
+      }
+    },
+    "new_area": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "setting",
+        "prose_prompt"
+      ],
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "setting": {
+          "$ref": "#/$defs/scene_setting"
+        },
+        "prose_prompt": {
+          "type": "string"
+        }
+      }
+    },
+    "area_scene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "setting",
+        "prose_prompt",
+        "cast",
+        "story_beat"
+      ],
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "setting": {
+          "$ref": "#/$defs/scene_setting"
+        },
+        "prose_prompt": {
+          "type": "string"
+        },
+        "cast": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "items": {
+            "$ref": "#/$defs/scene_cast_member"
+          }
+        },
+        "story_beat": {
+          "type": "string",
+          "enum": [
+            "opening",
+            "rising",
+            "turn",
+            "ending"
+          ]
+        }
+      }
+    },
+    "suggested_scene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "area_ref",
+        "area",
+        "scene",
+        "moment"
+      ],
+      "properties": {
+        "area_ref": {
+          "type": "string"
+        },
+        "area": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/new_area"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scene": {
+          "$ref": "#/$defs/area_scene"
+        },
+        "moment": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

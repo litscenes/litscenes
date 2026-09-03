@@ -1,0 +1,646 @@
+# render_stacks.yaml — the Frame Creator render stacks.
+#
+# This bundled file defines the default stacks. To add your own or override a
+# default, put a file with the same shape at:
+#   ~/Library/Application Support/<release identity>/render_stacks.yaml
+# Entries there merge by `id` (same id = override the default; new id = new
+# stack). App Settings → Stacks has Reveal / Reload / Copy-defaults buttons.
+#
+# Fields per stack:
+#   id                     unique machine id (persists in render provenance hashes)
+#   stack_id               versioned recipe id written into each take's render recipe
+#   label / detail         what the stack picker shows
+#   price_note             informational provider price persisted in provenance
+#   kind                   executor: openai | fal | civitai | stability
+#   credential_provider    which API key gates it: openai | civitai | fal | stability
+#                          (fal stacks also need an OpenAI key for prompt writing)
+#   order                  position in pickers; also default-stack precedence
+#   model                  provider model id (fal: queue path; civitai: informational)
+#   style_model            fal only — the /edit or /redux variant used when a style
+#                          image is attached ("" = none)
+#   can_attach_style_image whether the model accepts a style-reference image
+#   reframe_capable        whether the stack can take prompt-image attachments
+#                          (drives the Reframe stack menu and the engine gate)
+#   workflows              executable product workflows. When omitted, existing
+#                          stacks default to frame_creator and reframe_capable
+#                          maps to reframe_zoom_in + reframe_viewpoint.
+#   prompt_image_limit     how many prompt images this MODEL accepts natively.
+#                          Omitted = the provider-kind default (openai
+#                          unbounded, fal/stability 1, civitai 0). Raise it
+#                          only with the provider's documented maximum — the
+#                          count rides straight into paid request payloads.
+#   prompt_limit           max prompt characters sent to the provider (null = none)
+#   output_format          jpeg | png — the saved file's format
+#   image_size             openai only — the gpt-image size string
+#   prompt_instructions    model-aware guidance given to the prompt-enrichment LLM
+#   fal:                   fal request: `input` = the exact request body params
+#                          (prompt is injected), `debug_keys` = keys the Parameters
+#                          box may override
+#   stability:             Stability multipart fields. `strength` is sent only
+#                          when an input image is attached.
+#   civitai:               civitai workflow: `input` = the exact imageGen step input
+#                          (prompt/seed/negativePrompt injected), `tags`,
+#                          `step_priority` (omit for none), `seed` (integer for a
+#                          fixed seed, or "random"), `recipe` = the provenance
+#                          parameters written to each take ($runtime_seed = the
+#                          seed used at render time)
+#
+# NOTE: all stacks render WIDE (as close to 16:9 as each provider supports) so
+# frames drop cleanly into the 16:9 video pipeline. gpt-image-2's widest is
+# 1536x1024 (3:2); FLUX/Nano/CivitAI render true 16:9.
+
+version: "litscenes.render_stacks.v0"
+stacks:
+  - id: openai_base
+    stack_id: openai.base.v0
+    label: OpenAI Base
+    detail: "Available · gpt-image-2 · 1536×1024"
+    kind: openai
+    credential_provider: openai
+    order: 0
+    model: gpt-image-2
+    style_model: ""
+    can_attach_style_image: false
+    reframe_capable: true
+    workflows: [frame_creator, reframe_zoom_in, reframe_zoom_out, reframe_viewpoint]
+    prompt_limit: null
+    output_format: jpeg
+    image_size: 1536x1024
+    prompt_instructions: >-
+      OpenAI gpt-image-2 prompts should be direct, specific, and visually rich.
+      Describe the subject, environment, composition, mood, lighting, camera or
+      rendering treatment, materials, colors, and any exact constraints. The
+      model follows natural language well, supports detailed production-quality
+      visuals, and benefits from clear accuracy boundaries when the image must
+      preserve a real project world. Avoid unsupported transparent-background
+      instructions for gpt-image-2.
+
+  - id: stability_ultra
+    stack_id: stability.ultra.v0
+    label: Stability Ultra
+    detail: "Stability AI · flagship · 1 MP · 1 native image"
+    kind: stability
+    credential_provider: stability
+    order: 1
+    model: stable-image-ultra
+    style_model: stable-image-ultra
+    can_attach_style_image: true
+    reframe_capable: true
+    workflows: [frame_creator, reframe_zoom_in, reframe_viewpoint]
+    prompt_limit: 10000
+    output_format: jpeg
+    image_size: null
+    prompt_instructions: >-
+      Stability Stable Image Ultra prompts should clearly define the visible
+      subject, environment, composition, lighting, materials, mood, and medium.
+      Keep the positive prompt focused on desired content and use the negative
+      prompt for concise exclusions. When an image is attached, treat it as the
+      explicit structural, identity, or style reference described by its label.
+    stability:
+      input:
+        aspect_ratio: "16:9"
+        output_format: jpeg
+        strength: 0.65
+
+  - id: civitai_wan_2_7
+    stack_id: civitai.wan_image_27.v0
+    label: WAN 2.7
+    detail: "CivitAI · WAN still · 1280×720 · app random seed"
+    kind: civitai
+    credential_provider: civitai
+    order: 2
+    model: wan.v2.7.text-to-image
+    style_model: ""
+    can_attach_style_image: false
+    reframe_capable: false
+    prompt_limit: 1800
+    output_format: jpeg
+    prompt_instructions: >-
+      Civitai WAN 2.7 prompts should be self-contained text-to-image requests.
+      Keep the style in text as a concise one-line visual direction and avoid
+      relying on image attachments.
+    civitai:
+      tags: [litscenes, lens, wan-2-7, image]
+      step_priority: low
+      seed: random
+      input:
+        engine: wan
+        version: v2.7
+        provider: fal
+        operation: createImage
+        cfgScale: 0
+        sampler: "WAN-2.7"
+        workflow: txt2img
+        width: 1280
+        height: 720
+        priority: low
+        quantity: 1
+        imageSize: landscape_16_9
+        ecosystem: WanImage27
+        outputFormat: jpeg
+        resources: []
+        enablePromptEnhancer: false
+        enableSafetyChecker: true
+        usePro: false
+      recipe:
+        - { key: workflow, value: txt2img, value_type: string }
+        - { key: ecosystem, value: WanImage27, value_type: string }
+        - { key: operation, value: createImage, value_type: string }
+        - { key: version, value: v2.7, value_type: string }
+        - { key: provider, value: fal, value_type: string }
+        - { key: width, value: "1280", value_type: string }
+        - { key: height, value: "720", value_type: string }
+        - { key: image_size, value: landscape_16_9, value_type: string }
+        - { key: priority, value: low, value_type: string }
+        - { key: quantity, value: "1", value_type: string }
+        - { key: output_format, value: jpeg, value_type: string }
+        - { key: enable_prompt_enhancer, value: "false", value_type: boolean }
+        - { key: enable_safety_checker, value: "true", value_type: boolean }
+        - { key: use_pro, value: "false", value_type: boolean }
+        - { key: seed, value: "$runtime_seed", value_type: string }
+
+  - id: civitai_realistic_portrait
+    stack_id: civitai.flux_klein_portrait.v0
+    label: Realistic Portrait
+    detail: "CivitAI · Flux.2 Klein · detailed-skin LoRA · 1280×720 · fixed seed"
+    kind: civitai
+    credential_provider: civitai
+    order: 3
+    model: flux.2-klein.portrait-engine
+    style_model: ""
+    can_attach_style_image: false
+    reframe_capable: false
+    prompt_limit: 1800
+    output_format: jpeg
+    prompt_instructions: >-
+      Civitai FLUX.2 Klein portrait prompts should describe one clearly framed
+      person, the expression and action, environment, wardrobe, light direction,
+      lens distance, and natural skin texture. Prefer concrete photographic
+      language over quality-token piles. Keep the detailed-skin LoRA implicit;
+      do not repeat LoRA syntax or request waxy, airbrushed skin.
+    civitai:
+      tags: [litscenes, lens, realistic-portrait, image]
+      # no step_priority — the flux2 step wrapper carries none
+      seed: 292181528
+      input:
+        engine: flux2
+        model: klein
+        modelVersion: 9b
+        operation: createImage
+        steps: 8
+        cfgScale: 5
+        width: 1280
+        height: 720
+        quantity: 1
+        outputFormat: jpeg
+        loras:
+          "urn:air:flux2:lora:civitai:2067704@2998669": 1.0
+      recipe:
+        - { key: engine, value: flux2, value_type: string }
+        - { key: model, value: klein, value_type: string }
+        - { key: model_version, value: 9b, value_type: string }
+        - { key: operation, value: createImage, value_type: string }
+        - { key: steps, value: "8", value_type: number }
+        - { key: cfg_scale, value: "5", value_type: number }
+        - { key: seed, value: "292181528", value_type: number }
+        - { key: lora, value: "urn:air:flux2:lora:civitai:2067704@2998669", value_type: string }
+        - { key: width, value: "1280", value_type: string }
+        - { key: height, value: "720", value_type: string }
+        - { key: quantity, value: "1", value_type: string }
+        - { key: output_format, value: jpeg, value_type: string }
+
+  # Sources: Civitai AIR/model version documented by the Civitai SDK tutorial;
+  # RunDiffusion's model guide and community workflows converge on DPM++ 2M
+  # Karras, 30–40 steps, and moderate CFG for Juggernaut XL v9.
+  - id: civitai_cinematic_juggernaut_xl
+    stack_id: civitai.juggernaut_xl_v9.cinematic.v0
+    label: Cinematic Realism
+    detail: "CivitAI · Juggernaut XL v9 · cinematic live action · 1280×720"
+    kind: civitai
+    credential_provider: civitai
+    order: 4
+    model: "urn:air:sdxl:checkpoint:civitai:133005@348913"
+    style_model: ""
+    can_attach_style_image: false
+    reframe_capable: false
+    prompt_limit: 1800
+    output_format: jpeg
+    prompt_instructions: >-
+      Juggernaut XL v9 should be prompted as a believable live-action frame.
+      State the subject and visible action first, then location, composition,
+      motivated lighting, camera distance or lens character, atmosphere, and
+      tactile real-world materials. Use restrained photographic language and
+      preserve ordinary imperfections; avoid long quality-token chains, CGI,
+      game-engine language, excessive HDR, and contradictory camera terms.
+    civitai:
+      tags: [litscenes, lens, juggernaut-xl-v9, cinematic, image]
+      step_priority: low
+      seed: random
+      input:
+        engine: sdcpp
+        ecosystem: sdxl
+        operation: createImage
+        model: "urn:air:sdxl:checkpoint:civitai:133005@348913"
+        scheduler: DPM2Karras
+        steps: 35
+        cfgScale: 5
+        clipSkip: 1
+        width: 1280
+        height: 720
+        quantity: 1
+        outputFormat: jpeg
+      recipe:
+        - { key: engine, value: sdcpp, value_type: string }
+        - { key: ecosystem, value: sdxl, value_type: string }
+        - { key: operation, value: createImage, value_type: string }
+        - { key: model, value: "urn:air:sdxl:checkpoint:civitai:133005@348913", value_type: string }
+        - { key: scheduler, value: DPM2Karras, value_type: string }
+        - { key: steps, value: "35", value_type: number }
+        - { key: cfg_scale, value: "5", value_type: number }
+        - { key: clip_skip, value: "1", value_type: number }
+        - { key: width, value: "1280", value_type: string }
+        - { key: height, value: "720", value_type: string }
+        - { key: quantity, value: "1", value_type: string }
+        - { key: output_format, value: jpeg, value_type: string }
+        - { key: seed, value: "$runtime_seed", value_type: string }
+
+  # Source: RealCartoon-XL v6 is Civitai model 125907, version 254091.
+  # The creator/community guidance favors Euler A or DPM++ 2M Karras and a
+  # longer 30–55-step pass; this preset keeps the proven LitScenes v6 recipe.
+  - id: civitai_realcartoon_xl
+    stack_id: civitai.realcartoon_xl_v6.animated.v0
+    label: Animated Cinematic
+    detail: "CivitAI · RealCartoon-XL v6 · polished 2.5D animation · 1280×720"
+    kind: civitai
+    credential_provider: civitai
+    order: 5
+    model: "urn:air:sdxl:checkpoint:civitai:125907@254091"
+    style_model: ""
+    can_attach_style_image: false
+    reframe_capable: false
+    prompt_limit: 1800
+    output_format: jpeg
+    prompt_instructions: >-
+      RealCartoon-XL v6 is for polished animated storytelling with dimensional
+      lighting and tactile surfaces. Describe the character or subject, readable
+      silhouette and action, environment, shot scale, color script, key light,
+      and the desired balance of stylization and realism. Favor cohesive feature-
+      animation art direction; avoid stacking unrelated artist names, mixing
+      photorealistic RAW-camera tokens with cartoon language, or asking for flat
+      vector graphics.
+    civitai:
+      tags: [litscenes, lens, realcartoon-xl-v6, animated, image]
+      step_priority: low
+      seed: random
+      input:
+        engine: sdcpp
+        ecosystem: sdxl
+        operation: createImage
+        model: "urn:air:sdxl:checkpoint:civitai:125907@254091"
+        scheduler: EulerA
+        steps: 48
+        cfgScale: 9
+        clipSkip: 2
+        width: 1280
+        height: 720
+        quantity: 1
+        outputFormat: jpeg
+      recipe:
+        - { key: engine, value: sdcpp, value_type: string }
+        - { key: ecosystem, value: sdxl, value_type: string }
+        - { key: operation, value: createImage, value_type: string }
+        - { key: model, value: "urn:air:sdxl:checkpoint:civitai:125907@254091", value_type: string }
+        - { key: scheduler, value: EulerA, value_type: string }
+        - { key: steps, value: "48", value_type: number }
+        - { key: cfg_scale, value: "9", value_type: number }
+        - { key: clip_skip, value: "2", value_type: number }
+        - { key: width, value: "1280", value_type: string }
+        - { key: height, value: "720", value_type: string }
+        - { key: quantity, value: "1", value_type: string }
+        - { key: output_format, value: jpeg, value_type: string }
+        - { key: seed, value: "$runtime_seed", value_type: string }
+
+  # Sources: ZavyChromaXL v7 is Civitai model 119229, version 490254;
+  # community and model mirrors recommend DPM++ Karras variants, 20–40 steps,
+  # and CFG around 6–7. It earns a slot for colorful art rather than more realism.
+  - id: civitai_zavychroma_xl
+    stack_id: civitai.zavychroma_xl_v7.editorial.v0
+    label: Vivid Editorial
+    detail: "CivitAI · ZavyChromaXL v7 · expressive color + texture · 1280×720"
+    kind: civitai
+    credential_provider: civitai
+    order: 6
+    model: "urn:air:sdxl:checkpoint:civitai:119229@490254"
+    style_model: ""
+    can_attach_style_image: false
+    reframe_capable: false
+    prompt_limit: 1800
+    output_format: jpeg
+    prompt_instructions: >-
+      ZavyChromaXL v7 is the expressive editorial and fantasy-art stack. Lead
+      with a legible subject and action, then define the graphic composition,
+      palette relationship, surface or medium, directional light, depth, and
+      emotional atmosphere. Let it use rich chroma and painterly texture while
+      keeping forms readable. Avoid generic masterpiece spam, muddy mixtures of
+      many media, and automatic neon or fantasy cues unless the scene asks for
+      them.
+    civitai:
+      tags: [litscenes, lens, zavychroma-xl-v7, editorial, image]
+      step_priority: low
+      seed: random
+      input:
+        engine: sdcpp
+        ecosystem: sdxl
+        operation: createImage
+        model: "urn:air:sdxl:checkpoint:civitai:119229@490254"
+        scheduler: DPM2Karras
+        steps: 30
+        cfgScale: 6.5
+        clipSkip: 2
+        width: 1280
+        height: 720
+        quantity: 1
+        outputFormat: jpeg
+      recipe:
+        - { key: engine, value: sdcpp, value_type: string }
+        - { key: ecosystem, value: sdxl, value_type: string }
+        - { key: operation, value: createImage, value_type: string }
+        - { key: model, value: "urn:air:sdxl:checkpoint:civitai:119229@490254", value_type: string }
+        - { key: scheduler, value: DPM2Karras, value_type: string }
+        - { key: steps, value: "30", value_type: number }
+        - { key: cfg_scale, value: "6.5", value_type: number }
+        - { key: clip_skip, value: "2", value_type: number }
+        - { key: width, value: "1280", value_type: string }
+        - { key: height, value: "720", value_type: string }
+        - { key: quantity, value: "1", value_type: string }
+        - { key: output_format, value: jpeg, value_type: string }
+        - { key: seed, value: "$runtime_seed", value_type: string }
+
+  # Sources: official Cagliostro guidance and the public Civitai release identify
+  # Animagine XL 3.1 as model 260267, version 403131, with Euler A, <30 steps,
+  # CFG 5–7, and clip skip 2. This is the stable, reproducible Civitai anime slot.
+  - id: civitai_animagine_xl
+    stack_id: civitai.animagine_xl_3_1.anime.v0
+    label: Anime Story Frame
+    detail: "CivitAI · Animagine XL 3.1 · expressive anime frame · 1280×720"
+    kind: civitai
+    credential_provider: civitai
+    order: 7
+    model: "urn:air:sdxl:checkpoint:civitai:260267@403131"
+    style_model: ""
+    can_attach_style_image: false
+    reframe_capable: false
+    prompt_limit: 1800
+    output_format: jpeg
+    prompt_instructions: >-
+      Animagine XL 3.1 responds best to concise comma-separated anime tags in a
+      stable order: subject count and identity, appearance, expression and pose,
+      action, environment, framing, lighting, palette, then style and quality.
+      Translate prose into visible tags; preserve spatial relationships and the
+      intended emotional beat. Use original characters unless project context
+      explicitly supplies one. Avoid prose paragraphs, contradictory quality
+      tags, uncontrolled franchise names, and photorealistic camera jargon.
+    civitai:
+      tags: [litscenes, lens, animagine-xl-3-1, anime, image]
+      step_priority: low
+      seed: random
+      input:
+        engine: sdcpp
+        ecosystem: sdxl
+        operation: createImage
+        model: "urn:air:sdxl:checkpoint:civitai:260267@403131"
+        scheduler: EulerA
+        steps: 28
+        cfgScale: 6
+        clipSkip: 2
+        width: 1280
+        height: 720
+        quantity: 1
+        outputFormat: jpeg
+      recipe:
+        - { key: engine, value: sdcpp, value_type: string }
+        - { key: ecosystem, value: sdxl, value_type: string }
+        - { key: operation, value: createImage, value_type: string }
+        - { key: model, value: "urn:air:sdxl:checkpoint:civitai:260267@403131", value_type: string }
+        - { key: scheduler, value: EulerA, value_type: string }
+        - { key: steps, value: "28", value_type: number }
+        - { key: cfg_scale, value: "6", value_type: number }
+        - { key: clip_skip, value: "2", value_type: number }
+        - { key: width, value: "1280", value_type: string }
+        - { key: height, value: "720", value_type: string }
+        - { key: quantity, value: "1", value_type: string }
+        - { key: output_format, value: jpeg, value_type: string }
+        - { key: seed, value: "$runtime_seed", value_type: string }
+
+  - id: fal_flux_schnell
+    stack_id: fal.flux_schnell.v0
+    label: FLUX Schnell
+    detail: "FAL · fast text-to-image · 16:9 · prompt-style only"
+    kind: fal
+    credential_provider: fal
+    order: 8
+    model: fal-ai/flux/schnell
+    style_model: fal-ai/flux/schnell/redux
+    can_attach_style_image: false
+    reframe_capable: false
+    prompt_limit: 2400
+    output_format: jpeg
+    prompt_instructions: >-
+      FAL FLUX Schnell is a fast FLUX text-to-image path. Prompt it with
+      concise, concrete visual direction, a clear subject, composition,
+      materials, lighting, and mood. Keep constraints explicit, avoid long
+      screenplay prose, and use the configured parameters for aspect, output
+      format, steps, CFG, safety, and acceleration rather than writing
+      resolution or aspect instructions into the prompt.
+    fal:
+      input:
+        num_inference_steps: 4
+        image_size: landscape_16_9
+        guidance_scale: 3.5
+        num_images: 1
+        enable_safety_checker: true
+        output_format: jpeg
+        acceleration: none
+      debug_keys: [num_inference_steps, image_size, seed, guidance_scale, num_images, enable_safety_checker, output_format, acceleration]
+
+  - id: fal_flux_2_pro
+    stack_id: fal.flux_2_pro.v0
+    label: FLUX 2 Pro
+    detail: "FAL · text-to-image or multi-reference edit (≤9 refs · 9 MP total input) · 16:9"
+    kind: fal
+    credential_provider: fal
+    order: 9
+    model: fal-ai/flux-2-pro
+    style_model: fal-ai/flux-2-pro/edit
+    can_attach_style_image: true
+    reframe_capable: true
+    workflows: [frame_creator, reframe_zoom_in, reframe_viewpoint]
+    # fal.ai/models/fal-ai/flux-2-pro/edit: "Combine up to 9 reference images
+    # (9 MP total input) in a single edit." The MP ceiling is the provider's;
+    # oversized totals surface as honest provider failures (never resubmitted).
+    prompt_image_limit: 9
+    prompt_limit: 2400
+    output_format: jpeg
+    prompt_instructions: >-
+      FAL FLUX 2 Pro is a streamlined professional image model. It benefits
+      from direct, high-signal prompts that define the subject, scene
+      structure, desired realism or illustration treatment, and concrete
+      visual constraints. Do not ask for low-level sampler behavior in the
+      prompt; size, safety, seed, and output format are parameters. When a
+      style image is attached, treat it as style reference only and keep the
+      text focused on subject and composition.
+    fal:
+      input:
+        image_size: landscape_16_9
+        safety_tolerance: "2"
+        enable_safety_checker: true
+        output_format: jpeg
+      debug_keys: [image_size, seed, safety_tolerance, enable_safety_checker, output_format]
+
+  - id: fal_nano_banana_2
+    stack_id: fal.nano_banana_2.v0
+    label: Nano Banana 2
+    detail: "FAL · Gemini image · text-to-image or multi-reference edit (≤14 refs) · 16:9"
+    kind: fal
+    credential_provider: fal
+    order: 10
+    model: fal-ai/nano-banana-2
+    style_model: fal-ai/nano-banana-2/edit
+    can_attach_style_image: true
+    reframe_capable: true
+    workflows: [frame_creator, reframe_zoom_in, reframe_viewpoint]
+    # fal.ai/models/fal-ai/nano-banana-2/edit: "Combine up to 14 reference
+    # images in a single request for compositing, style matching, or subject
+    # transfer."
+    prompt_image_limit: 14
+    prompt_limit: 3500
+    output_format: png
+    prompt_instructions: >-
+      FAL Nano Banana 2 is a Gemini image model suited to natural-language
+      visual instructions and semantic composition. Prompt it with explicit
+      scene intent, object relationships, text/signage boundaries, and what
+      should stay absent. Use parameters for aspect ratio, resolution, safety,
+      output format, and generation limits instead of embedding resolution or
+      crop instructions.
+    fal:
+      input:
+        num_images: 1
+        aspect_ratio: "16:9"
+        output_format: png
+        safety_tolerance: "4"
+        resolution: "1K"
+        limit_generations: true
+      debug_keys: [num_images, seed, aspect_ratio, output_format, safety_tolerance, resolution, limit_generations, enable_web_search, thinking_level]
+
+  - id: fal_image_apps_v2_outpaint
+    stack_id: fal.image_apps_v2_outpaint.v0
+    label: FAL Outpaint
+    detail: "FAL · Zoom Out · $0.035/MP"
+    price_note: "$0.035 per output megapixel"
+    kind: fal
+    credential_provider: fal
+    order: 14
+    model: fal-ai/image-apps-v2/outpaint
+    style_model: ""
+    can_attach_style_image: false
+    reframe_capable: true
+    workflows: [reframe_zoom_out]
+    prompt_limit: 500
+    output_format: png
+    prompt_instructions: >-
+      FAL Outpaint appends this text to its own outpaint instruction and reads
+      it as content. Leave it minimal or name only scenery to add in the new
+      margins; naming a person or creature paints a second copy of it. The
+      expansion geometry, safety, quantity, and output format are parameters.
+    fal:
+      input:
+        zoom_out_percentage: 0
+        num_images: 1
+        enable_safety_checker: true
+        output_format: png
+      debug_keys: [seed, enable_safety_checker, output_format]
+
+  - id: fal_reve_2_1
+    stack_id: fal.reve_2_1.v0
+    label: Reve 2.1
+    detail: "FAL · art direction, editorial design + typography · 16:9 · $0.25/image"
+    price_note: "$0.25 per image"
+    kind: fal
+    credential_provider: fal
+    order: 11
+    model: reve/2.1/text-to-image
+    style_model: ""
+    can_attach_style_image: false
+    reframe_capable: false
+    prompt_limit: 2400
+    output_format: jpeg
+    prompt_instructions: >-
+      Reve 2.1 is strongest when the prompt reads like deliberate art
+      direction. Specify the visual hierarchy, composition, editorial layout,
+      typography or exact visible copy when needed, color system, medium,
+      lighting, and finish. Keep the desired design relationships explicit
+      and use parameters for aspect ratio, image count, and output format.
+    fal:
+      input:
+        aspect_ratio: "16:9"
+        num_images: 1
+        output_format: jpeg
+      debug_keys: [aspect_ratio, num_images, output_format]
+
+  - id: fal_mai_image_2_5
+    stack_id: fal.mai_image_2_5.v0
+    label: MAI Image 2.5
+    detail: "FAL · photoreal fashion, editorial, products + people · 16:9 · ≈$0.05/image"
+    price_note: "approximately $0.05 per image, plus text-token usage"
+    kind: fal
+    credential_provider: fal
+    order: 12
+    model: microsoft/mai-image-2.5
+    style_model: ""
+    can_attach_style_image: false
+    reframe_capable: false
+    prompt_limit: 2400
+    output_format: jpeg
+    prompt_instructions: >-
+      Microsoft MAI Image 2.5 is suited to natural photorealism, fashion and
+      editorial photography, products, and believable people. Describe the
+      subject and environment precisely, then define framing, lens or camera
+      position, lighting, materials, styling, expression, and realistic
+      imperfections. Use parameters for aspect ratio, image count, and output
+      format rather than repeating them in the prompt.
+    fal:
+      input:
+        num_images: 1
+        aspect_ratio: "16:9"
+        output_format: jpeg
+      debug_keys: [num_images, aspect_ratio, output_format]
+
+  - id: fal_seedream_v5_pro
+    stack_id: fal.seedream_v5_pro.v0
+    label: Seedream 5 Pro
+    detail: "FAL · cinematic editorial + dense compositions · 16:9 · $0.0675/$0.135 tiers"
+    price_note: "$0.0675 up to 1536² total pixels; $0.135 above 1536² through 2048²"
+    kind: fal
+    credential_provider: fal
+    order: 13
+    model: bytedance/seedream/v5/pro/text-to-image
+    style_model: ""
+    can_attach_style_image: false
+    reframe_capable: false
+    prompt_limit: 2400
+    output_format: jpeg
+    prompt_instructions: >-
+      ByteDance Seedream 5 Pro is suited to cinematic editorial source frames,
+      dense but legible compositions, and deliberate art direction. Establish
+      the primary subject and story beat first, then describe spatial layers,
+      supporting elements, visual hierarchy, camera framing, lighting, palette,
+      texture, and finish. Use image_size, image count, output format, and
+      safety parameters rather than encoding technical output settings in the
+      prompt.
+    fal:
+      input:
+        image_size: landscape_16_9
+        num_images: 1
+        output_format: jpeg
+        enable_safety_checker: true
+      debug_keys: [image_size, num_images, output_format, enable_safety_checker]

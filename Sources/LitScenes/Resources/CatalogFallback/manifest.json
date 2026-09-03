@@ -1,0 +1,33 @@
+{
+  "schema_version": "litscenes.catalog_manifest.v1",
+  "manifest_version": "bundled-community-starter-20260812",
+  "published_at": "2026-08-12T00:00:00Z",
+  "terms_sha256": "63cdffb7e66eb04df6dea76ce3fd3ee8300909652f04af4a36cb4b3f9b66296d",
+  "terms": {
+    "kind": "terms",
+    "path": "v1/terms/2026-08-11.md",
+    "url": "https://catalog.litscenes.ai/v1/terms/2026-08-11.md",
+    "sha256": "63cdffb7e66eb04df6dea76ce3fd3ee8300909652f04af4a36cb4b3f9b66296d",
+    "byte_size": 2336
+  },
+  "catalogs": [
+    {
+      "kind": "style_browse",
+      "path": "v1/catalogs/style-browse/community-starter-20260812.json",
+      "url": "https://catalog.litscenes.ai/v1/catalogs/style-browse/community-starter-20260812.json",
+      "sha256": "326546b7156391231dd488e8b05aea1e815b6222fc006733fa6b0d317b90272e",
+      "byte_size": 46484
+    },
+    {
+      "kind": "style_reference",
+      "path": "v1/catalogs/style-reference/community-starter-20260812.json",
+      "url": "https://catalog.litscenes.ai/v1/catalogs/style-reference/community-starter-20260812.json",
+      "sha256": "d6d411d9051c40bbc1fbb765fc4a87fc19dd25c61886b142ea30844267d5e0e1",
+      "byte_size": 36042
+    }
+  ],
+  "compatibility": {
+    "minimum_desktop_version": "0.1.0",
+    "client_families": ["LitScenes Desktop", "compatible AGPL clients"]
+  }
+}

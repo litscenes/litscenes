@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/character_identity_draft.v0.1.schema.json",
+  "title": "CharacterIdentityDraftResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "identity",
+    "signature_props",
+    "environment_affinity",
+    "source_image_notes",
+    "casting_note"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "litscenes.character_identity_draft.v0.1" },
+    "identity": { "$ref": "#/$defs/identity" },
+    "signature_props": {
+      "type": "array",
+      "maxItems": 3,
+      "items": { "type": "string" }
+    },
+    "environment_affinity": { "type": "string" },
+    "source_image_notes": {
+      "type": "array",
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/source_note" }
+    },
+    "casting_note": { "type": "string" }
+  },
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "essence",
+        "public_function",
+        "desire",
+        "operating_rule",
+        "cost",
+        "signature",
+        "formative_pressure",
+        "strangeness",
+        "visual_description"
+      ],
+      "properties": {
+        "essence": { "type": "string" },
+        "public_function": { "type": "string" },
+        "desire": { "type": "string" },
+        "operating_rule": { "type": "string" },
+        "cost": { "type": "string" },
+        "signature": { "type": "string" },
+        "formative_pressure": { "type": "string" },
+        "strangeness": { "type": "number", "minimum": 0, "maximum": 1 },
+        "visual_description": { "type": "string" }
+      }
+    },
+    "source_note": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["media_id", "label"],
+      "properties": {
+        "media_id": { "type": "string" },
+        "label": { "type": "string" }
+      }
+    }
+  }
+}

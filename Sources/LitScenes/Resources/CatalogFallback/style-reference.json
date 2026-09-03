@@ -1,0 +1,844 @@
+{
+  "schema_version": "litscenes.sref_reference_catalog.v0.1",
+  "catalog_kind": "sref_reference_catalog",
+  "default_grid_variant": "800",
+  "default_detail_variant": "1600",
+  "default_generation_variant": "800",
+  "version": "v20260628-community-starter",
+  "style_count": 26,
+  "generated_image_count": 26,
+  "items": [
+    {
+      "id": "sref-2244696458",
+      "title": "Vibrant Anime",
+      "sref_code": "2244696458",
+      "source_key": "2244696458",
+      "source_id": "676ab12c93e156004ec9281f",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/d810f110-2a07-40c4-94a1-bc07079255e7-0.webp",
+      "page": 1,
+      "card_index": 1,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-001_vibrant-anime_2244696458.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-001_vibrant-anime_2244696458.webp",
+          "sha256": "5230b8976d7900263f551c2b0c7e93dfdaec78c3e27dd00bf609fe7042bace26",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 411408,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-001_vibrant-anime_2244696458.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-001_vibrant-anime_2244696458.webp",
+          "sha256": "96829c9db3df69e4430b1d1f45cb79ac9eaa53d943ad5a16e31b2b8c4d3c7f26",
+          "width": 800,
+          "height": 800,
+          "byte_size": 195216,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-3388922453",
+      "title": "Soft Animation",
+      "sref_code": "3388922453",
+      "source_key": "3388922453",
+      "source_id": "676aa5191b16b3ee27df5794",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/44d22282-c11c-4d1d-ab6c-f081aaa9cc47-0.webp",
+      "page": 1,
+      "card_index": 16,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-016_soft-animation_3388922453.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-016_soft-animation_3388922453.webp",
+          "sha256": "aac6701d6919d95a059ac979cb8ae5517ee7ea882a59625c79bcf5a33dab2ce4",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 280252,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-016_soft-animation_3388922453.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-016_soft-animation_3388922453.webp",
+          "sha256": "f8d3a3b6b7ee6f9f735e9e24c5eda763d592cf1bea1d755d299d4edbe45c5029",
+          "width": 800,
+          "height": 800,
+          "byte_size": 142162,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-1013531427",
+      "title": "Fragmented Symmetry",
+      "sref_code": "1013531427",
+      "source_key": "1013531427",
+      "source_id": "6769b251b8ed64004eaa4e69",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/f6e219a0-76cf-4e60-9470-1624f25cd043-0.webp",
+      "page": 1,
+      "card_index": 22,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-022_fragmented-symmetry_1013531427.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-022_fragmented-symmetry_1013531427.webp",
+          "sha256": "96078b9d307f9e80e1c1e31662a4b1fa46aa5ff6278cea0998f35deaaf1c8078",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 475286,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-022_fragmented-symmetry_1013531427.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-022_fragmented-symmetry_1013531427.webp",
+          "sha256": "5f02dcca98428e7830437331f98f0659d20e1bec55d05a5bc77743a528d2293b",
+          "width": 800,
+          "height": 800,
+          "byte_size": 157620,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-2543578596",
+      "title": "Bold Retro",
+      "sref_code": "2543578596",
+      "source_key": "2543578596",
+      "source_id": "6769c01e1faa1e004e9373e0",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/f854a160-5543-4738-a21e-ce4e184848b3-0.webp",
+      "page": 1,
+      "card_index": 28,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-028_bold-retro_2543578596.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-028_bold-retro_2543578596.webp",
+          "sha256": "580e686266b384afb547a88ef3fea2db40161e3565abea7f7951e40a354e6688",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 486542,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-028_bold-retro_2543578596.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-028_bold-retro_2543578596.webp",
+          "sha256": "5f22be7582156fe7fd19dc0d7f8768c50fcf3ade752280bab57ea2cd81347d3c",
+          "width": 800,
+          "height": 800,
+          "byte_size": 178180,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-3718835205",
+      "title": "Whimsical Portrait in Soft Colors",
+      "sref_code": "3718835205",
+      "source_key": "3718835205",
+      "source_id": "6769bd731faa1e004e93734b",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/46ac9b49-2baf-4bbe-ae5e-bc06d15aa937-0.webp",
+      "page": 2,
+      "card_index": 36,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-02_card-036_whimsical-portrait-in-soft-colors_3718835205.webp",
+          "path": "sref/v20260628/composites/1600/page-02_card-036_whimsical-portrait-in-soft-colors_3718835205.webp",
+          "sha256": "81fe17d3f9bcbe80ace038b4ade7876ff2046bb1e9a9e5fe6f1f837b4a4f705a",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 187042,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-02_card-036_whimsical-portrait-in-soft-colors_3718835205.webp",
+          "path": "sref/v20260628/composites/800/page-02_card-036_whimsical-portrait-in-soft-colors_3718835205.webp",
+          "sha256": "44d5063daf8176dd548ed0fa2143fa98adeb2ddd857d0a10204a679a7ca589ed",
+          "width": 800,
+          "height": 800,
+          "byte_size": 87020,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-1695615602",
+      "title": "Dreamy Pastel Portrait",
+      "sref_code": "1695615602",
+      "source_key": "1695615602",
+      "source_id": "6769c1b970157c004decdb5c",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/101f1dd1-9fe6-4583-9ac8-65ddd276669e-0.webp",
+      "page": 3,
+      "card_index": 18,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-03_card-018_dreamy-pastel-portrait_1695615602.webp",
+          "path": "sref/v20260628/composites/1600/page-03_card-018_dreamy-pastel-portrait_1695615602.webp",
+          "sha256": "8edb42c4182a531d5e23eba9c3ce08572592a63e84d51d9b87b8039af3c04a15",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 438224,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-03_card-018_dreamy-pastel-portrait_1695615602.webp",
+          "path": "sref/v20260628/composites/800/page-03_card-018_dreamy-pastel-portrait_1695615602.webp",
+          "sha256": "ed1d436870324a56323dbf799dd732c971e46d4fc1d124e3e424b47e52511b4f",
+          "width": 800,
+          "height": 800,
+          "byte_size": 179870,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-4104457812",
+      "title": "Vibrant and Vivid",
+      "sref_code": "4104457812",
+      "source_key": "4104457812",
+      "source_id": "676aaa1cb92ad1004d05af6c",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/9971ea28-081f-4861-b1d7-0ccd07e8037e-0.webp",
+      "page": 1,
+      "card_index": 6,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-006_vibrant-and-vivid_4104457812.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-006_vibrant-and-vivid_4104457812.webp",
+          "sha256": "d7f1dea4a4438f9dfc6fbd056898cc1f2c6b223439f1c122f483ae2a8b7d4626",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 536218,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-006_vibrant-and-vivid_4104457812.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-006_vibrant-and-vivid_4104457812.webp",
+          "sha256": "eba74ea50be1d9ab63d54bbb43daf3759fad1e39e90651acaf768965e7544d2a",
+          "width": 800,
+          "height": 800,
+          "byte_size": 216504,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-4032679295",
+      "title": "Dreamy Art Nouveau",
+      "sref_code": "4032679295",
+      "source_key": "4032679295",
+      "source_id": "676aca3b065e4d04218a81bf",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/f731ea02-24ff-4485-8c02-c4834e8169b2-0.webp",
+      "page": 1,
+      "card_index": 7,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-007_dreamy-art-nouveau_4032679295.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-007_dreamy-art-nouveau_4032679295.webp",
+          "sha256": "6d0c1c045192e542d486cdb4d921286e3dfcabe5ddf978c4e998c3a064b04fa2",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 758970,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-007_dreamy-art-nouveau_4032679295.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-007_dreamy-art-nouveau_4032679295.webp",
+          "sha256": "e20b80faaab098333f290e0a6e5b15ef369fc69df76121c177f0120ed58f83e0",
+          "width": 800,
+          "height": 800,
+          "byte_size": 283020,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-3237210367",
+      "title": "Haunting Luminance",
+      "sref_code": "3237210367",
+      "source_key": "3237210367",
+      "source_id": "6769d04061ed6e004ef59814",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/61a658e5-3e53-480b-aa32-d971dfe36049-0.webp",
+      "page": 1,
+      "card_index": 5,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-005_haunting-luminance_3237210367.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-005_haunting-luminance_3237210367.webp",
+          "sha256": "9e6f0a777b5efe66f790b800072bccb48b6b7f35a3ed2e7bd3ea7d60b58a9607",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 827036,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-005_haunting-luminance_3237210367.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-005_haunting-luminance_3237210367.webp",
+          "sha256": "56126b1bb1ddeefb898a9cc775a66ecaa8917cbecd5eec0fbac8425d60f1f675",
+          "width": 800,
+          "height": 800,
+          "byte_size": 256502,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-1416840049",
+      "title": "Monochrome Estampe",
+      "sref_code": "1416840049",
+      "source_key": "1416840049",
+      "source_id": "6769b569619eb5004ee5ba56",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/89effee9-0623-482a-a482-f2efb6a052b4-0.webp",
+      "page": 1,
+      "card_index": 9,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-009_monochrome-estampe_1416840049.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-009_monochrome-estampe_1416840049.webp",
+          "sha256": "d4f14471e7108133f92c9b06e6307d7e7d9f008569ddadf9b74dc1bfa79dddff",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 193778,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-009_monochrome-estampe_1416840049.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-009_monochrome-estampe_1416840049.webp",
+          "sha256": "266fe0d3cc959bb81def2f9341999de468d18014c5dde767d9754a4ecefced76",
+          "width": 800,
+          "height": 800,
+          "byte_size": 97740,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-3932975440",
+      "title": "Vibrant Violet",
+      "sref_code": "3932975440",
+      "source_key": "3932975440",
+      "source_id": "6769c9aa20eec8004ea1148e",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/73ca12bb-ffc4-4be7-8b50-548860139e22-0.webp",
+      "page": 1,
+      "card_index": 20,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-020_vibrant-violet_3932975440.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-020_vibrant-violet_3932975440.webp",
+          "sha256": "86fdfa303cc61867502e0bfa3be293eb231d95553a4a4bacd5862489c165b93f",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 228804,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-020_vibrant-violet_3932975440.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-020_vibrant-violet_3932975440.webp",
+          "sha256": "ee93b4017b454e9961eccff7bf67e6e599c52b36b763bf214027bfb790455f57",
+          "width": 800,
+          "height": 800,
+          "byte_size": 118806,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-1352537622",
+      "title": "Redish Intensity",
+      "sref_code": "1352537622",
+      "source_key": "1352537622",
+      "source_id": "6769cc6320eec8004ea114f2",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/e91f9cea-ed66-4b59-b14a-953f2e0b1338-0.webp",
+      "page": 1,
+      "card_index": 34,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-034_redish-intensity_1352537622.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-034_redish-intensity_1352537622.webp",
+          "sha256": "9841db8b8b40efcd1613b00cc1b825f44106ed9fe59dfb0bbec03be5ddd4ec88",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 372178,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-034_redish-intensity_1352537622.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-034_redish-intensity_1352537622.webp",
+          "sha256": "0fbaad55f651f28d2fe800937a20040f589334847033629ebf3f683f55efb53a",
+          "width": 800,
+          "height": 800,
+          "byte_size": 146412,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-2253511591",
+      "title": "Orange Pop",
+      "sref_code": "2253511591",
+      "source_key": "2253511591",
+      "source_id": "6769b5c1619eb5004ee5ba76",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/a086e6fc-b8c2-4cb0-a4df-de136f83aa3c-0.webp",
+      "page": 1,
+      "card_index": 2,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-002_orange-pop_2253511591.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-002_orange-pop_2253511591.webp",
+          "sha256": "4e6afcc4ec6ee83e3788b3a94411e00e1857d4642692603288a20114a40697ed",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 415342,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-002_orange-pop_2253511591.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-002_orange-pop_2253511591.webp",
+          "sha256": "221f8579b39c0de801c6b48a67a46cb43cf4571c452ec43b8f3b8ea03336382d",
+          "width": 800,
+          "height": 800,
+          "byte_size": 185908,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-4263075813",
+      "title": "Digital Dream",
+      "sref_code": "4263075813",
+      "source_key": "4263075813",
+      "source_id": "6769c80620eec8004ea11395",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/fb24f6fe-f79c-4bb3-a2b0-588cc6d3c905-0.webp",
+      "page": 1,
+      "card_index": 35,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-035_digital-dream_4263075813.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-035_digital-dream_4263075813.webp",
+          "sha256": "daa3bca6c7eec34ca5724612f3a52ad0a7d246709ecdf946705cfc1b4b2c381a",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 204780,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-035_digital-dream_4263075813.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-035_digital-dream_4263075813.webp",
+          "sha256": "5aaea1ed7dfb58f94730e6b54068cecb218af6c2973acb656d62d91ae51b725d",
+          "width": 800,
+          "height": 800,
+          "byte_size": 109098,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-4112256435",
+      "title": "Serenitude",
+      "sref_code": "4112256435",
+      "source_key": "4112256435",
+      "source_id": "676a189a78c05a004ee92202",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/6a010965-3a72-4a35-b22d-47663df0dcfd-0.webp",
+      "page": 1,
+      "card_index": 10,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-010_serenitude_4112256435.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-010_serenitude_4112256435.webp",
+          "sha256": "754044f20c342ad6e9d964111d58f02208e3a1f2b14a278e1af099b3069c450a",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 731142,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-010_serenitude_4112256435.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-010_serenitude_4112256435.webp",
+          "sha256": "75f9f2a31788d878b64ccc2af2140ce1c9b13c2f79a1462708a3684fb878f47b",
+          "width": 800,
+          "height": 800,
+          "byte_size": 280716,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-2400511413",
+      "title": "Expressionist Paint",
+      "sref_code": "2400511413",
+      "source_key": "2400511413",
+      "source_id": "6769c50670157c004decdc5e",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/7f3fedce-06a0-4649-9e84-f2d2f3e989fb-0.webp",
+      "page": 1,
+      "card_index": 11,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-011_expressionist-paint_2400511413.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-011_expressionist-paint_2400511413.webp",
+          "sha256": "8e23176b1dc66ad74bbdc39cf6e06f4a10b666229bf79d261f7a677242e6344d",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 649576,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-011_expressionist-paint_2400511413.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-011_expressionist-paint_2400511413.webp",
+          "sha256": "9ebedfa2f6be679959c00c7baeae618ff2f85c0ba8542fd48137d75f5498cab3",
+          "width": 800,
+          "height": 800,
+          "byte_size": 249260,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-3546182195",
+      "title": "Minimalist Pastel",
+      "sref_code": "3546182195",
+      "source_key": "3546182195",
+      "source_id": "676a17ac78c05a004ee921c2",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/d969c3b9-8a23-4e5a-ba0e-21e667478f89-0.webp",
+      "page": 1,
+      "card_index": 12,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-012_minimalist-pastel_3546182195.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-012_minimalist-pastel_3546182195.webp",
+          "sha256": "c892bda70430b62625edeb8595f0d6f02288216bd0fbf8328055c6e6f4cd832d",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 120318,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-012_minimalist-pastel_3546182195.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-012_minimalist-pastel_3546182195.webp",
+          "sha256": "de399aebd6be2f7ffbe322d3240eb99a3f212074abe53c5fb19d49839d02195d",
+          "width": 800,
+          "height": 800,
+          "byte_size": 60078,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-246427892",
+      "title": "Pink Pop",
+      "sref_code": "246427892",
+      "source_key": "246427892",
+      "source_id": "676af7616e278d004e0d784f",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/b2cc270c-460c-4dbe-82a9-a1e706b072cc-0.webp",
+      "page": 1,
+      "card_index": 15,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-015_pink-pop_246427892.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-015_pink-pop_246427892.webp",
+          "sha256": "caae1bb5658f576c2fed5fbbf91bca0ac16b12ea7bacb9fc35147b8bb450ab95",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 194412,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-015_pink-pop_246427892.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-015_pink-pop_246427892.webp",
+          "sha256": "800af047535321177a2ab5b626239a8d156b98e8ff1b27fafa4ba79e2db3dde4",
+          "width": 800,
+          "height": 800,
+          "byte_size": 82224,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-2349086010",
+      "title": "Serene Whimsy Expressionism",
+      "sref_code": "2349086010",
+      "source_key": "2349086010",
+      "source_id": "676aa9acb92ad1004d05af4a",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/a3e8296c-1c56-4294-b9fd-c526343d5681-0.webp",
+      "page": 1,
+      "card_index": 4,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-004_serene-whimsy-expressionism_2349086010.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-004_serene-whimsy-expressionism_2349086010.webp",
+          "sha256": "17369740261408d5becb6da89e75cc046346d9bbfbe5a2f840e41f5ba67fb8a7",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 294814,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-004_serene-whimsy-expressionism_2349086010.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-004_serene-whimsy-expressionism_2349086010.webp",
+          "sha256": "6ca5e3f2803ba707c57d287160fe8f1a1e5c83681efc61464d90996ce7e96766",
+          "width": 800,
+          "height": 800,
+          "byte_size": 138538,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-2979119276",
+      "title": "Minimalist Subtle Melancholy",
+      "sref_code": "2979119276",
+      "source_key": "2979119276",
+      "source_id": "6769bf091faa1e004e93739f",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/e7620dbf-8143-4711-8bdb-53241406ffd9-0.webp",
+      "page": 1,
+      "card_index": 8,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-008_minimalist-subtle-melancholy_2979119276.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-008_minimalist-subtle-melancholy_2979119276.webp",
+          "sha256": "61bc27fa9a465a62087549c017beb922d99d2e6d86bf8069b7ca9d4080ab90c6",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 147256,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-008_minimalist-subtle-melancholy_2979119276.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-008_minimalist-subtle-melancholy_2979119276.webp",
+          "sha256": "2462d89c2920df0b0c4d80a8f546549acacb53e14c2295624adf0230559d031c",
+          "width": 800,
+          "height": 800,
+          "byte_size": 85842,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-781596790",
+      "title": "Sketched Anxiety",
+      "sref_code": "781596790",
+      "source_key": "781596790",
+      "source_id": "676ab0a293e156004ec927ee",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/c8dc924c-1c2c-4d8c-b09b-af0ff9682dd0-0.webp",
+      "page": 1,
+      "card_index": 18,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-018_sketched-anxiety_781596790.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-018_sketched-anxiety_781596790.webp",
+          "sha256": "26e40676afe1128643f5f968e16c542704c77b5bf044eed5d474d0a4c479d951",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 354684,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-018_sketched-anxiety_781596790.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-018_sketched-anxiety_781596790.webp",
+          "sha256": "e5da4a9c364662472c594d543e63f8a0b0aaecd968068391a83c9c67a7c48033",
+          "width": 800,
+          "height": 800,
+          "byte_size": 131768,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-1206271274",
+      "title": "Vivid Gaze",
+      "sref_code": "1206271274",
+      "source_key": "1206271274",
+      "source_id": "6769bcf91faa1e004e937328",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/3f27efab-fde3-42ad-9f73-f4965f892847-0.webp",
+      "page": 1,
+      "card_index": 45,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-045_vivid-gaze_1206271274.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-045_vivid-gaze_1206271274.webp",
+          "sha256": "3934526a97e6ae8770bf1d46ba9becb3ebaadf6316698d8394551ef921285a1d",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 721270,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-045_vivid-gaze_1206271274.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-045_vivid-gaze_1206271274.webp",
+          "sha256": "d6b07913c8d4b99155f67edb768aba7a8cb9d0d7bfa438354d9baba2d8bfa8ea",
+          "width": 800,
+          "height": 800,
+          "byte_size": 286860,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-203752896",
+      "title": "Vintage Serene Elegance",
+      "sref_code": "203752896",
+      "source_key": "203752896",
+      "source_id": "676aa5ef1b16b3ee27df57e4",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/956fa367-30d7-4bd2-8ef9-d564fa6b9d30-0.webp",
+      "page": 1,
+      "card_index": 3,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-003_vintage-serene-elegance_203752896.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-003_vintage-serene-elegance_203752896.webp",
+          "sha256": "047aeeccbefb3987a5336b8a457b10967afac50c88876dee1d2dfe00ecc78ed6",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 279014,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-003_vintage-serene-elegance_203752896.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-003_vintage-serene-elegance_203752896.webp",
+          "sha256": "6a1d3115fba25b031c72da7bf43ed273114b099025a4b3c39a6d876a27f3e4be",
+          "width": 800,
+          "height": 800,
+          "byte_size": 116340,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-2793381751",
+      "title": "Vintage Retro Pop Art",
+      "sref_code": "2793381751",
+      "source_key": "2793381751",
+      "source_id": "6769d09d61ed6e004ef59825",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/321d1a63-4e34-4136-9f74-a44e04f1d41b-0.webp",
+      "page": 1,
+      "card_index": 25,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-025_vintage-retro-pop-art_2793381751.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-025_vintage-retro-pop-art_2793381751.webp",
+          "sha256": "6b6bf480d940128e633b0428d1c8b0fffd156826749d675c29cead4497f3a4fb",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 634126,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-025_vintage-retro-pop-art_2793381751.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-025_vintage-retro-pop-art_2793381751.webp",
+          "sha256": "0091f3be55166dd8b2b0f6118d8f7c5220ef734f9f7b3e96f34d652ed989d390",
+          "width": 800,
+          "height": 800,
+          "byte_size": 254018,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-3718970132",
+      "title": "Pale Blue Berry",
+      "sref_code": "3718970132",
+      "source_key": "3718970132",
+      "source_id": "676a177e78c05a004ee921b2",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/sref-fdfkpxedtcsn.webp",
+      "page": 1,
+      "card_index": 27,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-027_pale-blue-berry_3718970132.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-027_pale-blue-berry_3718970132.webp",
+          "sha256": "691b729677c5e34e92e946013271e0f5f742712654a4d82177740dd3cd109f58",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 630396,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-027_pale-blue-berry_3718970132.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-027_pale-blue-berry_3718970132.webp",
+          "sha256": "226cf59b5dec5bf45ba336e645bec0e817eebaaebf905cd3a25b8242ff20e17b",
+          "width": 800,
+          "height": 800,
+          "byte_size": 252782,
+          "mime_type": "image/webp"
+        }
+      }
+    },
+    {
+      "id": "sref-3055824736",
+      "title": "Tropical Expressionism",
+      "sref_code": "3055824736",
+      "source_key": "3055824736",
+      "source_id": "676abff3fefcab004dd7c7ee",
+      "source_system": "sref-midjourney-premium",
+      "source_url": "https://img.sref-midjourney.com/5584e6e5-6dd9-4657-bad4-9ab9b2389262-0.webp",
+      "page": 1,
+      "card_index": 30,
+      "selection_rank": null,
+      "variants": {
+        "1600": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/1600/page-01_card-030_tropical-expressionism_3055824736.webp",
+          "path": "sref/v20260628/composites/1600/page-01_card-030_tropical-expressionism_3055824736.webp",
+          "sha256": "65b2ebba64860fffe29a6a17ba328f030af4551b43d88e792f67b63fd2820208",
+          "width": 1600,
+          "height": 1600,
+          "byte_size": 593474,
+          "mime_type": "image/webp"
+        },
+        "800": {
+          "url": "https://catalog.litscenes.ai/sref/v20260628/composites/800/page-01_card-030_tropical-expressionism_3055824736.webp",
+          "path": "sref/v20260628/composites/800/page-01_card-030_tropical-expressionism_3055824736.webp",
+          "sha256": "17ee97a054a320be946c1f82ad9b6d1d12c051160d6cfd484ab46f96e6b93ae3",
+          "width": 800,
+          "height": 800,
+          "byte_size": 241328,
+          "mime_type": "image/webp"
+        }
+      }
+    }
+  ]
+}

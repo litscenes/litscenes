@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/project_lens_workbench_interview.v0.1.schema.json",
+  "title": "ProjectLensWorkbenchInterviewResponseV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "assistant_message",
+    "body",
+    "change_summary"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "litscenes.project_lens_workbench_interview_response.v0.1" },
+    "assistant_message": { "type": "string" },
+    "body": { "$ref": "#/$defs/lens_body_proposal" },
+    "change_summary": { "type": "string" }
+  },
+  "$defs": {
+    "lens_body_proposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "claim",
+        "user_notes",
+        "visual_summary",
+        "resolved_visual_language",
+        "color_palette",
+        "style_ingredients",
+        "palette_terms",
+        "motif_terms",
+        "texture_material_terms",
+        "composition_terms",
+        "pacing_energy_terms",
+        "must_preserve",
+        "must_avoid",
+        "reference_media_ids",
+        "open_questions",
+        "readiness_summary",
+        "derived_virtues"
+      ],
+      "properties": {
+        "title": { "type": "string" },
+        "claim": { "type": "string" },
+        "user_notes": { "type": "string" },
+        "visual_summary": { "type": "string" },
+        "resolved_visual_language": { "$ref": "#/$defs/resolved_visual_language" },
+        "color_palette": { "type": "array", "minItems": 4, "maxItems": 6, "items": { "$ref": "#/$defs/color_swatch" } },
+        "style_ingredients": { "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/style_ingredient_proposal" } },
+        "palette_terms": { "type": "array", "maxItems": 16, "items": { "type": "string" } },
+        "motif_terms": { "type": "array", "maxItems": 16, "items": { "type": "string" } },
+        "texture_material_terms": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+        "composition_terms": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+        "pacing_energy_terms": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+        "must_preserve": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+        "must_avoid": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+        "reference_media_ids": { "type": "array", "maxItems": 24, "items": { "type": "string" } },
+        "open_questions": { "type": "array", "maxItems": 8, "items": { "type": "string" } },
+        "readiness_summary": { "type": "string" },
+        "derived_virtues": { "type": "array", "maxItems": 12, "items": { "type": "string" } }
+      }
+    },
+    "color_swatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "hex", "role", "note"],
+      "properties": {
+        "name": { "type": "string" },
+        "hex": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "role": { "type": "string" },
+        "note": { "type": "string" }
+      }
+    },
+    "resolved_visual_language": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "look",
+        "palette",
+        "materials",
+        "product_treatment",
+        "motifs",
+        "composition",
+        "pacing_energy",
+        "avoid"
+      ],
+      "properties": {
+        "look": { "type": "string" },
+        "palette": { "type": "array", "maxItems": 16, "items": { "type": "string" } },
+        "materials": { "type": "array", "maxItems": 16, "items": { "type": "string" } },
+        "product_treatment": { "type": "array", "maxItems": 16, "items": { "type": "string" } },
+        "motifs": { "type": "array", "maxItems": 16, "items": { "type": "string" } },
+        "composition": { "type": "array", "maxItems": 16, "items": { "type": "string" } },
+        "pacing_energy": { "type": "array", "maxItems": 16, "items": { "type": "string" } },
+        "avoid": { "type": "array", "maxItems": 16, "items": { "type": "string" } }
+      }
+    },
+    "style_ingredient_proposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "role",
+        "narrative_use",
+        "presentation_use",
+        "notes",
+        "palette_terms",
+        "motif_terms",
+        "avoid_terms",
+        "reference_aesthetic_ids",
+        "source_recipe_id",
+        "source_recipe_version",
+        "source_reference_ids"
+      ],
+      "properties": {
+        "title": { "type": "string" },
+        "role": { "type": "string" },
+        "narrative_use": { "type": "string" },
+        "presentation_use": { "type": "string" },
+        "notes": { "type": "string" },
+        "palette_terms": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+        "motif_terms": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+        "avoid_terms": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+        "reference_aesthetic_ids": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+        "source_recipe_id": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+        "source_recipe_version": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+        "source_reference_ids": { "type": "array", "maxItems": 12, "items": { "type": "string" } }
+      }
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "schema_version": "litscenes.project_goal.v0.2",
+  "project_id": "project_legacy",
+  "messages": [
+    {
+      "message_id": "goal_msg_legacy",
+      "role": "user",
+      "text": "Create a narrative short about returning home.",
+      "media_ids": [],
+      "created_at": "2026-06-15T00:00:00.000Z"
+    }
+  ],
+  "versions": [
+    {
+      "version_id": "goal_v2_legacy",
+      "turn_index": 1,
+      "brief": {
+        "content_type": "narrative",
+        "goal": "Turn the archive into a narrative short about returning home.",
+        "audience": "Family and close collaborators.",
+        "desired_response": "Feel the archive has a clear emotional purpose.",
+        "viewer_experience": "Warm, reflective, and grounded.",
+        "success_criteria": ["The viewer understands the emotional turn."],
+        "constraints": ["Avoid platform planning."],
+        "open_questions": [],
+        "theme_seed_summary": "Soft domestic texture.",
+        "theme_seed_terms": ["warm light", "quiet rooms"],
+        "meaning_node_refs": [],
+        "aesthetic_term_refs": []
+      },
+      "change_summary": "Defined the narrative Goal.",
+      "created_at": "2026-06-15T00:00:02.000Z",
+      "model": "legacy-test"
+    }
+  ],
+  "active_version_id": "goal_v2_legacy",
+  "updated_at": "2026-06-15T00:00:02.000Z"
+}

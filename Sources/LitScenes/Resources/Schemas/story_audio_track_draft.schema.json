@@ -1,0 +1,72 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project_id",
+    "track_id",
+    "title",
+    "voice_text",
+    "beat_prompt",
+    "mix_notes",
+    "tags",
+    "target_beat_id",
+    "source_beat_ids",
+    "generated_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["litscenes.story_audio_track_draft.v0.1"]
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "track_id": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "voice_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 140
+    },
+    "beat_prompt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 700
+    },
+    "mix_notes": {
+      "type": "string",
+      "maxLength": 240
+    },
+    "tags": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "string",
+        "maxLength": 32
+      }
+    },
+    "target_beat_id": {
+      "type": "string"
+    },
+    "source_beat_ids": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "string"
+      }
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/goal_style_taxonomy_refs.v0.1.schema.json",
+  "title": "GoalStyleTaxonomyRefsResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "style_term_refs"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "litscenes.goal_style_taxonomy_refs.v0.1" },
+    "style_term_refs": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["term", "kind", "weight", "rationale"],
+        "properties": {
+          "term": { "type": "string" },
+          "kind": { "type": "string", "enum": ["mood", "hue", "collection", "medium", "phrase"] },
+          "weight": { "type": "number" },
+          "rationale": { "type": "string" }
+        }
+      }
+    }
+  }
+}

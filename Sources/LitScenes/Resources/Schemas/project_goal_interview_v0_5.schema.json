@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/project_goal_interview.v0.5.schema.json",
+  "title": "ProjectGoalInterviewResponseV3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "assistant_message",
+    "brief",
+    "change_summary"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "litscenes.project_goal_interview_response.v0.5" },
+    "assistant_message": { "type": "string" },
+    "brief": { "$ref": "#/$defs/brief" },
+    "change_summary": { "type": "string" }
+  },
+  "$defs": {
+    "brief": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "content_type",
+        "goal",
+        "audience",
+        "desired_response",
+        "viewer_experience",
+        "moodboard_articulation",
+        "success_criteria",
+        "constraints",
+        "required_entities",
+        "open_questions",
+        "lens_seed_summary",
+        "lens_seed_terms",
+        "meaning_node_refs",
+        "aesthetic_term_refs"
+      ],
+      "properties": {
+        "content_type": {
+          "anyOf": [
+            { "type": "string", "enum": ["brand", "product", "service", "personal_story", "documentary", "narrative", "ambient", "experimental"] },
+            { "type": "null" }
+          ]
+        },
+        "goal": { "type": "string" },
+        "audience": { "type": "string" },
+        "desired_response": { "type": "string" },
+        "viewer_experience": { "type": "string" },
+        "moodboard_articulation": { "type": "string" },
+        "success_criteria": { "type": "array", "maxItems": 8, "items": { "type": "string" } },
+        "constraints": { "type": "array", "maxItems": 8, "items": { "type": "string" } },
+        "required_entities": { "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/required_entity" } },
+        "open_questions": { "type": "array", "maxItems": 8, "items": { "type": "string" } },
+        "lens_seed_summary": { "type": "string" },
+        "lens_seed_terms": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+        "meaning_node_refs": { "type": "array", "maxItems": 18, "items": { "$ref": "#/$defs/meaning_node_ref" } },
+        "aesthetic_term_refs": { "type": "array", "maxItems": 24, "items": { "$ref": "#/$defs/aesthetic_term_ref" } }
+      }
+    },
+    "required_entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "role", "required"],
+      "properties": {
+        "name": { "type": "string", "maxLength": 120 },
+        "role": { "type": "string", "maxLength": 120 },
+        "required": { "type": "boolean", "const": true }
+      }
+    },
+    "meaning_node_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slug", "kind", "name", "role", "source", "evidence"],
+      "properties": {
+        "slug": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "symbol",
+            "motif",
+            "theme",
+            "meaning_claim",
+            "value_tension",
+            "archetypal_situation",
+            "transformation",
+            "mood",
+            "genre_force",
+            "beat_function",
+            "scene_role"
+          ]
+        },
+        "name": { "type": "string" },
+        "role": {
+          "type": "string",
+          "enum": [
+            "literal_symbol",
+            "visual_motif",
+            "value_tension",
+            "meaning_claim",
+            "theme_seed",
+            "archetypal_situation",
+            "transformation",
+            "mood",
+            "avoidance",
+            "other"
+          ]
+        },
+        "source": { "type": "string", "enum": ["goal", "media", "goal_and_media", "operator"] },
+        "evidence": { "type": "string" }
+      }
+    },
+    "aesthetic_term_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["facet_type", "slug", "display_name", "role", "source", "evidence"],
+      "properties": {
+        "facet_type": { "type": "string", "enum": ["key_motif", "key_value", "key_colour", "origin_decade"] },
+        "slug": { "type": "string" },
+        "display_name": { "type": "string" },
+        "role": {
+          "type": "string",
+          "enum": ["motif", "value", "palette", "era", "material_or_texture", "mood", "avoidance", "other"]
+        },
+        "source": { "type": "string", "enum": ["goal", "media", "goal_and_media", "operator"] },
+        "evidence": { "type": "string" }
+      }
+    }
+  }
+}
+

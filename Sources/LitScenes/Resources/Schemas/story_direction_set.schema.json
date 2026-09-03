@@ -1,0 +1,287 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.litscenes/schemas/story_direction_set.v0.1.schema.json",
+  "title": "StoryDirectionSet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project_id",
+    "direction_set_id",
+    "input_fingerprint",
+    "story_setup_snapshot",
+    "candidate_directions",
+    "directions",
+    "selected_direction_id",
+    "status",
+    "generated_at",
+    "updated_at",
+    "generator",
+    "model",
+    "response_id",
+    "artifact_status"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "litscenes.story_direction_set.v0.1" },
+    "project_id": { "type": "string" },
+    "direction_set_id": { "type": "string" },
+    "input_fingerprint": { "$ref": "#/$defs/fingerprint" },
+    "story_setup_snapshot": { "$ref": "#/$defs/story_setup" },
+    "candidate_directions": { "type": "array", "minItems": 6, "maxItems": 8, "items": { "$ref": "#/$defs/direction" } },
+    "directions": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "$ref": "#/$defs/direction" } },
+    "selected_direction_id": { "type": "string" },
+    "status": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "updated_at": { "type": "string" },
+    "generator": { "type": "string" },
+    "model": { "type": "string" },
+    "response_id": { "type": "string" },
+    "artifact_status": { "type": "string", "enum": ["fresh", "stale", "missing", "legacy"] }
+  },
+  "$defs": {
+    "fingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "goal_version_id",
+        "goal_updated_at",
+        "aesthetic_brief_updated_at",
+        "chosen_recipe_id",
+        "chosen_recipe_version",
+        "story_world_hash",
+        "source_context_hash",
+        "enabled_media_hash",
+        "media_observations_hash",
+        "story_setup_hash",
+        "story_pattern_index_version"
+      ],
+      "properties": {
+        "goal_version_id": { "type": "string" },
+        "goal_updated_at": { "type": "string" },
+        "aesthetic_brief_updated_at": { "type": "string" },
+        "chosen_recipe_id": { "type": "string" },
+        "chosen_recipe_version": { "type": "string" },
+        "story_world_hash": { "type": "string" },
+        "source_context_hash": { "type": "string" },
+        "enabled_media_hash": { "type": "string" },
+        "media_observations_hash": { "type": "string" },
+        "story_setup_hash": { "type": "string" },
+        "story_pattern_index_version": { "type": "string" }
+      }
+    },
+    "story_setup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "project_id",
+        "output_type",
+        "invention_level",
+        "commercial_pressure",
+        "pov",
+        "story_engine",
+        "ending_style",
+        "custom_pov_option",
+        "custom_story_engine_option",
+        "custom_ending_option",
+        "must_include",
+        "avoid",
+        "commercial_details",
+        "updated_at"
+      ],
+      "properties": {
+        "schema_version": { "type": "string", "const": "litscenes.story_setup.v0.1" },
+        "project_id": { "type": "string" },
+        "output_type": {
+          "type": "string",
+          "enum": [
+            "cinematic_short",
+            "trailer_teaser",
+            "social_sequence",
+            "product_service_story",
+            "campaign_concept",
+            "experimental_sequence"
+          ]
+        },
+        "invention_level": {
+          "type": "string",
+          "enum": ["light_invention", "invent_freely", "wild_mythology"]
+        },
+        "commercial_pressure": {
+          "type": "string",
+          "enum": ["none", "creator_friendly", "product_service", "explicit_cta"]
+        },
+        "pov": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "witness_observer",
+            "homeowner",
+            "investigator",
+            "narrator",
+            "creature_pov",
+            "product_brand_voice",
+            "evidence_only"
+          ]
+        },
+        "story_engine": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "evidence_escalates",
+            "domestic_breach",
+            "investigation",
+            "public_warning",
+            "advertisement_turns_strange",
+            "ritual_mythic_reveal",
+            "before_after_transformation",
+            "product_promise_becomes_surreal"
+          ]
+        },
+        "ending_style": {
+          "type": "string",
+          "enum": [
+            "ambiguous_final_image",
+            "twist_reveal",
+            "warning_escalation",
+            "emotional_resolution",
+            "cta_offer",
+            "mythic_transformation"
+          ]
+        },
+        "custom_pov_option": { "$ref": "#/$defs/story_setup_option" },
+        "custom_story_engine_option": { "$ref": "#/$defs/story_setup_option" },
+        "custom_ending_option": { "$ref": "#/$defs/story_setup_option" },
+        "must_include": { "type": "string" },
+        "avoid": { "type": "string" },
+        "commercial_details": { "$ref": "#/$defs/commercial_details" },
+        "updated_at": { "type": "string" }
+      }
+    },
+    "story_setup_option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "option_id",
+        "label",
+        "prompt_value",
+        "rationale"
+      ],
+      "properties": {
+        "option_id": { "type": "string" },
+        "label": { "type": "string" },
+        "prompt_value": { "type": "string" },
+        "rationale": { "type": "string" }
+      }
+    },
+    "commercial_details": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "product_service",
+        "audience",
+        "offer_or_promise",
+        "cta",
+        "do_not_say",
+        "brand_tone"
+      ],
+      "properties": {
+        "product_service": { "type": "string" },
+        "audience": { "type": "string" },
+        "offer_or_promise": { "type": "string" },
+        "cta": { "type": "string" },
+        "do_not_say": { "type": "string" },
+        "brand_tone": { "type": "string" }
+      }
+    },
+    "aesthetic_use": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["narrative", "presentation"],
+      "properties": {
+        "narrative": { "type": "string" },
+        "presentation": { "type": "string" }
+      }
+    },
+    "score": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "goal_fit",
+        "aesthetic_narrative_fit",
+        "aesthetic_presentation_fit",
+        "story_setup_fit",
+        "pattern_support",
+        "specificity",
+        "promptability",
+        "novelty",
+        "lane_fit",
+        "commercial_fit",
+        "too_commercial_penalty",
+        "generic_slop_penalty",
+        "near_duplicate_penalty",
+        "final_score"
+      ],
+      "properties": {
+        "goal_fit": { "type": "number" },
+        "aesthetic_narrative_fit": { "type": "number" },
+        "aesthetic_presentation_fit": { "type": "number" },
+        "story_setup_fit": { "type": "number" },
+        "pattern_support": { "type": "number" },
+        "specificity": { "type": "number" },
+        "promptability": { "type": "number" },
+        "novelty": { "type": "number" },
+        "lane_fit": { "type": "number" },
+        "commercial_fit": { "type": "number" },
+        "too_commercial_penalty": { "type": "number" },
+        "generic_slop_penalty": { "type": "number" },
+        "near_duplicate_penalty": { "type": "number" },
+        "final_score": { "type": "number" }
+      }
+    },
+    "direction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "direction_id",
+        "enabled",
+        "lane",
+        "title",
+        "premise",
+        "story_engine",
+        "what_happens",
+        "why_it_works",
+        "aesthetic_use",
+        "invented_elements",
+        "risk",
+        "three_beat_preview",
+        "meaning_moves",
+        "commercial_pressure",
+        "weirdness",
+        "promptability",
+        "score_debug",
+        "validation_warnings"
+      ],
+      "properties": {
+        "direction_id": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "lane": { "type": "string", "enum": ["recommended", "bolder", "commercial", "wildcard"] },
+        "title": { "type": "string" },
+        "premise": { "type": "string" },
+        "story_engine": { "type": "string" },
+        "what_happens": { "type": "string" },
+        "why_it_works": { "type": "string" },
+        "aesthetic_use": { "$ref": "#/$defs/aesthetic_use" },
+        "invented_elements": { "type": "array", "maxItems": 8, "items": { "type": "string" } },
+        "risk": { "type": "string" },
+        "three_beat_preview": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "string" } },
+        "meaning_moves": { "type": "array", "maxItems": 8, "items": { "type": "string" } },
+        "commercial_pressure": { "type": "number", "minimum": 0, "maximum": 1 },
+        "weirdness": { "type": "number", "minimum": 0, "maximum": 1 },
+        "promptability": { "type": "number", "minimum": 0, "maximum": 1 },
+        "score_debug": { "$ref": "#/$defs/score" },
+        "validation_warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
