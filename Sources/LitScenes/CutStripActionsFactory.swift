@@ -114,7 +114,11 @@ func makeCutStripActions(
         }
     }
     actions.onConfirmRender = { cutId, overrides, onlySegmentKeys in
-        library.setShotSegmentPromptOverrides(shotId: cutId, overrides: overrides)
+        // Segment editors save text and timing together. Narration video has
+        // a separate shot-wide motion prompt and still saves on confirmation.
+        if let shot = library.shotTimeline.shots.first(where: { $0.shotId == cutId }), shot.renderStack.isNarrationDriven {
+            guard library.setShotSegmentPromptOverrides(shotId: cutId, overrides: overrides) else { return }
+        }
         if let shot = library.shotTimeline.shots.first(where: { $0.shotId == cutId }),
            let entryId = shotPendingEndingForRender(shot: shot, segments: library.shotRenderPromptPlan(shotId: cutId)?.segments ?? [], keys: onlySegmentKeys) {
             surface.onOpenPlayer(ShotVideoRequest(shotId: cutId, focusedEntryId: entryId,
@@ -126,6 +130,9 @@ func makeCutStripActions(
     actions.onAutosavePromptOverrides = { cutId, overrides in
         library.setShotSegmentPromptOverrides(shotId: cutId, overrides: overrides)
     }
+    actions.onPersistPromptDrafts = { library.saveShotPromptDrafts(shotId: $0, updates: $1) }
+    actions.canAssistPrompts = library.canAssistShotPrompts
+    actions.onAssistPrompt = { await library.assistShotPrompt($0) }
     actions.onSaveDirectionPlans = { cutId, plans in
         library.setShotSegmentDirectionPlans(shotId: cutId, plans: plans)
     }

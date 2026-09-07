@@ -1717,6 +1717,7 @@ final class LibraryEngine: ObservableObject {
     @Published private(set) var goalCastStatus = ""
     /// Canonical peer SHOTS: order, reversible combine groups, and soft-delete
     /// state all live here. Stage documents are legacy migration input only.
+    private var activePromptAssistanceKeys: Set<String> = []
     @Published private(set) var shotTimeline: ProjectShotTimelineDocument = .empty(projectId: "")
     /// Media-viewer generations (whole-asset looks of raw tray videos,
     /// image-to-video motion jobs) — durable OUTSIDE the shot timeline.
@@ -27888,6 +27889,50 @@ final class LibraryEngine: ObservableObject {
         aestheticStatus = entryId.trimmed.isEmpty
             ? "Face check re-armed for this shot's anchor"
             : "Face check overridden for this anchor frame — you vouched for it"
+    }
+
+    var canAssistShotPrompts: Bool { (try? OpenAIClient.fromEnvironment()) != nil }
+
+    @discardableResult
+    func saveShotPromptDrafts(shotId: String, updates: [ShotPromptDraftUpdate]) -> Bool {
+        guard let project = currentProject, let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return false }
+        let liveKeys = Set(shotRenderPromptPlan(shotId: shotId)?.segments.compactMap { segment -> String? in
+            if case .generated(let item) = segment { return item.pairKey }; return nil
+        } ?? [])
+        guard updates.allSatisfy({ liveKeys.contains($0.key) }) else { return false }
+        let now = DateFormats.now()
+        let updated = shot.applyingPromptDrafts(updates, now: now)
+        if updated == shot { return true }
+        return persistShotTimeline(shotTimeline.updatingShot(shotId: shotId, now: now) { _ in updated }, for: project)
+    }
+
+    func assistShotPrompt(_ request: ShotPromptAssistanceRequest) async -> ShotPromptAssistanceOutcome {
+        guard let project = currentProject else { return .failed("Select a project first.") }
+        guard request.intent != .improve || !request.operatorPrompt.trimmed.isEmpty else {
+            return .failed("Enter a direction to improve, or use Suggest.")
+        }
+        guard shotRenderPromptPlan(shotId: request.shotId)?.segments.contains(where: {
+            if case .generated(let item) = $0 { return item.pairKey == request.segmentKey }; return false
+        }) == true else { return .failed("This segment changed. Reopen it before drafting a prompt.") }
+        let key = project.projectId + "|" + request.shotId + "|" + request.segmentKey
+        guard !activePromptAssistanceKeys.contains(key) else { return .failed("Prompt assistance is already running for this segment.") }
+        activePromptAssistanceKeys.insert(key)
+        defer { activePromptAssistanceKeys.remove(key) }
+        let recipe = (try? JSONCoding.encoder.encode(request)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        return await WorkflowCoordinator.shared.run(project: project, workflow: "shot_prompt_assistance",
+            artifactType: "shot", artifactId: request.shotId, lane: .text,
+            recipeJSON: recipe, failure: ShotPromptAssistanceOutcome.failed("Prompt assistance did not start. Try again.")) {
+                do {
+                    try WorkflowCoordinator.shared.checkStopRequested()
+                    let client = try OpenAIClient.fromEnvironment()
+                    let text = try await client.assistShotPrompt(request, projectId: project.projectId)
+                    return .ready(text)
+                } catch {
+                    let message = WorkflowPrivacy.text(error.localizedDescription)
+                    await WorkflowCoordinator.shared.note(project: project, workflow: "shot_prompt_assistance", message: message, failed: true)
+                    return .failed(message)
+                }
+            }
     }
 
     /// Persists the Re-render sheet's segment prompt overrides on the shot

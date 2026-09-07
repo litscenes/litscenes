@@ -49,8 +49,8 @@ struct CutRenderPlanStrip: View {
     /// The one filled element: ink on brass on the plate, paper on brass in the row.
     private var confirmInk: Color { isPlate ? CanonColor.ink : CanonColor.paper }
 
+    @State private var promptSaveError = ""
     @State private var drafts: [String: String] = [:]
-    @State private var planDrafts: [String: ShotTemporalDirectionPlan] = [:]
     @State private var modeDrafts: [String: ShotSegmentPromptMode] = [:]
     @State private var autosaveTask: Task<Void, Never>?
     /// Local face verdict for the narration anchor (nil while checking). The
@@ -223,7 +223,6 @@ struct CutRenderPlanStrip: View {
         // behavior) keyed off the raw dictionary so plan recomputes can't
         // loop it, flushed when the strip collapses.
         .onChange(of: drafts) { scheduleAutosave() }
-        .onChange(of: planDrafts) { scheduleAutosave() }
         .onChange(of: modeDrafts) { scheduleAutosave() }
         .onDisappear {
             autosaveTask?.cancel()
@@ -586,41 +585,31 @@ struct CutRenderPlanStrip: View {
             .background(RoundedRectangle(cornerRadius: 3).fill(color.opacity(0.12)))
     }
 
-    private func autosaveDrafts() {
-        let computed = computedSegmentPromptOverrides(
-            drafts: drafts,
-            items: plan.generatedItems,
-            now: DateFormats.now()
-        )
-        let merged = mergedAutosavePromptOverrides(existing: cut.segmentPromptOverrides, computed: computed)
-        if !promptOverridesAgree(merged, cut.segmentPromptOverrides) {
-            actions.onAutosavePromptOverrides(cut.shotId, merged)
+    private func autosaveDrafts() { _ = persistPromptDrafts() }
+
+    @discardableResult
+    private func persistPromptDrafts(requireText: Bool = false) -> Bool {
+        let changed = Set(drafts.keys).union(modeDrafts.keys)
+        let items = plan.generatedItems.filter { changed.contains($0.pairKey) }
+        if requireText, items.contains(where: { draftValue(for: $0).trimmed.isEmpty }) {
+            promptSaveError = "Enter a direction or use Suggest before rendering."
+            return false
         }
-        let mergedPlans = mergedAutosaveDirectionPlans(
-            existing: cut.segmentDirectionPlans,
-            computed: computedPlans()
-        )
-        if !directionPlansAgree(mergedPlans, cut.segmentDirectionPlans) {
-            actions.onSaveDirectionPlans(cut.shotId, mergedPlans)
+        let updates = items.filter { !draftValue(for: $0).trimmed.isEmpty }.map {
+            ShotPromptDraftUpdate(item: $0, draft: promptDraftBinding($0).wrappedValue)
         }
+        let saved = updates.isEmpty || actions.onPersistPromptDrafts(cut.shotId, updates)
+        promptSaveError = saved ? "" : "The prompt could not be saved. Retry before rendering."
+        return saved
     }
 
-    /// The shared pure sibling of `computedSegmentPromptOverrides`, so the
-    /// strip and the Re-render panel persist plans identically.
-    private func computedPlans() -> [ShotSegmentDirectionPlanRecord] {
-        computedSegmentDirectionPlans(
-            planDrafts: planDrafts,
-            modeDrafts: modeDrafts,
-            items: plan.generatedItems,
-            existing: cut.segmentDirectionPlans,
-            now: DateFormats.now()
-        )
+    private func promptDraftBinding(_ item: ShotSegmentPromptPlanItem) -> Binding<ShotPromptDraft> {
+        Binding(get: { ShotPromptDraft.current(item: item, text: drafts[item.pairKey], mode: modeValue(for: item)) },
+            set: { drafts[item.pairKey] = $0.text; modeDrafts[item.pairKey] = $0.mode })
     }
 
-    /// Confirm-time persist: plans first, then overrides ride onConfirm.
-    private func saveDirectionPlansForConfirm() {
-        actions.onSaveDirectionPlans(cut.shotId, computedPlans())
-    }
+    /// Confirm only after text and retained timing authority are saved together.
+    private func saveDirectionPlansForConfirm() -> Bool { persistPromptDrafts(requireText: true) }
 
     // MARK: Header / footer
 
@@ -769,16 +758,8 @@ struct CutRenderPlanStrip: View {
                     isFetchingRates: actions.isFetchingVideoPricing
                 )
                 Button {
-                    saveDirectionPlansForConfirm()
+                    guard saveDirectionPlansForConfirm() else { return }
                     if hasDependentContinuationChain {
-                        actions.onAutosavePromptOverrides(
-                            cut.shotId,
-                            computedSegmentPromptOverrides(
-                                drafts: drafts,
-                                items: plan.generatedItems,
-                                now: DateFormats.now()
-                            )
-                        )
                         onCancel()
                         Task { _ = await actions.onRebuildContinuationChain(cut.shotId) }
                     } else {
@@ -846,7 +827,7 @@ struct CutRenderPlanStrip: View {
                                     ? "All source video is reusable — assemble a ready version locally for $0"
                                     : "\(isResume ? "Resume renders" : "Render") only the \(suffix.missingKeys.count) missing segment\(suffix.missingKeys.count == 1 ? "" : "s") — the \(suffix.reusableSegmentCount) saved one\(suffix.reusableSegmentCount == 1 ? " is" : "s are") reused verbatim. A new version is created."))))
                 ) {
-                    saveDirectionPlansForConfirm()
+                    guard saveDirectionPlansForConfirm() else { return }
                     onConfirm(
                         computedSegmentPromptOverrides(drafts: drafts, items: plan.generatedItems, now: DateFormats.now()),
                         isCombinedSeedContext && suffix.missingKeys.isEmpty
@@ -879,14 +860,13 @@ struct CutRenderPlanStrip: View {
                                         : "Rebuild each continuation in order and keep every prior take; completed links make a failed run resumable")
                                     : "Save these prompts and render — exactly what's shown above is what runs"))))
                 ) {
-                    saveDirectionPlansForConfirm()
+                    guard saveDirectionPlansForConfirm() else { return }
                     let overrides = computedSegmentPromptOverrides(
                         drafts: drafts,
                         items: plan.generatedItems,
                         now: DateFormats.now()
                     )
                     if hasDependentContinuationChain {
-                        actions.onAutosavePromptOverrides(cut.shotId, overrides)
                         onCancel()
                         Task { _ = await actions.onRebuildContinuationChain(cut.shotId) }
                     } else {
@@ -1020,39 +1000,10 @@ struct CutRenderPlanStrip: View {
                         .disabled(true)
                         .help("Reused verbatim from the selected version — RE-RENDER ALL to reprompt this segment")
                 } else {
-                    ShotSegmentBeatsEditor(
-                        item: item,
-                        plan: planBinding(for: item),
-                        mode: modeBinding(for: item),
-                        isDrafting: actions.draftingDirectionKeys.contains("\(cut.shotId)|\(item.pairKey)"),
-                        draftError: actions.directionDraftErrors["\(cut.shotId)|\(item.pairKey)"],
-                        onDraft: { actions.onDraftDirectionPlan(cut.shotId, item.pairKey) }
-                    ) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            TextEditor(text: draftBinding(for: item))
-                                .font(CanonType.interface(11))
-                                .foregroundStyle(CanonColor.ink)
-                                .scrollContentBackground(.hidden)
-                                .padding(6)
-                                .frame(height: 84)
-                                .background(RoundedRectangle(cornerRadius: 7).fill(editorFill))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 7)
-                                        .stroke(isEdited(item) ? CanonColor.brass.opacity(0.55) : hairline(0.9), lineWidth: 1)
-                                )
-                            if isEdited(item) {
-                                Button {
-                                    drafts[item.pairKey] = item.generatedPrompt
-                                } label: {
-                                    Text("RESET TO GENERATED")
-                                        .font(CanonType.archive(6.5, weight: .bold))
-                                        .kerning(0.5)
-                                        .foregroundStyle(labelInk)
-                                }
-                                .buttonStyle(.plain)
-                                .help("Discard your edit — the generated prompt renders")
-                            }
-                        }
+                    ShotSegmentPromptEditor(shot: cut, item: item, draft: promptDraftBinding(item),
+                        canAssist: actions.canAssistPrompts, onAssist: actions.onAssistPrompt) { EmptyView() }
+                    if !promptSaveError.isEmpty {
+                        Text(promptSaveError).font(.caption).foregroundStyle(CanonColor.rust)
                     }
                 }
             }
@@ -1184,43 +1135,10 @@ struct CutRenderPlanStrip: View {
         }
     }
 
-    // MARK: Beats drafts (same lazy pair-keyed law as the text drafts)
-
-    private func planValue(for item: ShotSegmentPromptPlanItem) -> ShotTemporalDirectionPlan {
-        planDrafts[item.pairKey]
-            ?? item.directionPlan?.plan
-            ?? shotFallbackDirectionPlan(pair: item.pair)
-    }
+    // MARK: Retained timing authority
 
     private func modeValue(for item: ShotSegmentPromptPlanItem) -> ShotSegmentPromptMode {
         modeDrafts[item.pairKey] ?? item.promptMode
-    }
-
-    private func planBinding(for item: ShotSegmentPromptPlanItem) -> Binding<ShotTemporalDirectionPlan> {
-        Binding(
-            get: { planValue(for: item) },
-            set: { planDrafts[item.pairKey] = $0 }
-        )
-    }
-
-    /// The eject law, identical to the Re-render panel: beats→raw seeds the
-    /// raw box with the compiled text; raw→beats restores the retained plan.
-    private func modeBinding(for item: ShotSegmentPromptPlanItem) -> Binding<ShotSegmentPromptMode> {
-        Binding(
-            get: { modeValue(for: item) },
-            set: { newMode in
-                if newMode == .raw, modeValue(for: item) == .beats,
-                   let selection = item.renderStack.modelSelection(for: item.pair),
-                   let compiled = compileTemporalDirection(
-                       plan: planValue(for: item),
-                       modelSelection: selection,
-                       durationSeconds: item.renderStack.segmentSeconds
-                   ) {
-                    drafts[item.pairKey] = compiled.canonicalText
-                }
-                modeDrafts[item.pairKey] = newMode
-            }
-        )
     }
 
     private func footageRow(_ segment: ShotFootagePlanSegment, isReused: Bool = false) -> some View {
@@ -1336,7 +1254,7 @@ struct CutRenderPlanStrip: View {
     // the save (the law in `computedSegmentPromptOverrides`).
 
     private func draftValue(for item: ShotSegmentPromptPlanItem) -> String {
-        drafts[item.pairKey] ?? item.overridePrompt ?? item.generatedPrompt
+        promptDraftBinding(item).wrappedValue.text
     }
 
     private func draftBinding(for item: ShotSegmentPromptPlanItem) -> Binding<String> {

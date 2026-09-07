@@ -451,7 +451,7 @@ func directionPlansAgree(
 /// Everything the beat-drafting prompt sees for one segment. Deliberately
 /// dialect-free: the plan is model-neutral by contract, so no provider or
 /// timing syntax ever reaches the drafting model.
-struct ShotDirectionPlanDraftContext {
+struct ShotDirectionPlanDraftContext: Codable, Hashable, Sendable {
     var segmentSeconds: Int = 0
     var startImageId: String = ""
     var endImageId: String = ""

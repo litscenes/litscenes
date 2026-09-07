@@ -2363,6 +2363,29 @@ struct OpenAIClient: Sendable {
         )
     }
 
+    func assistShotPrompt(_ input: ShotPromptAssistanceRequest, projectId: String,
+                          model: String = SessionConfig().model) async throws -> String {
+        let schema: [String: Any] = ["type": "object", "additionalProperties": false,
+            "required": ["prompt"], "properties": ["prompt": ["type": "string"]]]
+        let body: [String: Any] = ["model": model, "store": true, "reasoning": ["effort": "low"],
+            "text": ["verbosity": "low", "format": ["type": "json_schema", "name": "shot_prompt_assistance", "strict": true, "schema": schema]],
+            "input": [["role": "user", "content": [["type": "input_text", "text": input.providerPrompt]]]]]
+        let result = try await responsesRequest(operationName: "shot_prompt_" + input.intent.rawValue,
+            body: body, model: model, timeoutInterval: 120, projectId: projectId, runId: input.requestId,
+            traceGroupId: input.requestId, traceWorkflowName: "shot_prompt_assistance", traceWorkflowStep: input.intent.rawValue,
+            traceArtifactType: "shot_segment", traceArtifactId: input.shotId + "|" + input.segmentKey)
+        do {
+            let response = try ShotPromptAssistanceResponse.decode(result.rawText)
+            await InferenceTraceStore.shared.enrich(traceId: result.traceId,
+                parsedOutputJSON: String(data: try JSONCoding.encoder.encode(response), encoding: .utf8))
+            return response.prompt
+        } catch {
+            await InferenceTraceStore.shared.enrich(traceId: result.traceId,
+                parsedOutputJSON: workflowRecipe(["validation_error": error.localizedDescription]))
+            throw error
+        }
+    }
+
     /// Drafts one segment's temporal direction plan: 2–4 weighted motion
     /// beats between two keyframes. Strict schema; client-side clamps (beat
     /// cap, weight range, blank-beat drop) exactly like the chips draft —

@@ -43,3 +43,7 @@
 2026-09-07T19:25:21Z A pending ending elsewhere in the Shot cannot own an earlier segment action; review routing now uses the requested placement after drafts have saved successfully.
 2026-09-07T19:25:21Z Whole controls need to wrap within the modal columns; squeezing every control into one horizontal row made labels unreadable even when the underlying actions worked.
 2026-09-07T19:25:21Z Native validation must enter copied legacy documents through the same canonical store-loading path as the app; direct raw JSON decoding does not represent the user-visible loaded Shot.
+
+2026-09-07T21:05:09Z The fixed cream take-review background conflicts with inherited dark appearance; prompt assistance must also distinguish refining operator intent from proposing a fresh direction, and explicit text edits must atomically retire hidden timing authority.
+
+2026-09-07T21:43:26Z Prompt assistance changes the next draft, while selected media and retained timing stay independent; the existing narration-wide confirmation still owns its separate prompt save, and Logs navigation uses the owning Shot while traces retain segment identity.

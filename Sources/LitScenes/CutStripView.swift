@@ -75,6 +75,9 @@ struct CutStripActions {
     var onAutosavePromptOverrides: (String, [ShotSegmentPromptOverride]) -> Void = { _, _ in }
     /// Persists segment direction plans (beats) from the plan strip —
     /// autosave passes the upsert-only merge, confirm the computed set.
+    var onPersistPromptDrafts: (String, [ShotPromptDraftUpdate]) -> Bool = { _, _ in true }
+    var canAssistPrompts = false
+    var onAssistPrompt: (ShotPromptAssistanceRequest) async -> ShotPromptAssistanceOutcome = { _ in .failed("Prompt assistance is unavailable.") }
     var onSaveDirectionPlans: (String, [ShotSegmentDirectionPlanRecord]) -> Void = { _, _ in }
     /// LLM beat-drafting lane state (keys are "shotId|pairKey") and the
     /// per-segment trigger: (cutId, segmentKey).

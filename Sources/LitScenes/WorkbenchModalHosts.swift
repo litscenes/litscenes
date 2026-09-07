@@ -126,7 +126,7 @@ struct ShotPlayerSheetHost: View {
                     }
                 },
                 onRebuild: { overrides in
-                    guard savePromptDrafts(overrides), draftsSaved else { return }
+                    guard draftsSaved else { return }
                     Task { _ = await library.rebuildShotGeneratedChain(shotId: request.shotId) }
                 },
                 rebuildEstimate: library.shotContinuationRechainEstimate(shotId: request.shotId, rebuildAll: true),
@@ -164,7 +164,7 @@ struct ShotPlayerSheetHost: View {
                 },
                 onRender: { overrides in
                     let shotId = request.shotId
-                    guard savePromptDrafts(overrides), draftsSaved else { return }
+                    guard draftsSaved else { return }
                     if let shot = library.shotTimeline.shots.first(where: { $0.shotId == shotId }),
                        let entryId = shotPendingEndingForRender(shot: shot, segments: library.shotRenderPromptPlan(shotId: shotId)?.segments ?? [], keys: nil) {
                         reviewEnding(entryId)
@@ -174,7 +174,7 @@ struct ShotPlayerSheetHost: View {
                 },
                 onRenderSegment: { overrides, segmentKey in
                     let shotId = request.shotId
-                    guard savePromptDrafts(overrides), draftsSaved else { return }
+                    guard draftsSaved else { return }
                     let livePlan = library.shotRenderPromptPlan(shotId: shotId)?.segments ?? []
                     if let shot = library.shotTimeline.shots.first(where: { $0.shotId == shotId }),
                        let item = livePlan.compactMap({ segment -> ShotSegmentPromptPlanItem? in
@@ -187,6 +187,15 @@ struct ShotPlayerSheetHost: View {
                     }
                     Task { await library.renderShot(shotId: shotId, onlySegmentKeys: [segmentKey]) }
                 },
+                onPersistPromptDrafts: { updates in
+                    let saved = library.saveShotPromptDrafts(shotId: request.shotId, updates: updates)
+                    promptDraftSaveFailed = !saved
+                    directionDraftSaveFailed = !saved
+                    if !saved { endingMessage = "The prompt could not be saved. Retry from its segment card before rendering." }
+                    return saved
+                },
+                canAssistPrompts: library.canAssistShotPrompts,
+                onAssistPrompt: { await library.assistShotPrompt($0) },
                 onAutosaveOverrides: { overrides in _ = savePromptDrafts(overrides) },
                 onSaveDirectionPlans: { plans in
                     let saved = library.setShotSegmentDirectionPlans(shotId: request.shotId, plans: plans)
@@ -601,7 +610,7 @@ struct ShotPlayerSheetHost: View {
                 if let review = endingReview {
                     ShotContinuationReviewView(availability: review,
                         configuredModels: Set(ShotRenderModel.allCases.filter(library.canExecuteShotRenderModel)),
-                        pricing: library.falPricing, title: review.targetFrame == nil ? (endingEntryId.isEmpty ? "Extend Scene" : "New Continuation Take") : "Render Ending",
+                        pricing: library.falPricing, title: review.targetFrame == nil ? (endingEntryId.isEmpty ? "Extend Scene" : "Render new take") : "Render Ending",
                         onCancel: { endingReview = nil }, onRender: { recipe in
                             let entryId = endingEntryId
                             endingReview = nil

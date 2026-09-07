@@ -84,7 +84,7 @@ struct ShotContinuationReviewView: View {
                 Text("PAID VIDEO GENERATION")
                     .font(CanonType.archive(7, weight: .semibold))
                     .kerning(0.7)
-                    .foregroundStyle(CanonColor.muted)
+                    .foregroundStyle(CanonColor.ink.opacity(0.65))
             }
 
             endpointPreview
@@ -107,7 +107,7 @@ struct ShotContinuationReviewView: View {
             Text("CONTINUATION METHOD")
                 .font(CanonType.archive(7.5, weight: .semibold))
                 .kerning(0.8)
-                .foregroundStyle(CanonColor.muted)
+                .foregroundStyle(CanonColor.ink.opacity(0.65))
             HStack(spacing: 8) {
                 methodButton(
                     mode: .nativeExtend,
@@ -136,13 +136,13 @@ struct ShotContinuationReviewView: View {
             }) {
                 Text("\(stack.providerSelection.label) · LTX 2.3 · \(stack.segmentSeconds)s new · \(String(format: "%.1f", context))s tail context · native audio")
                     .font(CanonType.archive(7.5, weight: .medium))
-                    .foregroundStyle(CanonColor.muted)
+                    .foregroundStyle(CanonColor.ink.opacity(0.65))
             }
 
             Text("DIRECTION")
                 .font(CanonType.archive(7.5, weight: .semibold))
                 .kerning(0.8)
-                .foregroundStyle(CanonColor.muted)
+                .foregroundStyle(CanonColor.ink.opacity(0.65))
             TextEditor(text: $prompt)
                 .font(CanonType.interface(12))
                 .scrollContentBackground(.hidden)
@@ -164,7 +164,7 @@ struct ShotContinuationReviewView: View {
                         preparedAnchor: anchor, targetFrame: availability.targetFrame
                     ))
                 } label: {
-                    Text("▶ RENDER · \(priceLabel)")
+                    Text("▶ RENDER TAKE · \(priceLabel)")
                         .font(CanonType.archive(8, weight: .bold))
                         .kerning(0.6)
                         .padding(.horizontal, 14)
@@ -182,6 +182,9 @@ struct ShotContinuationReviewView: View {
         .padding(16)
         .frame(width: 560)
         .background(CanonColor.paper)
+        .foregroundStyle(CanonColor.ink)
+        .environment(\.colorScheme, .light)
+        .preferredColorScheme(.light)
     }
 
     private var endpointPreview: some View {
@@ -195,7 +198,7 @@ struct ShotContinuationReviewView: View {
                         .aspectRatio(contentMode: .fill)
                 } else {
                     Image(systemName: "photo")
-                        .foregroundStyle(CanonColor.muted)
+                        .foregroundStyle(CanonColor.ink.opacity(0.65))
                 }
             }
             .frame(width: 176, height: 99)
@@ -209,7 +212,7 @@ struct ShotContinuationReviewView: View {
                     .font(CanonType.interface(11, weight: .semibold))
                 Text(anchorSourceDetail)
                     .font(CanonType.interface(9.5))
-                    .foregroundStyle(CanonColor.muted)
+                    .foregroundStyle(CanonColor.ink.opacity(0.65))
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -257,7 +260,7 @@ struct ShotContinuationReviewView: View {
                 Text(detail)
                     .font(CanonType.interface(8.5))
                     .multilineTextAlignment(.leading)
-                    .foregroundStyle(CanonColor.muted)
+                    .foregroundStyle(CanonColor.ink.opacity(0.65))
             }
             .padding(9)
             .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
@@ -401,7 +404,7 @@ struct ShotContinuationTakeBrowserView: View {
 
             HStack {
                 if allowsNewTake {
-                    Button(record.readyTakes.isEmpty ? "RETRY · REVIEW PRICE" : "＋ NEW TAKE") { onNewTake() }
+                    Button(record.readyTakes.isEmpty ? "RETRY · REVIEW PRICE" : "RENDER NEW TAKE…") { onNewTake() }
                         .buttonStyle(PlateButtonStyle())
                         .disabled(isRendering || record.takes.isEmpty)
                         .help("Review the saved endpoint and current price for another immutable take")

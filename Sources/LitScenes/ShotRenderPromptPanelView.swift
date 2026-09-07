@@ -55,6 +55,10 @@ struct ShotRenderPromptPanel: View {
     var onDraftDirectionPlan: (String) -> Void = { _ in }
     var onDraftAllDirectionPlans: () -> Void = {}
 
+    var onPersistPromptDrafts: ([ShotPromptDraftUpdate]) -> Bool = { _ in true }
+    var canAssistPrompts = false
+    var onAssistPrompt: (ShotPromptAssistanceRequest) async -> ShotPromptAssistanceOutcome = { _ in .failed("Prompt assistance is unavailable.") }
+    @State private var promptSaveError = ""
     var focusedSegmentKey: String = ""
     var onFocusSegment: (String) -> Void = { _ in }
     var onCopyVideo: (ShotSegmentPreview) -> Void = { _ in }
@@ -73,7 +77,6 @@ struct ShotRenderPromptPanel: View {
     @State private var showRebuildReview = false
 
     @State private var drafts: [String: String] = [:]
-    @State private var planDrafts: [String: ShotTemporalDirectionPlan] = [:]
     @State private var modeDrafts: [String: ShotSegmentPromptMode] = [:]
     @State private var autosaveTask: Task<Void, Never>?
     /// The two-step spend law, matching the render-plan strip: the first
@@ -192,7 +195,6 @@ struct ShotRenderPromptPanel: View {
         // Crash-safe drafts, same law as the inline plan strip: debounced,
         // upsert-only, flushed when the panel closes or opens a review.
         .onChange(of: drafts) { scheduleAutosave() }
-        .onChange(of: planDrafts) { scheduleAutosave() }
         .onChange(of: modeDrafts) { scheduleAutosave() }
         .onDisappear {
             autosaveTask?.cancel()
@@ -226,20 +228,28 @@ struct ShotRenderPromptPanel: View {
     }
 
     private func autosaveDrafts() {
-        let merged = mergedAutosavePromptOverrides(
-            existing: shot.segmentPromptOverrides,
-            computed: computedOverrides()
-        )
-        if !promptOverridesAgree(merged, shot.segmentPromptOverrides) {
-            onAutosaveOverrides(merged)
+        _ = persistPromptDrafts()
+    }
+
+    @discardableResult
+    private func persistPromptDrafts(requireText: Bool = false) -> Bool {
+        let changed = Set(drafts.keys).union(modeDrafts.keys)
+        let items = planItems.filter { changed.contains($0.pairKey) }
+        if requireText, items.contains(where: { draftValue(for: $0).trimmed.isEmpty }) {
+            promptSaveError = "Enter a direction or use Suggest before rendering."
+            return false
         }
-        let mergedPlans = mergedAutosaveDirectionPlans(
-            existing: shot.segmentDirectionPlans,
-            computed: computedPlans()
-        )
-        if !directionPlansAgree(mergedPlans, shot.segmentDirectionPlans) {
-            onSaveDirectionPlans(mergedPlans)
+        let updates = items.filter { !draftValue(for: $0).trimmed.isEmpty }.map {
+            ShotPromptDraftUpdate(item: $0, draft: promptDraftBinding($0).wrappedValue)
         }
+        let saved = updates.isEmpty || onPersistPromptDrafts(updates)
+        promptSaveError = saved ? "" : "The prompt could not be saved. Retry before rendering."
+        return saved
+    }
+
+    private func promptDraftBinding(_ item: ShotSegmentPromptPlanItem) -> Binding<ShotPromptDraft> {
+        Binding(get: { ShotPromptDraft.current(item: item, text: drafts[item.pairKey], mode: modeValue(for: item)) },
+            set: { drafts[item.pairKey] = $0.text; modeDrafts[item.pairKey] = $0.mode })
     }
 
     private var panelHeader: some View {
@@ -251,11 +261,7 @@ struct ShotRenderPromptPanel: View {
             if historyVersion == nil {
                 Text("Defaults for new material").font(.caption).foregroundStyle(PlateColor.inkFaint)
                 defaultRenderControls
-                if !shot.renderStack.isNarrationDriven, planItems.count > 1 {
-                    Button("Draft all beats (\(planItems.count))", action: onDraftAllDirectionPlans)
-                        .buttonStyle(PlateButtonStyle()).fixedSize()
-                        .disabled(!draftingDirectionKeys.isEmpty)
-                }
+
             }
         }.padding(14)
     }
@@ -405,7 +411,7 @@ struct ShotRenderPromptPanel: View {
                         weight: .semibold,
                         color: PlateColor.inkFaint
                     )
-                    if beatsAwareEdited(item) {
+                    if isEdited(item) {
                         PlateLabel(text: "Edited", size: 8, weight: .semibold, color: PlateColor.ink)
                     }
                     Spacer(minLength: 0)
@@ -415,14 +421,6 @@ struct ShotRenderPromptPanel: View {
                         }
                         .buttonStyle(PlateButtonStyle())
                         .help("Copy this segment — keyframes, prompt, stack, and its rendered take — to the picture clipboard. Paste it onto another CUT row (right-click the row) or in that CUT's player: it plays there at $0 and can re-render there later")
-                    }
-                    // Beats mode owns its own reset menu inside the editor.
-                    if modeValue(for: item) == .raw, isEdited(item) {
-                        Button("Reset") {
-                            drafts[item.pairKey] = item.generatedPrompt
-                        }
-                        .buttonStyle(PlateButtonStyle())
-                        .help("Return this segment to the generated prompt")
                     }
                     if let skipTarget = item.skipTarget, planSegments.count > 1 {
                         Button("Skip") {
@@ -436,62 +434,7 @@ struct ShotRenderPromptPanel: View {
                         .buttonStyle(PlateButtonStyle())
                         .help("Skip this segment — out of the stitch, its seams heal to a hard cut. Free, and always restorable")
                     }
-                    if planSegments.count > 1 || item.isAIExtension {
-                        let segmentKey = item.pair.placementKey
-                        let isArmed = armedRenderKey == segmentKey
-                        // THE HONEST BILL: "$0 reuse" is only true for other
-                        // segments that HAVE a saved clip on the active
-                        // version. Others without one (e.g. after a whole-
-                        // shot LTX version, whose single clip matches no
-                        // pair) are regenerated and billed too — price and
-                        // promise must say so, never assume reuse.
-                        let isTakeOperation = shot.continuationRecord(entryId: item.pair.endPlacementEntryId) != nil
-                            || shotPendingEndingEntryIds(shot).contains(item.pair.endPlacementEntryId)
-                        let missingOthers = isTakeOperation ? [] : planItems.filter {
-                            $0.pair.placementKey != segmentKey && activeClip($0) == nil
-                        }
-                        let billedItems = [item] + missingOthers
-                        let billedUSDs = billedItems.compactMap {
-                            ShotRenderCostEstimate.segmentUSD(item: $0, pricing: falPricing)
-                        }
-                        let billedUSD: Double? = billedUSDs.count == billedItems.count
-                            ? billedUSDs.reduce(0, +)
-                            : nil
-                        let extraSuffix = missingOthers.isEmpty
-                            ? ""
-                            : " +\(missingOthers.count) unsaved"
-                        let reuseTail = missingOthers.isEmpty
-                            ? "the other segments' saved clips traveling in at $0"
-                            : "\(missingOthers.count) other segment\(missingOthers.count == 1 ? " has" : "s have") no saved clip on the active version, so this render regenerates and bills \(missingOthers.count == 1 ? "it" : "them") too"
-                        let nextRoman = FrameCreatorModal.romanNumeral(
-                            (shot.renderVersions.map(\.versionNumber).max() ?? 0) + 1
-                        )
-                        Button(isTakeOperation ? (shotPendingEndingEntryIds(shot).contains(item.pair.endPlacementEntryId) ? "Render Ending" : (activeClip(item) == nil ? "Retry · Review price" : "New Take")) : (isArmed
-                            ? "Confirm\(extraSuffix)\(billedUSD.map { " · \(usdLabel($0))" } ?? "")"
-                            : "Render segment\(extraSuffix)\(billedUSD.map { " · \(usdLabel($0))" } ?? "")")) {
-                            if isArmed || isTakeOperation {
-                                armedRenderKey = nil
-                                saveDirectionPlansForConfirm()
-                                onRenderSegment(computedOverrides(), segmentKey)
-                            } else {
-                                armedRenderKey = segmentKey
-                            }
-                        }
-                        .buttonStyle(PlateButtonStyle(isProminent: isArmed))
-                        .disabled(isRenderBlocked || (!isTakeOperation
-                            && (!modelConfigured(item.renderStack.model) || !leadInRenderable(item) || !nativeExtendRenderable(item))))
-                        .help(isTakeOperation ? "Review or generate only this take; earlier clips and render history stay unchanged" : (isRenderBlocked
-                            ? "A shot is already rendering"
-                            : (!nativeExtendRenderable(item)
-                                ? "Native Extend needs this AI extension directly after at least 73 frames of footage — choose an image-to-video model"
-                                : (!leadInRenderable(item)
-                                ? "\(item.renderStack.model.label) can't render an AI lead-in — it needs a model that accepts a tail frame alone"
-                                : (!modelConfigured(item.renderStack.model)
-                                    ? "Add the required API key in App Settings before rendering this segment"
-                                    : (isArmed
-                                        ? "Click again to render this segment with \(item.renderStack.shortLabel) — this spends, and the result lands as version \(nextRoman) with \(reuseTail)"
-                                        : "Arms a confirm — nothing renders until the second click. Renders this segment with \(item.renderStack.shortLabel); the result lands as version \(nextRoman) with \(reuseTail)"))))))
-                    }
+
                 }
                 // THE HONEST DELTA: what this segment's current clip was
                 // rendered with, shown ONLY when the next render would change
@@ -514,27 +457,71 @@ struct ShotRenderPromptPanel: View {
                     PlateLabel(text: note, size: 8, color: PlateColor.inkFaint)
                 }
                 segmentRenderControls(item)
-                ShotSegmentBeatsEditor(
-                    item: item,
-                    plan: planBinding(for: item),
-                    mode: modeBinding(for: item),
-                    isDrafting: draftingDirectionKeys.contains("\(shot.shotId)|\(item.pairKey)"),
-                    draftError: directionDraftErrors["\(shot.shotId)|\(item.pairKey)"],
-                    onDraft: { onDraftDirectionPlan(item.pairKey) }
-                ) {
-                    TextEditor(text: draftBinding(for: item))
-                        .font(PlateType.label(11.5, weight: .regular))
-                        .foregroundStyle(PlateColor.ink)
-                        .scrollContentBackground(.hidden)
-                        .frame(height: 110)
-                        .padding(7)
-                        .background(RoundedRectangle(cornerRadius: 3).fill(PlateColor.creamDeep.opacity(0.55)))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 3)
-                                .stroke(isEdited(item) ? PlateColor.ink.opacity(0.65) : PlateColor.hairline, lineWidth: 1)
-                        )
+                ShotSegmentPromptEditor(shot: shot, item: item, draft: promptDraftBinding(item),
+                    canAssist: canAssistPrompts, onAssist: onAssistPrompt) {
+                    segmentRenderAction(item)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func segmentRenderAction(_ item: ShotSegmentPromptPlanItem) -> some View {
+        if planSegments.count > 1 || item.isAIExtension {
+            let segmentKey = item.pair.placementKey
+            let isArmed = armedRenderKey == segmentKey
+            // THE HONEST BILL: "$0 reuse" is only true for other
+            // segments that HAVE a saved clip on the active
+            // version. Others without one (e.g. after a whole-
+            // shot LTX version, whose single clip matches no
+            // pair) are regenerated and billed too — price and
+            // promise must say so, never assume reuse.
+            let isTakeOperation = shot.continuationRecord(entryId: item.pair.endPlacementEntryId) != nil
+                || shotPendingEndingEntryIds(shot).contains(item.pair.endPlacementEntryId)
+            let missingOthers = isTakeOperation ? [] : planItems.filter {
+                $0.pair.placementKey != segmentKey && activeClip($0) == nil
+            }
+            let billedItems = [item] + missingOthers
+            let billedUSDs = billedItems.compactMap {
+                ShotRenderCostEstimate.segmentUSD(item: $0, pricing: falPricing)
+            }
+            let billedUSD: Double? = billedUSDs.count == billedItems.count
+                ? billedUSDs.reduce(0, +)
+                : nil
+            let extraSuffix = missingOthers.isEmpty
+                ? ""
+                : " +\(missingOthers.count) unsaved"
+            let reuseTail = missingOthers.isEmpty
+                ? "the other segments' saved clips traveling in at $0"
+                : "\(missingOthers.count) other segment\(missingOthers.count == 1 ? " has" : "s have") no saved clip on the active version, so this render regenerates and bills \(missingOthers.count == 1 ? "it" : "them") too"
+            let nextRoman = FrameCreatorModal.romanNumeral(
+                (shot.renderVersions.map(\.versionNumber).max() ?? 0) + 1
+            )
+            Button(isTakeOperation ? (shotPendingEndingEntryIds(shot).contains(item.pair.endPlacementEntryId) ? "Render ending…" : (activeClip(item) == nil ? "Retry · Review price" : "Render new take…")) : (isArmed
+                ? "Confirm\(extraSuffix)\(billedUSD.map { " · \(usdLabel($0))" } ?? "")"
+                : "Render segment\(extraSuffix)\(billedUSD.map { " · \(usdLabel($0))" } ?? "")")) {
+                if isArmed || isTakeOperation {
+                    armedRenderKey = nil
+                    guard saveDirectionPlansForConfirm() else { return }
+                    onRenderSegment(computedOverrides(), segmentKey)
+                } else {
+                    armedRenderKey = segmentKey
+                }
+            }
+            .buttonStyle(PlateButtonStyle(isProminent: isArmed))
+            .disabled(isRenderBlocked || (!isTakeOperation
+                && (!modelConfigured(item.renderStack.model) || !leadInRenderable(item) || !nativeExtendRenderable(item))))
+            .help(isTakeOperation ? "Review or generate only this take; earlier clips and render history stay unchanged" : (isRenderBlocked
+                ? "A shot is already rendering"
+                : (!nativeExtendRenderable(item)
+                    ? "Native Extend needs this AI extension directly after at least 73 frames of footage — choose an image-to-video model"
+                    : (!leadInRenderable(item)
+                    ? "\(item.renderStack.model.label) can't render an AI lead-in — it needs a model that accepts a tail frame alone"
+                    : (!modelConfigured(item.renderStack.model)
+                        ? "Add the required API key in App Settings before rendering this segment"
+                        : (isArmed
+                            ? "Click again to render this segment with \(item.renderStack.shortLabel) — this spends, and the result lands as version \(nextRoman) with \(reuseTail)"
+                            : "Arms a confirm — nothing renders until the second click. Renders this segment with \(item.renderStack.shortLabel); the result lands as version \(nextRoman) with \(reuseTail)"))))))
         }
     }
 
@@ -714,6 +701,7 @@ struct ShotRenderPromptPanel: View {
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if !promptSaveError.isEmpty { Text(promptSaveError).font(.caption).foregroundStyle(CanonColor.rust) }
             Text(String(format: "CURRENT OUTPUT · %.1fs", outputSeconds)).font(.caption).foregroundStyle(PlateColor.inkFaint)
             ShotEditorFlow {
                 if let onExtend { Button(shot.entries.isEmpty ? "Start Scene" : (shot.hasSavedPlayback ? "Extend Scene" : "Add to Scene")) { autosaveDrafts(); onExtend() } }
@@ -725,7 +713,7 @@ struct ShotRenderPromptPanel: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Generate new linked takes from these drafts in order. Saved sources are reused; every earlier take is retained.").font(.caption)
                             Button("Rebuild Generated Chain · " + (rebuildEstimate.headlineLabel ?? "Rate unavailable")) {
-                                saveDirectionPlansForConfirm()
+                                guard saveDirectionPlansForConfirm() else { return }
                                 onRebuild(computedOverrides())
                             }.buttonStyle(PlateButtonStyle())
                                 .disabled(isRenderBlocked || !rebuildEstimate.isComplete || !shotPendingEndingEntryIds(shot).isEmpty)
@@ -776,7 +764,7 @@ struct ShotRenderPromptPanel: View {
             Button(cta.title) {
                 if isArmed {
                     armedRenderKey = nil
-                    saveDirectionPlansForConfirm()
+                    guard saveDirectionPlansForConfirm() else { return }
                     onRender(computedOverrides())
                 } else {
                     armedRenderKey = "full"
@@ -1135,14 +1123,7 @@ struct ShotRenderPromptPanel: View {
     // blank a row, and saving never wipes overrides this panel never showed.
 
     private func draftValue(for item: ShotSegmentPromptPlanItem) -> String {
-        drafts[item.pairKey] ?? item.overridePrompt ?? item.generatedPrompt
-    }
-
-    private func draftBinding(for item: ShotSegmentPromptPlanItem) -> Binding<String> {
-        Binding(
-            get: { draftValue(for: item) },
-            set: { drafts[item.pairKey] = $0 }
-        )
+        promptDraftBinding(item).wrappedValue.text
     }
 
     private func isEdited(_ item: ShotSegmentPromptPlanItem) -> Bool {
@@ -1165,44 +1146,15 @@ struct ShotRenderPromptPanel: View {
         computedSegmentPromptOverrides(drafts: drafts, items: planItems, now: DateFormats.now())
     }
 
-    // MARK: Beats drafts (same lazy pair-keyed law as the text drafts)
+    // MARK: Retained timing authority
 
     private func planValue(for item: ShotSegmentPromptPlanItem) -> ShotTemporalDirectionPlan {
-        planDrafts[item.pairKey]
-            ?? item.directionPlan?.plan
+        item.directionPlan?.plan
             ?? shotFallbackDirectionPlan(pair: item.pair)
     }
 
     private func modeValue(for item: ShotSegmentPromptPlanItem) -> ShotSegmentPromptMode {
         modeDrafts[item.pairKey] ?? item.promptMode
-    }
-
-    private func planBinding(for item: ShotSegmentPromptPlanItem) -> Binding<ShotTemporalDirectionPlan> {
-        Binding(
-            get: { planValue(for: item) },
-            set: { planDrafts[item.pairKey] = $0 }
-        )
-    }
-
-    /// The eject law lives in the setter: leaving beats seeds the raw box
-    /// with the compiled text, so nothing the user built silently vanishes;
-    /// returning to beats restores the retained plan draft untouched.
-    private func modeBinding(for item: ShotSegmentPromptPlanItem) -> Binding<ShotSegmentPromptMode> {
-        Binding(
-            get: { modeValue(for: item) },
-            set: { newMode in
-                if newMode == .raw, modeValue(for: item) == .beats,
-                   let selection = item.renderStack.modelSelection(for: item.pair),
-                   let compiled = compileTemporalDirection(
-                       plan: planValue(for: item),
-                       modelSelection: selection,
-                       durationSeconds: item.renderStack.segmentSeconds
-                   ) {
-                    drafts[item.pairKey] = compiled.canonicalText
-                }
-                modeDrafts[item.pairKey] = newMode
-            }
-        )
     }
 
     /// The card/clipboard text for a segment: in beats mode the LIVE compiled
@@ -1220,23 +1172,9 @@ struct ShotRenderPromptPanel: View {
         return draftValue(for: item)
     }
 
-    /// Delegates to the shared pure sibling so both surfaces persist plans
-    /// identically.
-    private func computedPlans() -> [ShotSegmentDirectionPlanRecord] {
-        computedSegmentDirectionPlans(
-            planDrafts: planDrafts,
-            modeDrafts: modeDrafts,
-            items: planItems,
-            existing: shot.segmentDirectionPlans,
-            now: DateFormats.now()
-        )
-    }
-
-    /// Confirm-time persist order: plans first, then overrides ride the
-    /// existing callbacks — a crash between the two still leaves a coherent
-    /// render (the compiled text is derivable from the plan).
-    private func saveDirectionPlansForConfirm() {
-        onSaveDirectionPlans(computedPlans())
+    /// Confirm only after text and retained timing authority are saved together.
+    private func saveDirectionPlansForConfirm() -> Bool {
+        persistPromptDrafts(requireText: true)
     }
 }
 

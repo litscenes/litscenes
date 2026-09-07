@@ -39,3 +39,7 @@
 2026-09-07T18:38:05Z shot-editor-paths — Implement approved segment result visibility, contextual navigation, exact actions, recipe inheritance, and in-modal extension/branching; validate the open right editor with isolated media.
 
 2026-09-07T19:25:21Z shot-editor-paths — Completed saved-segment video cards, exact segment focus/reviews, persistent next-take recipe inheritance, in-modal extension/branching and readable controls. Build, 1,274 existing tests, native interaction checks, isolated persistence/media checks, source hygiene, diff check and Development signing passed. No live-project repair, paid inference, new repository tests, commits or publication.
+
+2026-09-07T21:05:09Z shot-prompt-assistance — Implement approved readable take review and one prompt field with Improve, Suggest, Revert and Undo, retaining existing timing and generation artifacts.
+
+2026-09-07T21:43:26Z shot-prompt-assistance: Implemented one prompt field with Improve/Suggest/Revert/Undo, atomic text/timing saves, traced text inference, and readable continuation review. Existing Swift suite, native checks, hygiene and Development packaging validated; no paid provider calls or live-project repairs.

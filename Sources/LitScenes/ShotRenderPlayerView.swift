@@ -81,6 +81,9 @@ struct ShotRenderPlayerModal: View {
     var onRenderSegment: ([ShotSegmentPromptOverride], String) -> Void
     /// Debounced draft autosave from the Segment Prompts panel (persist only,
     /// never renders).
+    var onPersistPromptDrafts: ([ShotPromptDraftUpdate]) -> Bool
+    var canAssistPrompts: Bool
+    var onAssistPrompt: (ShotPromptAssistanceRequest) async -> ShotPromptAssistanceOutcome
     var onAutosaveOverrides: ([ShotSegmentPromptOverride]) -> Void = { _ in }
     /// Persists segment direction plans (beats) from the Segment Prompts
     /// panel — autosave and confirm both land here.
@@ -300,6 +303,9 @@ struct ShotRenderPlayerModal: View {
         onSetSegmentRenderStack: @escaping (ShotRenderPair, ShotRenderStack?) -> Void = { _, _ in },
         onRender: @escaping ([ShotSegmentPromptOverride]) -> Void,
         onRenderSegment: @escaping ([ShotSegmentPromptOverride], String) -> Void,
+        onPersistPromptDrafts: @escaping ([ShotPromptDraftUpdate]) -> Bool = { _ in true },
+        canAssistPrompts: Bool = false,
+        onAssistPrompt: @escaping (ShotPromptAssistanceRequest) async -> ShotPromptAssistanceOutcome = { _ in .failed("Prompt assistance is unavailable.") },
         onAutosaveOverrides: @escaping ([ShotSegmentPromptOverride]) -> Void = { _ in },
         onSaveDirectionPlans: @escaping ([ShotSegmentDirectionPlanRecord]) -> Void = { _ in },
         draftingDirectionKeys: Set<String> = [],
@@ -378,6 +384,9 @@ struct ShotRenderPlayerModal: View {
         self.onSetSegmentRenderStack = onSetSegmentRenderStack
         self.onRender = onRender
         self.onRenderSegment = onRenderSegment
+        self.onPersistPromptDrafts = onPersistPromptDrafts
+        self.canAssistPrompts = canAssistPrompts
+        self.onAssistPrompt = onAssistPrompt
         self.onAutosaveOverrides = onAutosaveOverrides
         self.onSaveDirectionPlans = onSaveDirectionPlans
         self.draftingDirectionKeys = draftingDirectionKeys
@@ -873,6 +882,9 @@ struct ShotRenderPlayerModal: View {
             directionDraftErrors: directionDraftErrors,
             onDraftDirectionPlan: onDraftDirectionPlan,
             onDraftAllDirectionPlans: onDraftAllDirectionPlans,
+            onPersistPromptDrafts: onPersistPromptDrafts,
+            canAssistPrompts: canAssistPrompts,
+            onAssistPrompt: onAssistPrompt,
             focusedSegmentKey: focusedSegmentKey,
             onFocusSegment: focusSegment,
             onCopyVideo: { preview in
