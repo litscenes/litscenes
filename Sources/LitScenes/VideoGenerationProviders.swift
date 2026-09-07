@@ -1100,7 +1100,7 @@ struct LTXDirectVideoProvider: VideoGenerationProvider {
             do {
                 return (try await body(), retryCount)
             } catch {
-                guard retryCount == 0, isRetryableLTXFailure(error) else {
+                guard !operation.contains("submit"), retryCount == 0, isRetryableLTXFailure(error), !(error is ProviderFailure) else {
                     throw error
                 }
                 retryCount += 1
@@ -1317,8 +1317,10 @@ struct CivitAIWANImageProvider {
     }
 
     private func downloadData(url: URL) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(from: url)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        let transfer = try await TracedHTTPTransport.send(request: URLRequest(url: url),
+            metadata: InferenceTraceRequestMetadata(provider: "civitai", apiFamily: "media_transfer", operation: "image_output_download", captureResponseBody: false))
+        let data = transfer.data
+        guard let http = transfer.response, (200..<300).contains(http.statusCode) else {
             throw ScreenGraphError.capture("CivitAI WAN image download failed.")
         }
         return data

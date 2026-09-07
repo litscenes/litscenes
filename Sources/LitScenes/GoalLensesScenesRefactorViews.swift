@@ -1350,7 +1350,7 @@ struct LensWorkbenchView: View {
                     currentBrowseId: currentHeroPreviewBrowseId(),
                     onOpenBrowseItem: { item in openHeroPreviewBrowseItem(item) },
                     zoomScale: $lensHeroPreviewZoom,
-                    reframeSubmissionBlockReason: library.lensHeroReframeBlockReason,
+                    reframeSubmissionBlockReason: library.frameSubmissionBlockReason ?? "",
                     isNarrating: library.isGeneratingLensNarration,
                     hasOpenAICredential: openAICredentialStatus?.isConfigured == true,
                     hasFALCredential: falCredentialStatus?.isConfigured == true,
@@ -1463,7 +1463,7 @@ struct LensWorkbenchView: View {
                             ?? magnifiedLensHeroPreview.lensId,
                         imageId: magnifiedLensHeroPreview.imageId
                     ) ?? "",
-                    isAnimating: library.activeLensMotionImageId == magnifiedLensHeroPreview.imageId,
+                    isAnimating: library.activeLensMotionImageIds.contains(magnifiedLensHeroPreview.imageId),
                     onRetry: {
                         let imageId = magnifiedLensHeroPreview.imageId
                         guard let resolved = resolvedHeroImageAcrossLenses(imageId: imageId) else {
@@ -2443,7 +2443,7 @@ struct LensWorkbenchView: View {
         projectPoolInputs(
             displayedFrames: lens.heroImages(mediaVersion: versionId),
             projectWideFrames: Array(library.projectWideFrameLookup.values),
-            items: library.items
+            items: library.browsableMediaItems
         )
     }
 
@@ -2581,7 +2581,7 @@ struct LensWorkbenchView: View {
                 return normalized.role == "source_photo" ? normalized.sourceId : nil
             }
         })
-        let mediaFrameCount = library.items.filter { $0.kind == .image && !adopted.contains($0.mediaId) }.count
+        let mediaFrameCount = library.browsableMediaItems.filter { $0.kind == .image && !adopted.contains($0.mediaId) }.count
         let footageCount = library.items.filter { $0.kind == .video }.count
         let generatedFrameCount = displayedFrames.count
         return VStack(alignment: .leading, spacing: 14) {
@@ -2606,7 +2606,7 @@ struct LensWorkbenchView: View {
                 isSequence: isSequence,
                 workspaceSize: workspaceSize,
                 categories: Self.sceneBoardCategories,
-                showPauseControl: true,
+                showPauseControl: false,
                 flattenPlaceGroups: true,
                 filterQuery: sourceMaterialSearchQuery,
                 showsSectionHeaders: false,
@@ -2849,7 +2849,7 @@ struct LensWorkbenchView: View {
             filterQuery: filterQuery,
             showsSectionHeaders: showsSectionHeaders,
             identityGroups: identityGroups,
-            identityReferenceCandidates: identityGroups.isEmpty ? [] : library.items.filter { $0.kind == .image },
+            identityReferenceCandidates: identityGroups.isEmpty ? [] : library.browsableMediaItems.filter { $0.kind == .image },
             placeCaptionsByAreaId: flattenPlaceGroups ? [:] : library.lensPlaceCaptionsByAreaId(lens: lens),
             excludedImageIds: excludedImageIds,
             stageGatherTargets: offersStageGather
@@ -2876,7 +2876,7 @@ struct LensWorkbenchView: View {
             moodboardItems: library.enabledContentItems.filter { $0.kind == .image },
             moodObservationsById: library.mediaObservationsById,
             mentionEntries: library.frameCreatorMentionEntries(for: lens),
-            mentionReferenceItems: library.items.filter { $0.kind == .image },
+            mentionReferenceItems: library.browsableMediaItems.filter { $0.kind == .image },
             onEnsureMentionSheet: { entry in
                 switch entry.kind {
                 case .character:
@@ -2887,8 +2887,8 @@ struct LensWorkbenchView: View {
                     return await library.buildPlaceCompositeSheet(placeId: entry.id)
                 }
             },
-            referenceLibraryItems: library.items.filter { $0.kind == .image },
-            generatedFrameCandidates: generatedFrameReferenceCandidates(lenses: library.projectLenses.lenses, items: library.items),
+            referenceLibraryItems: library.browsableMediaItems.filter { $0.kind == .image },
+            generatedFrameCandidates: generatedFrameReferenceCandidates(lenses: library.projectLenses.lenses, items: library.browsableMediaItems),
             onAdoptGeneratedFrame: { hero in
                 await library.archiveHeroFrameAsReference(hero)
             },
@@ -2988,7 +2988,7 @@ struct LensWorkbenchView: View {
             hasCivitaiCredential: civitaiCredentialStatus?.isConfigured == true,
             hasFALCredential: falCredentialStatus?.isConfigured == true,
             hasStabilityCredential: stabilityCredentialStatus?.isConfigured == true,
-            stillRenderBlockReason: library.lensHeroTakeStartBlockReason,
+            stillRenderBlockReason: library.frameSubmissionBlockReason,
             takeLaneFreeSlots: library.lensHeroTakeLaneFreeSlots,
             isAnimatingLensArtifact: library.isAnimatingLensArtifact,
             isPaused: library.isGenerationPaused,
@@ -3042,8 +3042,8 @@ struct LensWorkbenchView: View {
             hasCivitaiCredential: civitaiCredentialStatus?.isConfigured == true,
             hasFALCredential: falCredentialStatus?.isConfigured == true,
             hasStabilityCredential: stabilityCredentialStatus?.isConfigured == true,
-            isRenderBlocked: library.lensHeroTakeStartBlockReason != nil,
-            renderBlockerHelp: library.lensHeroTakeStartBlockReason,
+            isRenderBlocked: library.frameSubmissionBlockReason != nil,
+            renderBlockerHelp: library.frameSubmissionBlockReason,
             takeLaneFreeSlots: library.lensHeroTakeLaneFreeSlots,
             formGenerations: library.frameForms.generations.map(\.options).filter { !$0.isEmpty },
             isAnalyzingMoods: library.isAnalyzingMedia,
@@ -3139,7 +3139,7 @@ struct LensWorkbenchView: View {
                 workbenchFrameCreatorLaunch = nil
             },
             mentionEntries: library.frameCreatorMentionEntries(for: lens),
-            mentionReferenceItems: library.items.filter { $0.kind == .image },
+            mentionReferenceItems: library.browsableMediaItems.filter { $0.kind == .image },
             onEnsureMentionSheet: { entry in
                 switch entry.kind {
                 case .character:
@@ -3150,11 +3150,11 @@ struct LensWorkbenchView: View {
                     return await library.buildPlaceCompositeSheet(placeId: entry.id)
                 }
             },
-            referenceLibraryItems: library.items.filter { $0.kind == .image },
+            referenceLibraryItems: library.browsableMediaItems.filter { $0.kind == .image },
             initialReferenceItems: launch.referenceMediaIds.compactMap { mediaId in
                 library.items.first { $0.mediaId == mediaId && $0.kind == .image }
             },
-            generatedFrameCandidates: generatedFrameReferenceCandidates(lenses: library.projectLenses.lenses, items: library.items),
+            generatedFrameCandidates: generatedFrameReferenceCandidates(lenses: library.projectLenses.lenses, items: library.browsableMediaItems),
             onAdoptGeneratedFrame: { hero in
                 await library.archiveHeroFrameAsReference(hero)
             },
@@ -3467,7 +3467,7 @@ struct LensWorkbenchView: View {
 
     private func lensHeroRenderAllPill(_ lens: ProjectLens, compact: Bool = false) -> some View {
         let pending = lensPendingRenderableFrames(lens)
-        let blockReason = library.lensHeroTakeStartBlockReason
+        let blockReason = library.frameSubmissionBlockReason
         return lensPillButton(
             compact
                 ? "Render \(pending.count) planned"
@@ -3477,7 +3477,7 @@ struct LensWorkbenchView: View {
         ) {
             Task { _ = await library.renderLensMedia(lensId: lens.lensId, scope: .all) }
         }
-        .help(blockReason ?? "Renders each planned frame with its saved prompt and style — \(pending.count) paid provider renders, one at a time. Pause in Activity stops the batch.")
+        .help(blockReason ?? "Renders each planned frame with its saved prompt and style — \(pending.count) paid provider renders, one at a time. Queued work can be canceled in Logs.")
     }
 
     @ViewBuilder
@@ -3587,8 +3587,6 @@ struct LensWorkbenchView: View {
                     .padding(.vertical, 4)
             }
             .buttonStyle(.plain)
-            .disabled(library.isGeneratingLensHero)
-            .opacity(library.isGeneratingLensHero ? 0.36 : 1)
             .help(lens.enabled ? "Stop this Scene Plan from guiding Scenes" : "Let this Scene Plan guide Scenes")
         }
         .padding(.top, 2)
@@ -3787,7 +3785,7 @@ struct LensWorkbenchView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             if let selectedLens, selectedLens.sortedHeroImages.isEmpty {
-                lensActionButton("Generate Heroes", isPrimary: false, disabled: library.isGeneratingLensHero) {
+                lensActionButton("Generate Heroes", isPrimary: false, disabled: false) {
                     Task {
                         _ = await library.generateLensHero(lensId: selectedLens.lensId)
                         syncDraft()
@@ -4412,7 +4410,7 @@ struct LensWorkbenchView: View {
     }
 
     private var canSaveLensEdits: Bool {
-        hasEditableLensSelection && !isSavingNewLens && !library.isGeneratingLensHero
+        hasEditableLensSelection && !isSavingNewLens
     }
 
     private var canMarkSelectedLensReady: Bool {

@@ -301,9 +301,6 @@ struct LensGenerationTheaterView: View {
                 && onRenderBlankFrame != nil
         }
         VStack(alignment: .leading, spacing: 14) {
-            if onTogglePause != nil, hasActiveWork || isPaused {
-                pauseHeader
-            }
             ForEach(sections, id: \.category) { section in
                 let fullSectionImages = section.fullImages.isEmpty ? section.images : section.fullImages
                 let displayImages = sectionImagesWithReframesAppended(section.images)
@@ -738,43 +735,6 @@ struct LensGenerationTheaterView: View {
                     }
                 }
             }
-        }
-    }
-
-    /// Pause/resume control shown while the board has an active render or parked pause.
-    /// Pausing is cooperative: the render already in flight finishes and saves, then the
-    /// chain waits before starting the next frame.
-    private var pauseHeader: some View {
-        HStack(spacing: 8) {
-            Button {
-                onTogglePause?()
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: isPaused ? "play.fill" : "pause.fill")
-                        .font(.system(size: 9, weight: .semibold))
-                    Text(isPaused ? "Resume" : "Pause")
-                        .font(CanonType.interface(11, weight: .semibold))
-                }
-                .foregroundStyle(isPaused ? CanonColor.paper : CanonColor.brass)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    Capsule().fill(isPaused ? CanonColor.brass : CanonColor.brass.opacity(0.12))
-                )
-                .overlay(Capsule().stroke(CanonColor.brass.opacity(isPaused ? 0 : 0.55)))
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .help(isPaused
-                ? "Resume all generations"
-                : "Pause all generations — the render in flight finishes, then everything waits")
-            Text(isPaused
-                ? "Paused — the frame already rendering will finish, nothing new starts."
-                : "Rendering — pausing lets the current frame finish, then holds the rest.")
-                .font(CanonType.interface(10.5))
-                .foregroundStyle(CanonColor.muted)
-                .lineLimit(1)
-            Spacer()
         }
     }
 

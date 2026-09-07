@@ -100,6 +100,7 @@ extension View {
 }
 
 struct LibraryRootView: View {
+    @ObservedObject private var workflows = WorkflowCoordinator.shared
     @ObservedObject var library: LibraryEngine
     @ObservedObject var recorder: RecorderEngine
     @ObservedObject var sessionRecorder: SessionRecorder
@@ -258,6 +259,23 @@ struct LibraryRootView: View {
             guard !hasHydratedInitialProject else { return }
             hasHydratedInitialProject = true
             restoreWorkspaceTabPreference()
+        }
+        .onChange(of: workflows.pendingOpenJob?.id) { _, _ in
+            guard let job = workflows.pendingOpenJob, job.projectId == library.currentProject?.projectId else { return }
+            if job.artifactType == "shot" {
+                scenesV2Session.select(job.artifactId)
+                selectWorkspaceTab(.scenesV2)
+            } else if job.artifactType == "character" {
+                charactersSession.select(job.artifactId)
+                selectWorkspaceTab(.characters)
+            } else if job.artifactType == "frame",
+                      let lens = library.projectLenses.lenses.first(where: { $0.heroImages.contains { $0.imageId == job.artifactId } }) {
+                selectWorkspaceTab(.scenesV2)
+                library.requestWorkbenchFocus(lensId: lens.lensId, imageId: job.artifactId)
+            } else if job.artifactType == "scene_plan" {
+                selectWorkspaceTab(.scenesV2)
+                library.requestWorkbenchFocus(lensId: job.artifactId, imageId: "")
+            }
         }
         .onChange(of: library.pendingFrameCreatorSeed) { _, seed in
             // Media's "Use in Frame Creator" flips to Scenes; the workbench
@@ -960,11 +978,24 @@ struct LibraryRootView: View {
                 .font(CanonType.archive(11, weight: .medium))
                 .foregroundStyle(CanonColor.muted)
                 .lineLimit(1)
+            Button { workflows.showingLogs.toggle() } label: {
+                HStack(spacing: 6) {
+                    Text("LOGS").font(CanonType.interface(11, weight: .semibold)).tracking(1.5)
+                    if workflows.runningCount > 0 { Text("\(workflows.runningCount)").font(CanonType.archive(10)).monospacedDigit() }
+                    if workflows.needsAttention { Circle().fill(CanonColor.brass).frame(width: 5, height: 5) }
+                }
+                .foregroundStyle(workflows.showingLogs ? CanonColor.bone : CanonColor.muted)
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                .background(CanonColor.mediaCard.opacity(workflows.showingLogs ? 1 : 0.4), in: RoundedRectangle(cornerRadius: 6))
+            }.buttonStyle(.plain).help("Background work and history across all projects")
         }
         .padding(.horizontal, 16)
         .padding(.top, 2)
         .padding(.bottom, 16)
         .background(CanonColor.sidebar)
+        .anchorPreference(key: WorkspaceNavigationBoundsKey.self, value: .bounds) { anchor in
+            [library.currentProject?.projectId ?? "": anchor]
+        }
     }
 
     private func workspaceTabButton(_ tab: LibraryWorkspaceTab) -> some View {

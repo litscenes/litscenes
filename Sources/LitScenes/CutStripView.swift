@@ -26,10 +26,17 @@ struct CutStripActions {
     /// `markingRowActive()`.
     var onTouchCut: (String) -> Void = { _ in }
     var activeShotRenderId = ""
+    var activeShotRenderIds: Set<String> = []
+    var videoOperationShotIds: Set<String> = []
+    var activeShotNarrationIds: Set<String> = []
+    /// Paid video work is single-flight across render, join, restyle, and
+    /// continuation paths. Take controls use the aggregate gate so a Scene
+    /// cannot queue a second provider request behind another operation.
+    var isVideoOperationActive = false
     var configuredRenderModels: Set<ShotRenderModel> = []
     var activeShotNarrationId = ""
     var activeShotNarrationSpeedId = ""
-    var activeShotChipsId = ""
+    var activeShotChipsIds: Set<String> = []
     var accountVoiceOptions: [StoryAudioVoiceOption] = []
     /// Voice ids curated out of the render-time voice menus (Voices tab).
     var hiddenNarrationVoiceIds: Set<String> = []
@@ -42,7 +49,7 @@ struct CutStripActions {
     var onRename: (String, String) -> Void = { _, _ in }
     /// Soft-delete: the cut moves to the DELETED CUTS shelf (restorable).
     var onTrash: (String) -> Void = { _ in }
-    /// NEW VERSION: duplicate a rendered cut into an editable, unrendered twin.
+    /// NEW VERSION: create an independent editable copy of the current sequence.
     var onDuplicate: (String) -> Void = { _ in }
     /// Restores a combined CUT's preserved sources and archives the parent.
     var onUncombine: (String) -> Void = { _ in }
@@ -77,6 +84,8 @@ struct CutStripActions {
     /// Fired when a plan strip opens — refreshes FAL rates if stale.
     var onRenderPlanOpened: () -> Void = {}
     var onRequestRerender: (String) -> Void = { _ in }
+    var onOpenShotEntry: (String, String) -> Void = { _, _ in }
+    var onOpenShotProvenance: (String) -> Void = { _ in }
     var onOpenShotVideo: (String) -> Void = { _ in }
     var onOpenNarration: (String) -> Void = { _ in }
     /// OPEN: the fully-seed-covered combined draft has nothing left to
@@ -113,6 +122,35 @@ struct CutStripActions {
     var onAppendPoolInput: (String, StageInput) -> Void = { _, _ in }
     /// Opens the Frame Creator seeded for this stage with append-to-cut set.
     var onCreateFrameForCut: (String) -> Void = { _ in }
+    /// Tail continuation is reviewed without mutating the Scene. The async
+    /// preparation extracts the exact terminal still when the tail is video.
+    var continuationAvailability: (String) -> ShotContinuationAvailability = {
+        _ in ShotContinuationAvailability(lockReason: .missingTail)
+    }
+    var onPrepareContinuation: (String) async -> ShotContinuationAvailability = {
+        _ in ShotContinuationAvailability(lockReason: .missingTail)
+    }
+    var onStartContinuation: (String, ShotContinuationRequest) async -> ShotContinuationOutcome = { _, _ in .failed(message: "Unavailable") }
+    var onPrepareContinuationRetake: (String, String) async -> ShotContinuationAvailability = {
+        _, _ in ShotContinuationAvailability(lockReason: .missingTail)
+    }
+    var onStartContinuationRetake: (String, String, ShotContinuationRequest) async -> ShotContinuationOutcome = {
+        _, _, _ in .failed(message: "Unavailable")
+    }
+    var continuationBranchImpact: (String, String, String) -> ShotContinuationBranchImpact? = {
+        _, _, _ in nil
+    }
+    var onUseContinuationTake: (String, ShotContinuationBranchImpact) -> Void = { _, _ in }
+    var continuationRechainEstimate: (String, Bool) -> ShotRenderCostEstimate = {
+        _, _ in ShotRenderCostEstimate()
+    }
+    var continuationEntryEstimate: (String, [String]) -> ShotRenderCostEstimate = {
+        _, _ in ShotRenderCostEstimate()
+    }
+    var onRepairContinuationTake: (String, String, String) async -> Bool = { _, _, _ in false }
+    var onRechainContinuations: (String) async -> Bool = { _ in false }
+    var onRebuildContinuationChain: (String) async -> Bool = { _ in false }
+    var onShowOriginal: (String) -> Void = { _ in }
     /// STRUCTURAL PASTE (row right-click): copied segment cards land at this
     /// cut's end as first-class material — pair entries, prompt/stack
     /// overrides, and the rendered take as a seed clip.
@@ -154,6 +192,8 @@ extension CutStripActions {
         wrapped.onSetNarrationAnchorFaceOverride = { touch($0); self.onSetNarrationAnchorFaceOverride($0, $1) }
         wrapped.onConfirmRender = { touch($0); self.onConfirmRender($0, $1, $2) }
         wrapped.onRequestRerender = { touch($0); self.onRequestRerender($0) }
+        wrapped.onOpenShotEntry = { touch($0); self.onOpenShotEntry($0, $1) }
+        wrapped.onOpenShotProvenance = { touch($0); self.onOpenShotProvenance($0) }
         wrapped.onOpenShotVideo = { touch($0); self.onOpenShotVideo($0) }
         wrapped.onOpenNarration = { touch($0); self.onOpenNarration($0) }
         wrapped.onFinalizeAndOpen = { touch($0); self.onFinalizeAndOpen($0) }
@@ -171,6 +211,12 @@ extension CutStripActions {
         wrapped.onLeadIn = { touch($0); self.onLeadIn($0) }
         wrapped.onAppendPoolInput = { touch($0); self.onAppendPoolInput($0, $1) }
         wrapped.onCreateFrameForCut = { touch($0); self.onCreateFrameForCut($0) }
+        wrapped.onStartContinuation = { touch($0); return await self.onStartContinuation($0, $1) }
+        wrapped.onStartContinuationRetake = { touch($0); return await self.onStartContinuationRetake($0, $1, $2) }
+        wrapped.onUseContinuationTake = { touch($0); self.onUseContinuationTake($0, $1) }
+        wrapped.onRechainContinuations = { touch($0); return await self.onRechainContinuations($0) }
+        wrapped.onRebuildContinuationChain = { touch($0); return await self.onRebuildContinuationChain($0) }
+        wrapped.onShowOriginal = { touch($0); self.onShowOriginal($0) }
         wrapped.onPasteSegmentCards = { touch($0); self.onPasteSegmentCards($0, $1) }
         wrapped.onKeepLookAsNewCut = { touch($0); self.onKeepLookAsNewCut($0) }
         return wrapped
@@ -245,7 +291,12 @@ struct CutStripView: View {
     @State private var targetedCellEntryId = ""
     @State private var isAppendTargeted = false
     @State private var isAppendPickerOpen = false
-    @State private var appendSearchQuery = ""
+    @State private var continuationReview: ShotContinuationAvailability?
+    @State private var continuationRetakeEntryId = ""
+    @State private var isPreparingContinuation = false
+    @State private var continuationPreparationMessage = ""
+    @State private var continuationPreparationTask: Task<Void, Never>?
+    @State private var takeBrowserEntryId = ""
     @State private var isTrashArmed = false
     @State private var trashArmGeneration = 0
     @StateObject private var narrationPlayer = NarrationAudioPlayer()
@@ -255,16 +306,16 @@ struct CutStripView: View {
     /// via NEW VERSION. A failed-only render does not lock — retry needs an
     /// editable timeline.
     private var isLocked: Bool {
-        actions.activeShotRenderId == cut.shotId
+        actions.activeShotRenderIds.contains(cut.shotId)
             || cut.renderArtifact?.status == "generating"
-            || !cut.browsableRenderVersions.isEmpty
+            || cut.hasFrozenSourceSequence
     }
 
     /// The suffix tail of this locked cut (mirror of the engine's law):
     /// non-nil only when quiet and the ready active version carries a
     /// watermark. Entries at or past this index are appendable/editable.
     private var tailStartIndex: Int? {
-        guard actions.activeShotRenderId != cut.shotId,
+        guard !actions.activeShotRenderIds.contains(cut.shotId),
               cut.renderArtifact?.status != "generating" else { return nil }
         return shotSuffixTailStartIndex(shot: cut)
     }
@@ -351,6 +402,7 @@ struct CutStripView: View {
         .onHover { isHoveringStrip = $0 }
         .onDisappear {
             narrationPlayer.stop()
+            continuationPreparationTask?.cancel()
         }
     }
 
@@ -359,7 +411,7 @@ struct CutStripView: View {
     /// material drop lands at the strip's end and opens it, so building onto
     /// a collapsed cut never needs a separate expand step first.
     private var collapsedRow: some View {
-        let isRendering = actions.activeShotRenderId == cut.shotId || cut.renderArtifact?.status == "generating"
+        let isRendering = actions.activeShotRenderIds.contains(cut.shotId) || cut.renderArtifact?.status == "generating"
         return HStack(spacing: 10) {
             Image(systemName: "chevron.right")
                 .font(.system(size: 9, weight: .semibold))
@@ -385,7 +437,7 @@ struct CutStripView: View {
                     .font(CanonType.archive(7, weight: .semibold))
                     .kerning(0.6)
                     .foregroundStyle(CanonColor.brass)
-            } else if !cut.browsableRenderVersions.isEmpty {
+            } else if cut.hasSavedPlayback {
                 Image(systemName: "film")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(CanonColor.brass.opacity(0.75))
@@ -441,7 +493,7 @@ struct CutStripView: View {
                     .padding(.leading, 4)
                 }
             }
-            if expandedRenderPlan, actions.activeShotRenderId != cut.shotId, cut.renderArtifact?.status != "generating" {
+            if expandedRenderPlan, !actions.activeShotRenderIds.contains(cut.shotId), cut.renderArtifact?.status != "generating" {
                 CutRenderPlanStrip(
                     cut: cut,
                     actions: actions,
@@ -464,8 +516,8 @@ struct CutStripView: View {
             if expandedNarration {
                 ShotNarrationStrip(
                     shot: cut,
-                    isLoadingChips: actions.activeShotChipsId == cut.shotId,
-                    isNarrating: actions.activeShotNarrationId == cut.shotId || cut.narrationArtifact?.status == "generating",
+                    isLoadingChips: actions.activeShotChipsIds.contains(cut.shotId),
+                    isNarrating: actions.activeShotNarrationIds.contains(cut.shotId) || cut.narrationArtifact?.status == "generating",
                     isRemixingSpeed: actions.activeShotNarrationSpeedId == cut.shotId,
                     extraVoices: actions.accountVoiceOptions,
                     hiddenVoiceIds: actions.hiddenNarrationVoiceIds,
@@ -591,10 +643,13 @@ struct CutStripView: View {
     /// can drive a long strip without a trackpad swipe.
     private var stripScroller: some View {
         CanonHScroller {
-            HStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
                 ForEach(Array(cut.entries.enumerated()), id: \.element.entryId) { entryIndex, entry in
                     gapStrip(index: entryIndex)
-                    entryCell(entry)
+                    VStack(spacing: 5) {
+                        entryCell(entry)
+                        entrySecondaryActions(entry)
+                    }
                 }
                 gapStrip(index: cut.entries.count)
                 appendZone
@@ -721,8 +776,8 @@ struct CutStripView: View {
         // the +N UNRENDERED marker and RENDER NEW on ready versions, and the
         // RESUME affordance on failed ones (their kept clips reuse the same
         // missing-keys law).
-        let quiet = actions.activeShotRenderId != cut.shotId && cut.renderArtifact?.status != "generating"
-        let suffix = (quiet && cut.activeRenderVersion != nil)
+        let quiet = !actions.activeShotRenderIds.contains(cut.shotId) && cut.renderArtifact?.status != "generating"
+        let suffix = (quiet && cut.hasSavedPlayback)
             ? shotSuffixRenderPlan(shot: cut, segments: plan.segments, generatedItems: plan.generatedItems)
             : ShotSuffixRenderPlan()
         return VStack(alignment: .leading, spacing: 5) {
@@ -772,7 +827,7 @@ struct CutStripView: View {
                     Button("Keep as New Shot (below)") {
                         actions.onKeepLookAsNewCut(cut.shotId)
                     }
-                    .disabled(!actions.activeShotRenderId.isEmpty)
+                    .disabled(actions.videoOperationShotIds.contains(cut.shotId))
                 } else {
                     Text("Showing Original — activate a Look in the player to keep it as a Shot")
                 }
@@ -849,8 +904,8 @@ struct CutStripView: View {
             && suffix.reusableSegmentCount > 0
             && suffix.hasNewMaterial
         let resumeHelp = "\(suffix.reusableSegmentCount) of \(suffix.reusableSegmentCount + suffix.missingKeys.count) segments are already rendered — RESUME renders only the rest"
-        let isRenderingThis = actions.activeShotRenderId == cut.shotId || artifact?.status == "generating"
-        let anotherIsRendering = !actions.activeShotRenderId.isEmpty && actions.activeShotRenderId != cut.shotId
+        let isRenderingThis = actions.activeShotRenderIds.contains(cut.shotId) || artifact?.status == "generating"
+        let anotherIsRendering = false
         let renderCTA = cutRenderCTA(cut: cut, segmentCount: segmentCount)
         let isSeedDraft = renderCTA.isSeedDraft
         let canFinalizeLocally = renderCTA == .finalizeFree
@@ -859,9 +914,8 @@ struct CutStripView: View {
         // picker beneath it is the NEXT-render control — and wears a NEXT
         // prefix whenever it disagrees with the rendered truth, so changing
         // the default can never again relabel an artifact it never touched.
-        let provenance = cut.playableRenderVersion.map { version in
-            (label: shotRenderProvenanceSummary(version: version), number: version.versionNumber)
-        }
+        let provenance: (label: String, number: Int)? = cut.hasSavedPlayback
+            ? (shotSequenceProvenance(shot: cut, segments: boxPlanContext().segments), 0) : nil
         let nextDiffers = provenance.map { $0.label != cut.renderStack.shortLabel } ?? false
         VStack(alignment: .leading, spacing: 5) {
             if let provenance {
@@ -873,7 +927,8 @@ struct CutStripView: View {
                     .frame(height: 18)
                     .background(RoundedRectangle(cornerRadius: 4).fill(chipFill(0.35)))
                     .overlay(RoundedRectangle(cornerRadius: 4).stroke(chipStroke, lineWidth: 1))
-                    .help("Rendered with — version \(FrameCreatorModal.romanNumeral(provenance.number)). The picker below only sets the NEXT render.")
+                    .onTapGesture { actions.onOpenShotProvenance(cut.shotId) }
+                    .help("Models in the current sequence — click for per-clip provenance. The picker sets the next render only.")
             }
             if !isPlate {
                 Menu {
@@ -898,7 +953,7 @@ struct CutStripView: View {
                 .help("\(cut.renderStack.accurateHelp) Sets the NEXT render's default model and length — existing renders keep their own provenance; segment overrides remain independent.")
             }
 
-            let hasPlayable = !cut.browsableRenderVersions.isEmpty
+            let hasPlayable = cut.hasSavedPlayback
             if isRenderingThis {
                 HStack(spacing: 6) {
                     if hasPlayable {
@@ -928,7 +983,7 @@ struct CutStripView: View {
                     }
                     .disabled(anotherIsRendering)
                     .help(anotherIsRendering ? "Another Shot is rendering" : "Review the segment prompts and re-render with \(cut.renderStack.shortLabel)")
-                    if isSuffixAppendable, suffix.hasNewMaterial {
+                    if isSuffixAppendable, suffix.hasNewMaterial, shotPendingEndingEntryIds(cut).isEmpty {
                         railActionButton(
                             icon: "sparkles",
                             label: "RENDER NEW",
@@ -1043,8 +1098,8 @@ struct CutStripView: View {
         let generatedSeconds = plan.generatedItems.reduce(0.0) { partial, item in
             partial + Double(item.renderStack.segmentSeconds)
         }
-        let quiet = actions.activeShotRenderId != cut.shotId && cut.renderArtifact?.status != "generating"
-        let suffix = (quiet && cut.activeRenderVersion != nil)
+        let quiet = !actions.activeShotRenderIds.contains(cut.shotId) && cut.renderArtifact?.status != "generating"
+        let suffix = (quiet && cut.hasSavedPlayback)
             ? shotSuffixRenderPlan(shot: cut, segments: plan.segments, generatedItems: plan.generatedItems)
             : ShotSuffixRenderPlan()
         return BoxPlanContext(
@@ -1068,9 +1123,9 @@ struct CutStripView: View {
 
     private func boxRenderToggle(_ context: BoxPlanContext) -> BoxRenderToggle? {
         let artifact = cut.renderArtifact
-        let isRenderingThis = actions.activeShotRenderId == cut.shotId || artifact?.status == "generating"
+        let isRenderingThis = actions.activeShotRenderIds.contains(cut.shotId) || artifact?.status == "generating"
         if isRenderingThis { return nil }
-        let hasPlayable = !cut.browsableRenderVersions.isEmpty
+        let hasPlayable = cut.hasSavedPlayback
         let suffix = context.suffix
         let isResumable = artifact?.status == "failed"
             && suffix.reusableSegmentCount > 0
@@ -1086,6 +1141,7 @@ struct CutStripView: View {
             )
         }
         if hasPlayable {
+            if !shotPendingEndingEntryIds(cut).isEmpty { return nil }
             guard isSuffixAppendable, suffix.hasNewMaterial else { return nil }
             return BoxRenderToggle(
                 title: "RENDER NEW",
@@ -1131,12 +1187,11 @@ struct CutStripView: View {
     /// fill), an open chevron ghost while the plan below carries the confirm.
     private func boxRenderBar(_ context: BoxPlanContext) -> some View {
         let artifact = cut.renderArtifact
-        let isRenderingThis = actions.activeShotRenderId == cut.shotId || artifact?.status == "generating"
-        let anotherIsRendering = !actions.activeShotRenderId.isEmpty && actions.activeShotRenderId != cut.shotId
-        let hasPlayable = !cut.browsableRenderVersions.isEmpty
-        let provenance = cut.playableRenderVersion.map { version in
-            (label: shotRenderProvenanceSummary(version: version), number: version.versionNumber)
-        }
+        let isRenderingThis = actions.activeShotRenderIds.contains(cut.shotId) || artifact?.status == "generating"
+        let anotherIsRendering = false
+        let hasPlayable = cut.hasSavedPlayback
+        let provenance: (label: String, number: Int)? = cut.hasSavedPlayback
+            ? (shotSequenceProvenance(shot: cut, segments: boxPlanContext().segments), 0) : nil
         let toggle = boxRenderToggle(context)
         let planIsOpen = expandedRenderPlan && !isRenderingThis
         return HStack(alignment: .center, spacing: 8) {
@@ -1149,7 +1204,8 @@ struct CutStripView: View {
                     .frame(height: 18)
                     .background(RoundedRectangle(cornerRadius: 4).fill(chipFill(0.35)))
                     .overlay(RoundedRectangle(cornerRadius: 4).stroke(chipStroke, lineWidth: 1))
-                    .help("Rendered with — version \(FrameCreatorModal.romanNumeral(provenance.number)).")
+                    .onTapGesture { actions.onOpenShotProvenance(cut.shotId) }
+                    .help("Models in the current sequence — click for per-clip provenance")
             }
             if hasPlayable {
                 railActionButton(icon: "play.fill", label: "PLAY", tint: CanonColor.brass) {
@@ -1267,10 +1323,10 @@ struct CutStripView: View {
                         .kerning(0.6)
                 }
             }
-            .foregroundStyle(tint)
+            .foregroundStyle(label == "PLAY" ? CanonColor.ink : tint)
             .padding(.horizontal, 7)
             .frame(height: 22)
-            .background(Capsule().fill(tint.opacity(isEngaged ? 0.18 : 0.10)))
+            .background(Capsule().fill(tint.opacity(label == "PLAY" ? 0.9 : (isEngaged ? 0.18 : 0.10))))
             .overlay(Capsule().stroke(tint.opacity(isEngaged ? 0.7 : 0.45), lineWidth: 1))
             .contentShape(Capsule())
         }
@@ -1278,7 +1334,7 @@ struct CutStripView: View {
     }
 
     /// NEW VERSION — the sanctioned way to iterate on a rendered cut: an
-    /// editable, unrendered twin seated right after this one.
+    /// editable copy seated right after this one, retaining selected continuation media.
     private var duplicateButton: some View {
         Button {
             actions.onDuplicate(cut.shotId)
@@ -1290,14 +1346,14 @@ struct CutStripView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("New version — duplicate this Shot for editing; renders stay on the original")
+        .help("New version — copy this Shot for editing, retaining its selected continuation clips")
     }
 
     /// True while THIS cut's render is actually in flight (not merely ready)
     /// — trashing then would hide the running work behind the held render
     /// lock. The engine refuses too; this keeps the control honest.
     private var isActivelyRendering: Bool {
-        actions.activeShotRenderId == cut.shotId
+        actions.activeShotRenderIds.contains(cut.shotId)
             || cut.renderArtifact?.status == "generating"
     }
 
@@ -1340,6 +1396,39 @@ struct CutStripView: View {
 
     // MARK: Entry cells
 
+    private var tailActionLabel: String {
+        cut.entries.isEmpty ? "START SCENE" : (cut.hasSavedPlayback ? "EXTEND SCENE" : "ADD TO SCENE")
+    }
+
+    private func entrySecondaryActions(_ entry: ShotFrameEntry) -> some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                if entry.isClip {
+                    Button("INSPECT FOOTAGE") { actions.onOpenClip(cut.shotId, entry.entryId) }
+                } else if !entry.isAIExtension, let frame = actions.frameLookup[entry.frameImageId] {
+                    Button(frame.status == "ready" ? "VIEW FRAME" : "ART DIRECT") {
+                        if frame.status == "ready" { actions.onOpenFrame(cut.shotId, entry.entryId, frame) }
+                        else { actions.onArtDirectPlannedFrame(frame) }
+                    }
+                }
+                if cut.continuationRecord(entryId: entry.entryId) != nil || entry.isAIExtension {
+                    Button("TAKES") { takeBrowserEntryId = entry.entryId }
+                }
+            }
+            .buttonStyle(.plain)
+            .font(CanonType.archive(7, weight: .semibold))
+            .foregroundStyle(chipInk)
+            if shotPendingEndingEntryIds(cut).contains(entry.entryId) {
+                Button("RENDER ENDING") { beginContinuationReview(retakeEntryId: entry.entryId) }
+                    .buttonStyle(PlateButtonStyle())
+                    .disabled(actions.videoOperationShotIds.contains(cut.shotId))
+                    .help("Review the exact start and ending Frame, model, direction and price. Earlier clips are kept.")
+            }
+        }
+        .frame(width: Self.cellSize.width)
+        .frame(minHeight: 20)
+    }
+
     private func entryCell(_ entry: ShotFrameEntry) -> some View {
         let frame = entry.isClip ? nil : actions.frameLookup[entry.frameImageId]
         let media = entry.isClip ? actions.mediaLookup[entry.clipMediaId] : nil
@@ -1347,7 +1436,7 @@ struct CutStripView: View {
         return ZStack(alignment: .topTrailing) {
             Group {
                 if entry.isAIExtension {
-                    extensionThumbnail(isLeadIn: isLeadInPosition(entry))
+                    extensionThumbnail(entry: entry, isLeadIn: isLeadInPosition(entry))
                 } else if entry.isClip {
                     clipThumbnail(media: media)
                 } else {
@@ -1405,15 +1494,7 @@ struct CutStripView: View {
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture {
-            if entry.isClip {
-                actions.onOpenClip(cut.shotId, entry.entryId)
-            } else if let frame, frame.status == "ready" {
-                actions.onOpenFrame(cut.shotId, entry.entryId, frame)
-            } else if layout == .box, let frame, frame.isPlanFulfillmentCandidate {
-                actions.onArtDirectPlannedFrame(frame)
-            }
-        }
+        .onTapGesture { actions.onOpenShotEntry(cut.shotId, entry.entryId) }
         .contextMenu {
             if !entry.isClip, !entry.isAIExtension, let frame, frame.status == "ready" {
                 Button("Enter Excursion") {
@@ -1421,15 +1502,16 @@ struct CutStripView: View {
                 }
             }
         }
-        .help(entry.isAIExtension
-            ? (isLeadInPosition(entry)
-                ? "AI lead-in — a generated segment arriving on this Shot's first material; edit its prompt in Re-render"
-                : "AI extension — an open-ended generated segment continuing the previous material; edit its prompt in Re-render")
-            : (entry.isClip
-                ? "Open the Clip Inspector — watch, trim to fit, see handoff frames"
-                : (layout == .box && isPlannedEntry(entry)
-                    ? "A planned Frame — click to art-direct and render it in place"
-                    : "")))
+        .help("Open this position in the Shot timeline, paused")
+        .popover(
+            isPresented: Binding(
+                get: { takeBrowserEntryId == entry.entryId },
+                set: { if !$0, takeBrowserEntryId == entry.entryId { takeBrowserEntryId = "" } }
+            ),
+            arrowEdge: .bottom
+        ) {
+            continuationTakeBrowser(entryId: entry.entryId)
+        }
         .draggable(ShotFrameTransfer(
             frameImageId: entry.frameImageId,
             sourceShotId: cut.shotId,
@@ -1565,27 +1647,133 @@ struct CutStripView: View {
         return !cut.entries.prefix(index).contains { !$0.isSkipped }
     }
 
-    private func extensionThumbnail(isLeadIn: Bool) -> some View {
-        ZStack {
+    private func extensionThumbnail(entry: ShotFrameEntry, isLeadIn: Bool) -> some View {
+        let record = cut.continuationRecord(entryId: entry.entryId)
+        let take = record?.selectedTake
+        let rendering = record?.renderingTake
+        let stale = take != nil && shotContinuationStaleEntryIds(cut).contains(entry.entryId)
+        return ZStack {
             CanonColor.paperInset.opacity(0.4)
+            if let image = take.flatMap({ StripThumbnailCache.shared.image(path: $0.finalFramePath) }) {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            }
             VStack(spacing: 5) {
-                Image(systemName: "wand.and.stars")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(CanonColor.brass.opacity(0.85))
-                Text(isLeadIn ? "AI LEAD-IN" : "AI EXTENSION")
-                    .font(CanonType.archive(7.5, weight: .semibold))
-                    .kerning(0.6)
-                    .foregroundStyle(CanonColor.muted)
-                Text(isLeadIn
-                    ? "~\(cut.renderStack.segmentSeconds)s · arrives on the next material"
-                    : "~\(cut.renderStack.segmentSeconds)s · continues the previous material")
-                    .font(CanonType.archive(7, weight: .medium))
-                    .foregroundStyle(CanonColor.muted.opacity(0.8))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 10)
+                if rendering != nil {
+                    ProgressView().controlSize(.small)
+                    Text("GENERATING TAKE \(rendering?.takeNumber ?? 1)")
+                        .font(CanonType.archive(7.5, weight: .bold))
+                        .kerning(0.5)
+                        .foregroundStyle(CanonColor.bone)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.black.opacity(0.55)))
+                } else if take == nil {
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(CanonColor.brass.opacity(0.85))
+                    Text(record?.takes.last?.takeStatus == .failed ? "EXTEND FAILED" : (isLeadIn ? "AI LEAD-IN" : "AI EXTENSION"))
+                        .font(CanonType.archive(7.5, weight: .semibold))
+                        .kerning(0.6)
+                        .foregroundStyle(record?.takes.last?.takeStatus == .failed ? CanonColor.rust : CanonColor.muted)
+                }
+            }
+            VStack {
+                HStack(spacing: 4) {
+                    if stale {
+                        Text("STALE")
+                            .foregroundStyle(CanonColor.bone)
+                            .background(Capsule().fill(CanonColor.rust).padding(.horizontal, -5).padding(.vertical, -2))
+                    }
+                    Spacer()
+                    if let take {
+                        Text("TAKE \(take.takeNumber)")
+                            .foregroundStyle(CanonColor.bone)
+                            .background(Capsule().fill(Color.black.opacity(0.55)).padding(.horizontal, -5).padding(.vertical, -2))
+                    }
+                }
+                .font(CanonType.archive(6.8, weight: .bold))
+                .kerning(0.4)
+                .padding(7)
+                Spacer()
+                if let message = record?.sortedTakes.last?.errorMessage, !message.isEmpty {
+                    Text(message).font(CanonType.interface(8)).lineLimit(2)
+                        .foregroundStyle(CanonColor.bone).padding(5)
+                        .background(CanonColor.rust.opacity(0.9), in: RoundedRectangle(cornerRadius: 4))
+                }
+                if take != nil {
+                    HStack {
+                        Text("AI CONTINUATION · \(record?.takes.count ?? 1) TAKE\((record?.takes.count ?? 1) == 1 ? "" : "S")")
+                            .font(CanonType.archive(6.8, weight: .bold))
+                            .kerning(0.4)
+                            .foregroundStyle(CanonColor.bone)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(Color.black.opacity(0.55)))
+                        Spacer()
+                    }
+                    .padding(6)
+                }
             }
         }
         .clipped()
+        .help(record?.sortedTakes.last?.errorMessage ?? "Click to preview or choose continuation takes")
+    }
+
+    @ViewBuilder
+    private func continuationTakeBrowser(entryId: String) -> some View {
+        if let record = cut.continuationRecord(entryId: entryId) {
+            let staleEntryIds = shotContinuationStaleEntryIds(cut)
+            ShotContinuationTakeBrowserView(
+                record: record,
+                selectedEntryIsStale: staleEntryIds.contains(entryId),
+                rechainEntryIds: staleEntryIds,
+                isRendering: record.renderingTake != nil || actions.videoOperationShotIds.contains(cut.shotId),
+                rechainEstimate: { entryIds in
+                    actions.continuationEntryEstimate(cut.shotId, entryIds)
+                },
+                branchImpact: { takeId in
+                    actions.continuationBranchImpact(cut.shotId, entryId, takeId)
+                },
+                onUse: { impact in
+                    actions.onUseContinuationTake(cut.shotId, impact)
+                },
+                onUseAndRechain: { impact in
+                    actions.onUseContinuationTake(cut.shotId, impact)
+                    takeBrowserEntryId = ""
+                    Task { _ = await actions.onRechainContinuations(cut.shotId) }
+                },
+                onRechain: {
+                    takeBrowserEntryId = ""
+                    Task { _ = await actions.onRechainContinuations(cut.shotId) }
+                },
+                onRepair: { takeId in
+                    Task { _ = await actions.onRepairContinuationTake(cut.shotId, entryId, takeId) }
+                },
+                onNewTake: {
+                    takeBrowserEntryId = ""
+                    Task { @MainActor in
+                        await Task.yield()
+                        beginContinuationReview(retakeEntryId: entryId)
+                    }
+                },
+                onClose: { takeBrowserEntryId = "" }
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("AI EXTENSION")
+                    .font(CanonType.archive(9, weight: .bold))
+                Text("This legacy marker has no completed take yet. Open Re-render to repair or remove it.")
+                    .font(CanonType.interface(11))
+                    .foregroundStyle(CanonColor.muted)
+                Button("CLOSE") { takeBrowserEntryId = "" }
+                    .buttonStyle(PlateButtonStyle())
+            }
+            .padding(16)
+            .frame(width: 340)
+            .background(CanonColor.paper)
+        }
     }
 
     @ViewBuilder
@@ -1743,29 +1931,20 @@ struct CutStripView: View {
 
     // MARK: Append zone — drop target AND button (the once-unwired "+")
 
-    /// Locked cuts trade the "+" slot for a quiet provenance pill.
+    /// Every Scene keeps one discoverable tail affordance. A fully locked
+    /// render may still continue from its honest Original endpoint even when
+    /// direct Frame/Footage appends remain reserved for NEW VERSION.
     @ViewBuilder
     private var appendZone: some View {
         if isLocked, !isSuffixAppendable {
-            RoundedRectangle(cornerRadius: 9)
-                .strokeBorder(slotStroke(0.6), lineWidth: 1)
-                .background(RoundedRectangle(cornerRadius: 9).fill(slotFill(0.16)))
-                .overlay(
-                    VStack(spacing: 5) {
-                        Image(systemName: "lock")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(quiet(0.55))
-                        Text("RENDERED")
-                            .font(CanonType.archive(7.5, weight: .semibold))
-                            .kerning(1)
-                            .foregroundStyle(quiet(0.8))
-                        Text("NEW VERSION to edit")
-                            .font(CanonType.archive(7, weight: .medium))
-                            .foregroundStyle(quiet(0.6))
-                    }
-                )
-                .frame(width: Self.cellSize.width, height: Self.cellSize.height)
-                .help("This Shot is rendered, so its strip stays faithful to the video. Use the NEW VERSION button to duplicate and edit.")
+            VStack(spacing: 4) {
+                appendButton
+                Text("RENDERED · AI EXTEND ONLY")
+                    .font(CanonType.archive(6.5, weight: .semibold))
+                    .kerning(0.7)
+                    .foregroundStyle(quiet(0.75))
+            }
+            .help("Continue the rendered Original with AI. Use NEW VERSION to append or rearrange Frames and Footage.")
         } else if isSuffixAppendable {
             // Locked-but-appendable: the rendered prefix stays true to the
             // video; new material may join at the end and render separately.
@@ -1796,20 +1975,32 @@ struct CutStripView: View {
                         .fill(isAppendTargeted ? CanonColor.softGold.opacity(0.16) : slotFill(0.28))
                 )
                 .overlay(
-                    Image(systemName: "plus")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(quiet(0.7))
+                    VStack(spacing: 5) {
+                        Image(systemName: cut.entries.isEmpty ? "plus" : "wand.and.stars")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(CanonColor.brass.opacity(0.9))
+                        Text(tailActionLabel)
+                            .font(CanonType.archive(8, weight: .bold))
+                            .kerning(0.9)
+                            .foregroundStyle(chipInk)
+                        Text("AI · FRAME · FOOTAGE")
+                            .font(CanonType.archive(6.8, weight: .semibold))
+                            .kerning(0.55)
+                            .foregroundStyle(quiet(0.72))
+                    }
                 )
                 .frame(width: Self.cellSize.width, height: Self.cellSize.height)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Add Source Material to this Shot, or render a new Frame")
+        .help(cut.entries.isEmpty
+            ? "Start this Scene with AI, a Frame, or Footage"
+            : "Continue with AI, or append a Frame or Footage")
         .popover(isPresented: $isAppendPickerOpen, arrowEdge: .bottom) {
             appendPicker
         }
         .dropDestination(for: ShotFrameTransfer.self) { items, _ in
-            guard let transfer = items.first else { return false }
+            guard (!isLocked || isSuffixAppendable), let transfer = items.first else { return false }
             if transfer.sourceShotId == cut.shotId, !transfer.sourceEntryId.isEmpty {
                 actions.onMoveEntry(cut.shotId, transfer.sourceEntryId, cut.entries.count)
             } else if transfer.isClipDrag {
@@ -1819,158 +2010,85 @@ struct CutStripView: View {
             }
             return true
         } isTargeted: { targeted in
-            isAppendTargeted = targeted
+            isAppendTargeted = targeted && (!isLocked || isSuffixAppendable)
+        }
+        .onChange(of: isAppendPickerOpen) { _, isOpen in
+            if !isOpen {
+                clearContinuationReview(closePopover: false)
+            }
         }
     }
 
-    /// The append picker: the complete Source Material inventory, searchable,
-    /// with unused items first and a direct New Frame path.
-    private var appendPicker: some View {
-        let query = appendSearchQuery.trimmed.lowercased()
-        let candidates = poolInputs.filter { input in
-            guard !query.isEmpty else { return true }
-            if input.isClip {
-                return actions.mediaLookup[input.clipMediaId]?.filename.lowercased().contains(query) == true
-            }
-            guard let frame = actions.frameLookup[input.frameImageId] else { return false }
-            return frame.label.lowercased().contains(query)
-                || frame.prompt.lowercased().contains(query)
-        }
-        let placedFrameIds = Set(cut.entries.map(\.frameImageId).filter { !$0.isEmpty })
-        let placedClipIds = Set(cut.entries.map(\.clipMediaId).filter { !$0.isEmpty })
-        let unplaced = candidates.filter { input in
-            input.isClip ? !placedClipIds.contains(input.clipMediaId) : !placedFrameIds.contains(input.frameImageId)
-        }
-        let placed = candidates.filter { input in
-            input.isClip ? placedClipIds.contains(input.clipMediaId) : placedFrameIds.contains(input.frameImageId)
-        }
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("SOURCE MATERIAL")
-                .font(CanonType.archive(8, weight: .semibold))
-                .kerning(1.2)
-                .foregroundStyle(CanonColor.muted)
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(CanonColor.muted)
-                TextField("Search Frames and Footage", text: $appendSearchQuery)
-                    .textFieldStyle(.plain)
-                    .font(CanonType.interface(11))
-            }
-            .padding(.horizontal, 8)
-            .frame(width: 548, height: 32)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.55)))
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(CanonColor.hairlinePaper.opacity(0.8)))
-            if candidates.isEmpty {
-                Text(poolInputs.isEmpty
-                    ? "No source material yet — render a new Frame below."
-                    : "No Frames or Footage match this search.")
-                    .font(CanonType.interface(11))
-                    .foregroundStyle(CanonColor.muted)
-                    .frame(width: 300, alignment: .leading)
+    private func beginContinuationReview(retakeEntryId: String = "") {
+        guard !isPreparingContinuation else { return }
+        continuationRetakeEntryId = retakeEntryId
+        continuationReview = nil
+        continuationPreparationMessage = ""
+        isPreparingContinuation = true
+        isAppendPickerOpen = true
+        actions.onRenderPlanOpened()
+        continuationPreparationTask?.cancel()
+        continuationPreparationTask = Task {
+            let prepared = retakeEntryId.isEmpty
+                ? await actions.onPrepareContinuation(cut.shotId)
+                : await actions.onPrepareContinuationRetake(cut.shotId, retakeEntryId)
+            guard !Task.isCancelled else { return }
+            isPreparingContinuation = false
+            if let reason = prepared.lockReason {
+                continuationPreparationMessage = reason.message
+            } else if prepared.canContinue {
+                continuationReview = prepared
             } else {
-                ScrollView(.vertical, showsIndicators: true) {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 102, maximum: 102), spacing: 8)], spacing: 10) {
-                        ForEach(unplaced + placed) { input in
-                            appendPickerThumb(input, alreadyPlaced: placed.contains(input))
-                        }
-                    }
-                }
-                .frame(width: 548, height: min(CGFloat((candidates.count + 4) / 5) * 84 + 8, 344))
+                continuationPreparationMessage = "No executable continuation method is available for this endpoint."
             }
-            Divider()
-            Button {
-                isAppendPickerOpen = false
-                actions.onCreateFrameForCut(cut.shotId)
-            } label: {
-                Label("New Frame for this Shot…", systemImage: "plus.square.on.square")
-                    .font(CanonType.interface(11.5, weight: .semibold))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(CanonColor.brass)
-            .help("Open the Frame Creator — the rendered Frame lands at the end of this Shot")
         }
-        .padding(14)
-        .background(CanonColor.paper)
     }
 
-    private func appendPickerThumb(_ input: StageInput, alreadyPlaced: Bool) -> some View {
-        let frame = input.isClip ? nil : actions.frameLookup[input.frameImageId]
-        let media = input.isClip ? actions.mediaLookup[input.clipMediaId] : nil
-        return Button {
-            isAppendPickerOpen = false
-            actions.onAppendPoolInput(cut.shotId, input)
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                ZStack(alignment: .bottomLeading) {
-                    Group {
-                        if input.isClip {
-                            sourceMediaThumbnail(media: media)
-                        } else {
-                            cellThumbnail(frame: frame)
-                        }
-                    }
-                    .frame(width: 102, height: 57)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    if alreadyPlaced {
-                        Text("IN SHOT")
-                            .font(CanonType.archive(6.5, weight: .bold))
-                            .kerning(0.5)
-                            .foregroundStyle(CanonColor.bone)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(Color.black.opacity(0.55)))
-                            .padding(3)
-                    }
-                }
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(CanonColor.hairlinePaper.opacity(0.9), lineWidth: 1)
-                )
-                Text(sourceMaterialTitle(frame: frame, media: media))
-                    .font(CanonType.interface(8.5, weight: .semibold))
-                    .foregroundStyle(CanonColor.ink.opacity(0.72))
-                    .lineLimit(1)
-                    .frame(width: 102, alignment: .leading)
+    private func clearContinuationReview(closePopover: Bool) {
+        continuationReview = nil
+        continuationRetakeEntryId = ""
+        continuationPreparationMessage = ""
+        isPreparingContinuation = false
+        continuationPreparationTask?.cancel()
+        continuationPreparationTask = nil
+        if closePopover { isAppendPickerOpen = false }
+    }
+
+    private func confirmContinuation(_ request: ShotContinuationRequest) {
+        let retakeEntryId = continuationRetakeEntryId
+        clearContinuationReview(closePopover: true)
+        Task {
+            if retakeEntryId.isEmpty {
+                _ = await actions.onStartContinuation(cut.shotId, request)
+            } else {
+                _ = await actions.onStartContinuationRetake(cut.shotId, retakeEntryId, request)
             }
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .opacity(input.isClip && frameIsUnready(frame, isClip: true) ? 1 : (frameIsUnready(frame, isClip: input.isClip) ? 0.55 : 1))
-        .disabled(frameIsUnready(frame, isClip: input.isClip))
-        .help(alreadyPlaced ? "Already in this Shot — click to place it again" : "Append to this Shot")
     }
 
     @ViewBuilder
-    private func sourceMediaThumbnail(media: MediaItemRecord?) -> some View {
-        if media?.kind == .image {
-            ZStack(alignment: .topLeading) {
-                CanonColor.mediaCardHover
-                if let media,
-                   let image = StripThumbnailCache.shared.image(path: media.path)
-                    ?? StripThumbnailCache.shared.image(path: media.thumbnailPath) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } else {
-                    Image(systemName: "photo")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(CanonColor.muted.opacity(0.72))
-                }
-                // SCENES v2 counts every photo as a Frame; the v1 picker keeps its word.
-                Text(layout == .box ? "FRAME" : "PHOTO")
-                    .font(CanonType.archive(6.5, weight: .bold))
-                    .kerning(0.5)
-                    .foregroundStyle(CanonColor.bone)
-                    .padding(.horizontal, 5)
-                    .frame(height: 17)
-                    .background(Capsule().fill(Color.black.opacity(0.52)))
-                    .padding(4)
-            }
-            .clipped()
+    private var appendPicker: some View {
+        if let availability = continuationReview {
+            ShotContinuationReviewView(
+                availability: availability,
+                configuredModels: actions.configuredRenderModels,
+                pricing: actions.falPricing,
+                title: availability.targetFrame != nil ? "Render Ending" : (continuationRetakeEntryId.isEmpty ? (cut.hasSavedPlayback ? "Extend Scene" : "Animate Frame") : "New Continuation Take"),
+                onCancel: { clearContinuationReview(closePopover: false) },
+                onRender: confirmContinuation
+            )
         } else {
-            clipThumbnail(media: media)
+            appendPickerMenu
         }
+    }
+
+    /// The append picker: one semantic tail menu, then the complete Source
+    /// Material inventory with unused inputs first.
+    private var appendPickerMenu: some View {
+        ShotTailPickerMenu(cut: cut, poolInputs: poolInputs, actions: actions,
+            isPreparingContinuation: isPreparingContinuation,
+            continuationPreparationMessage: continuationPreparationMessage,
+            onAI: { beginContinuationReview() }, onClose: { isAppendPickerOpen = false })
     }
 
     private func sourceMaterialTitle(

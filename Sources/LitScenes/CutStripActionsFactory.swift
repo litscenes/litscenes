@@ -54,12 +54,18 @@ func makeCutStripActions(
     actions.mediaLookup = mediaLookup
     actions.meaningNodes = library.lensContext.promptPacket().meaningNodes
     actions.activeShotRenderId = library.activeShotRenderId
+    actions.activeShotRenderIds = library.activeShotRenderIds
+    actions.activeShotNarrationIds = library.activeShotNarrationIds
+    actions.videoOperationShotIds = Set(library.shotTimeline.shots.filter { library.cutHasInFlightVideoOperation(cutId: $0.shotId) }.map(\.shotId))
+    actions.isVideoOperationActive = !library.activeShotRenderId.isEmpty
+        || !library.activeShotJoinRenderId.isEmpty
+        || !library.activeShotRestyleId.isEmpty
     actions.configuredRenderModels = Set(
         ShotRenderModel.allCases.filter(library.canExecuteShotRenderModel)
     )
     actions.activeShotNarrationId = library.activeShotNarrationId
     actions.activeShotNarrationSpeedId = library.activeShotNarrationSpeedId
-    actions.activeShotChipsId = library.activeShotChipsId
+    actions.activeShotChipsIds = library.activeShotChipsIds
     actions.accountVoiceOptions = library.accountVoiceOptions
     actions.hiddenNarrationVoiceIds = library.hiddenNarrationVoiceIds
     actions.narrationFocusRequest = surface.narrationFocusRequest
@@ -109,8 +115,12 @@ func makeCutStripActions(
     }
     actions.onConfirmRender = { cutId, overrides, onlySegmentKeys in
         library.setShotSegmentPromptOverrides(shotId: cutId, overrides: overrides)
-        Task {
-            await library.renderShot(shotId: cutId, onlySegmentKeys: onlySegmentKeys)
+        if let shot = library.shotTimeline.shots.first(where: { $0.shotId == cutId }),
+           let entryId = shotPendingEndingForRender(shot: shot, segments: library.shotRenderPromptPlan(shotId: cutId)?.segments ?? [], keys: onlySegmentKeys) {
+            surface.onOpenPlayer(ShotVideoRequest(shotId: cutId, focusedEntryId: entryId,
+                autoplay: false, openEndingReview: true))
+        } else {
+            Task { await library.renderShot(shotId: cutId, onlySegmentKeys: onlySegmentKeys) }
         }
     }
     actions.onAutosavePromptOverrides = { cutId, overrides in
@@ -127,7 +137,13 @@ func makeCutStripActions(
         }
     }
     actions.onRequestRerender = { cutId in
-        surface.onOpenPlayer(ShotVideoRequest(shotId: cutId, openRerenderPanel: true))
+        surface.onOpenPlayer(ShotVideoRequest(shotId: cutId, intent: .edit))
+    }
+    actions.onOpenShotEntry = { cutId, entryId in
+        surface.onOpenPlayer(ShotVideoRequest(shotId: cutId, intent: .focus(entryId)))
+    }
+    actions.onOpenShotProvenance = { cutId in
+        surface.onOpenPlayer(ShotVideoRequest(shotId: cutId, intent: .provenance))
     }
     actions.onOpenShotVideo = { cutId in
         // PLAY opens the whole instrument — player, timeline strip,
@@ -237,6 +253,45 @@ func makeCutStripActions(
                 context: .shotFrame(appendToShotId: cutId)
             )
         )
+    }
+    actions.continuationAvailability = { cutId in
+        library.shotContinuationAvailability(shotId: cutId)
+    }
+    actions.onPrepareContinuation = { cutId in
+        await library.prepareShotContinuationAvailability(shotId: cutId)
+    }
+    actions.onStartContinuation = { cutId, request in
+        await library.startShotContinuation(shotId: cutId, request: request)
+    }
+    actions.onPrepareContinuationRetake = { cutId, entryId in
+        await library.prepareShotContinuationRetakeAvailability(shotId: cutId, entryId: entryId)
+    }
+    actions.onStartContinuationRetake = { cutId, entryId, request in
+        await library.startShotContinuationRetake(shotId: cutId, entryId: entryId, request: request)
+    }
+    actions.continuationBranchImpact = { cutId, entryId, takeId in
+        library.shotContinuationBranchImpact(shotId: cutId, entryId: entryId, takeId: takeId)
+    }
+    actions.onUseContinuationTake = { cutId, impact in
+        library.useShotContinuationTake(shotId: cutId, impact: impact)
+    }
+    actions.continuationRechainEstimate = { cutId, rebuildAll in
+        library.shotContinuationRechainEstimate(shotId: cutId, rebuildAll: rebuildAll)
+    }
+    actions.continuationEntryEstimate = { cutId, entryIds in
+        library.shotContinuationEstimate(shotId: cutId, entryIds: entryIds)
+    }
+    actions.onRepairContinuationTake = { shotId, entryId, takeId in
+        await library.repairShotContinuationTake(shotId: shotId, entryId: entryId, takeId: takeId)
+    }
+    actions.onRechainContinuations = { cutId in
+        await library.rechainShotContinuations(shotId: cutId)
+    }
+    actions.onRebuildContinuationChain = { cutId in
+        await library.rebuildShotGeneratedChain(shotId: cutId)
+    }
+    actions.onShowOriginal = { cutId in
+        library.activateShotLookVersion(shotId: cutId, versionId: "")
     }
     actions.onArtDirectPlannedFrame = { heroImage in
         surface.onLaunchFrameCreator(

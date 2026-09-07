@@ -1122,11 +1122,7 @@ struct FrameCreatorModal: View {
         if let renderBlockerHelp { return renderBlockerHelp }
         let stacks = selectedStacks
         guard !stacks.isEmpty else { return "Choose a stack first." }
-        if stacks.count > takeLaneFreeSlots {
-            return takeLaneFreeSlots == 0
-                ? "All Frame render lanes are busy — wait for one to finish"
-                : "\(stacks.count) stacks selected but only \(takeLaneFreeSlots) render lane\(takeLaneFreeSlots == 1 ? "" : "s") free — deselect \(stacks.count - takeLaneFreeSlots) or wait"
-        }
+
         for stack in stacks {
             if let blocker = startBlocker(for: stack) {
                 return stacks.count == 1 ? blocker : "\(stack.label): \(blocker)"

@@ -75,7 +75,7 @@ struct SourceMediaGrid: View {
 
     private var items: [MediaItemRecord] {
         let query = filterQuery.trimmed.lowercased()
-        return library.items
+        return library.browsableMediaItems
             .filter { $0.kind == kind && !excludedMediaIds.contains($0.mediaId) }
             .filter { item in
                 query.isEmpty

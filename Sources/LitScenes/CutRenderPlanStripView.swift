@@ -115,7 +115,7 @@ struct CutRenderPlanStrip: View {
     private var standardPlan: some View {
         let plan = plan
         let generatedSeconds = plan.generatedItems.reduce(0) { $0 + $1.renderStack.segmentSeconds }
-        let anotherIsRendering = !actions.activeShotRenderId.isEmpty && actions.activeShotRenderId != cut.shotId
+        let anotherIsRendering = false
         // Suffix context: a ready selected version with unrendered plan keys
         // offers "render only the new material"; a FAILED version with kept
         // clips offers RESUME — same law, different name. Both mark every
@@ -136,6 +136,7 @@ struct CutRenderPlanStrip: View {
             switch segment {
             case .generated(let item): key = item.pair.placementKey
             case .footage(let footage): key = footage.placementKey
+            case .preserved(let preserved): key = preserved.placementKey
             // Never in plan-generator output (assembly-only fallback band).
             case .artifactFallback: return nil
             }
@@ -179,6 +180,8 @@ struct CutRenderPlanStrip: View {
                     case .segment(.artifactFallback):
                         // Never in plan-generator output (assembly-only).
                         EmptyView()
+                    case .segment(.preserved(let preserved)):
+                        preservedRow(preserved)
                     case .segment(.footage(let segment)):
                         footageRow(
                             segment,
@@ -301,8 +304,7 @@ struct CutRenderPlanStrip: View {
         } ?? false
         let anchorBlocked = anchorFaceVerdict?.blocksRender == true && !overrideApplies
         let isConfigured = actions.configuredRenderModels.contains(.falLTX23Narration)
-        let anotherIsRendering = !actions.activeShotRenderId.isEmpty
-            && actions.activeShotRenderId != cut.shotId
+        let anotherIsRendering = false
         let promptItem = narrationPromptItem
         let generatedPrompt = promptItem?.generatedPrompt ?? ""
         let promptText = promptItem.map { draftValue(for: $0) } ?? ""
@@ -735,6 +737,9 @@ struct CutRenderPlanStrip: View {
         let nativeExtendBlocked = leadInItems.contains {
             $0.renderStack.isNativeFootageExtend && !$0.canUseNativeFootageExtend
         }
+        let hasDependentContinuationChain = shotHasDependentContinuationChain(cut)
+        let rebuildEstimate = actions.continuationRechainEstimate(cut.shotId, true)
+        let rebuildPriceUnavailable = hasDependentContinuationChain && !rebuildEstimate.isComplete
         return HStack(spacing: 10) {
             Text("\(recipeSummary) = \(generatedSeconds)s generated")
                 .font(CanonType.archive(7.5, weight: .semibold))
@@ -764,21 +769,37 @@ struct CutRenderPlanStrip: View {
                     isFetchingRates: actions.isFetchingVideoPricing
                 )
                 Button {
-                    let allKeys = Set(plan.segments.compactMap { segment -> String? in
-                        switch segment {
-                        case .generated(let item): return item.pair.placementKey
-                        case .footage(let footage): return footage.placementKey
-                        // Never in plan-generator output (assembly-only).
-                        case .artifactFallback: return nil
-                        }
-                    })
                     saveDirectionPlansForConfirm()
-                    onConfirm(
-                        computedSegmentPromptOverrides(drafts: drafts, items: plan.generatedItems, now: DateFormats.now()),
-                        allKeys
-                    )
+                    if hasDependentContinuationChain {
+                        actions.onAutosavePromptOverrides(
+                            cut.shotId,
+                            computedSegmentPromptOverrides(
+                                drafts: drafts,
+                                items: plan.generatedItems,
+                                now: DateFormats.now()
+                            )
+                        )
+                        onCancel()
+                        Task { _ = await actions.onRebuildContinuationChain(cut.shotId) }
+                    } else {
+                        let allKeys = Set(plan.segments.compactMap { segment -> String? in
+                            switch segment {
+                            case .generated(let item): return item.pair.placementKey
+                            case .footage(let footage): return footage.placementKey
+                            case .preserved: return nil
+                            // Never in plan-generator output (assembly-only).
+                            case .artifactFallback: return nil
+                            }
+                        })
+                        onConfirm(
+                            computedSegmentPromptOverrides(drafts: drafts, items: plan.generatedItems, now: DateFormats.now()),
+                            allKeys
+                        )
+                    }
                 } label: {
-                    Text("RE-RENDER ALL\(estimate.headlineLabel.map { " · \($0)" } ?? "")")
+                    Text(hasDependentContinuationChain
+                        ? "REBUILD GENERATED CHAIN\(rebuildEstimate.headlineLabel.map { " · \($0)" } ?? "")"
+                        : "RE-RENDER ALL\(estimate.headlineLabel.map { " · \($0)" } ?? "")")
                         .font(CanonType.archive(7.5, weight: .bold))
                         .kerning(0.6)
                         .foregroundStyle(labelInk)
@@ -792,8 +813,13 @@ struct CutRenderPlanStrip: View {
                 .disabled(!unconfiguredModels.isEmpty
                     || !leadInBlockedModels.isEmpty
                     || nativeExtendBlocked
+                    || rebuildPriceUnavailable
                     || anotherIsRendering)
-                .help("Regenerate every segment from scratch at full cost")
+                .help(hasDependentContinuationChain
+                    ? (rebuildPriceUnavailable
+                        ? "A complete estimate is required before rebuilding paid continuation links"
+                        : "Generate one new immutable take for each continuation in order, then assemble locally; completed links remain resumable after a failure")
+                    : "Regenerate every segment from scratch at full cost")
                 confirmButton(
                     title: {
                         if isCombinedSeedContext && suffix.missingKeys.isEmpty {
@@ -830,11 +856,14 @@ struct CutRenderPlanStrip: View {
                 }
             } else {
                 confirmButton(
-                    title: confirmTitle,
+                    title: hasDependentContinuationChain
+                        ? "REBUILD GENERATED CHAIN\(rebuildEstimate.headlineLabel.map { " · \($0)" } ?? "")"
+                        : confirmTitle,
                     enabled: unconfiguredModels.isEmpty
                         && leadInBlockedModels.isEmpty
                         && !nativeExtendBlocked
                         && !anotherIsRendering
+                        && !rebuildPriceUnavailable
                         && !(plan.generatedItems.isEmpty && plan.segments.isEmpty),
                     help: nativeExtendBlocked
                         ? "Native Extend needs an AI extension directly after at least 73 frames of footage — choose Out-frame above"
@@ -844,13 +873,25 @@ struct CutRenderPlanStrip: View {
                             ? "Configure \(unconfiguredModels.joined(separator: ", ")) in App Settings before rendering"
                             : (anotherIsRendering
                                 ? "Another cut is rendering"
-                                : "Save these prompts and render — exactly what's shown above is what runs")))
+                                : (hasDependentContinuationChain
+                                    ? (rebuildPriceUnavailable
+                                        ? "A complete estimate is required before rebuilding paid continuation links"
+                                        : "Rebuild each continuation in order and keep every prior take; completed links make a failed run resumable")
+                                    : "Save these prompts and render — exactly what's shown above is what runs"))))
                 ) {
                     saveDirectionPlansForConfirm()
-                    onConfirm(
-                        computedSegmentPromptOverrides(drafts: drafts, items: plan.generatedItems, now: DateFormats.now()),
-                        nil
+                    let overrides = computedSegmentPromptOverrides(
+                        drafts: drafts,
+                        items: plan.generatedItems,
+                        now: DateFormats.now()
                     )
+                    if hasDependentContinuationChain {
+                        actions.onAutosavePromptOverrides(cut.shotId, overrides)
+                        onCancel()
+                        Task { _ = await actions.onRebuildContinuationChain(cut.shotId) }
+                    } else {
+                        onConfirm(overrides, nil)
+                    }
                 }
             }
         }
@@ -1194,6 +1235,21 @@ struct CutRenderPlanStrip: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 2)
+    }
+
+    private func preservedRow(_ segment: ShotPreservedRenderPlanSegment) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "film.stack")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(quiet(0.8))
+            Text("ORIGINAL · \(videoTrimTimestampLabel(segment.clip.durationSeconds)) · SAVED SOURCE · REUSED · $0")
+                .font(CanonType.archive(7.5, weight: .semibold))
+                .kerning(0.5)
+                .foregroundStyle(labelInk)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 2)
+        .help("The exact rendered video this continuation extends. It stays first in the Shot and is never regenerated by this action.")
     }
 
     private func skippedRow(_ placeholder: ShotSkippedSegmentPlaceholder) -> some View {

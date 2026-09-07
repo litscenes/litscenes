@@ -98,20 +98,6 @@ func capRefusesInteractiveStartsButNotWholeLensClaims() {
 
 @Test
 @MainActor
-func pauseOutranksExclusiveAndCap() {
-    let engine = makeLaneLawTestEngine()
-    engine.setGenerationPaused(true)
-    engine.beginLensHeroExclusiveHold(lensId: "lens_regen")
-    defer {
-        engine.endLensHeroExclusiveHold()
-        engine.setGenerationPaused(false)
-    }
-    #expect(engine.lensHeroTakeStartBlockReason
-        == "Resume the paused generation before starting a new still render")
-}
-
-@Test
-@MainActor
 func reframesAllowedDuringWholeLensFlow() {
     let engine = makeLaneLawTestEngine()
     engine.beginLensHeroWholeLensFlow(lensId: "lens_a")

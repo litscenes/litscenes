@@ -192,6 +192,9 @@ struct ProjectCharacterSetDocument: Codable, Hashable {
     var schemaVersion: String = ProjectCharacterSetDocument.schemaVersion
     var projectId: String = ""
     var characters: [ProjectCharacter] = []
+    /// Deleted versions stay archived for existing artifacts, but cannot be selected.
+    /// Project-owned so removing a character never resurrects their deleted sheets.
+    var deletedSheetMediaIds: [String] = []
     var updatedAt: String = ""
 
     static func empty(projectId: String) -> ProjectCharacterSetDocument {
@@ -215,10 +218,20 @@ struct ProjectCharacterSetDocument: Codable, Hashable {
         var value = self
         value.schemaVersion = Self.schemaVersion
         value.projectId = value.projectId.trimmed
+        value.deletedSheetMediaIds = uniqueNonEmpty(value.deletedSheetMediaIds)
         var seenIds: Set<String> = []
         var seenNames: Set<String> = []
+        let deletedIds = Set(value.deletedSheetMediaIds)
         value.characters = value.characters
-            .map { $0.normalized() }
+            .map { character in
+                var updated = character.normalized()
+                updated.referenceMediaIds.removeAll { deletedIds.contains($0) }
+                if let activeId = updated.activeSheetMediaId, deletedIds.contains(activeId) {
+                    updated.activeSheetMediaId = nil
+                    updated.activeSheetPromptHash = ""
+                }
+                return updated.normalized()
+            }
             .filter { character in
                 guard !character.name.isEmpty,
                       !seenIds.contains(character.characterId),
@@ -237,13 +250,15 @@ struct ProjectCharacterSetDocument: Codable, Hashable {
         case schemaVersion
         case projectId
         case characters
+        case deletedSheetMediaIds
         case updatedAt
     }
 
-    init(schemaVersion: String = ProjectCharacterSetDocument.schemaVersion, projectId: String = "", characters: [ProjectCharacter] = [], updatedAt: String = "") {
+    init(schemaVersion: String = ProjectCharacterSetDocument.schemaVersion, projectId: String = "", characters: [ProjectCharacter] = [], deletedSheetMediaIds: [String] = [], updatedAt: String = "") {
         self.schemaVersion = schemaVersion
         self.projectId = projectId
         self.characters = characters
+        self.deletedSheetMediaIds = deletedSheetMediaIds
         self.updatedAt = updatedAt
     }
 
@@ -252,6 +267,7 @@ struct ProjectCharacterSetDocument: Codable, Hashable {
         schemaVersion = try container.decodeIfPresent(String.self, forKey: .schemaVersion) ?? Self.schemaVersion
         projectId = try container.decodeIfPresent(String.self, forKey: .projectId) ?? ""
         characters = try container.decodeIfPresent([ProjectCharacter].self, forKey: .characters) ?? []
+        deletedSheetMediaIds = try container.decodeIfPresent([String].self, forKey: .deletedSheetMediaIds) ?? []
         updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt) ?? ""
         self = normalized()
     }

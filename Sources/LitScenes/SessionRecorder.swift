@@ -975,11 +975,13 @@ final class SessionRecorder: NSObject, ObservableObject,
 @MainActor
 final class SessionAppDelegate: NSObject, NSApplicationDelegate {
     weak var sessionRecorder: SessionRecorder?
+    weak var workspace: ProjectWorkspaceCoordinator?
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let sessionRecorder, sessionRecorder.isActive else { return .terminateNow }
+        guard workspace != nil || sessionRecorder?.isActive == true else { return .terminateNow }
         Task { @MainActor in
-            await sessionRecorder.stopForTermination()
+            await workspace?.prepareToQuit()
+            if let sessionRecorder, sessionRecorder.isActive { await sessionRecorder.stopForTermination() }
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

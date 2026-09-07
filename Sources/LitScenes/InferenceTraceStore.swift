@@ -48,20 +48,13 @@ struct TracedHTTPDownloadResult: Sendable {
 }
 
 enum InferenceTraceSettings {
-    static func isEnabled() -> Bool {
-        if let override = environmentValue("LITSCENES_DEV_INFERENCE_TRACE")?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-           !override.isEmpty {
-            return !["0", "false", "no", "off"].contains(override)
-        }
-#if DEBUG
-        return true
-#else
-        return false
-#endif
-    }
+    static func isEnabled() -> Bool { true }
 
     static var databaseURL: URL {
-        litScenesApplicationSupportDirectory()
+        if let path = ProcessInfo.processInfo.environment["LITSCENES_OPERATIONAL_DB"], !path.isEmpty {
+            return URL(fileURLWithPath: path)
+        }
+        return litScenesApplicationSupportDirectory()
             .appendingPathComponent("dev", isDirectory: true)
             .appendingPathComponent("inference_traces.sqlite")
     }
@@ -70,7 +63,7 @@ enum InferenceTraceSettings {
 actor InferenceTraceStore {
     static let shared = InferenceTraceStore()
 
-    private var connection: OpaquePointer?
+    var connection: OpaquePointer?
     private var initialized = false
 
     func record(
@@ -79,9 +72,10 @@ actor InferenceTraceStore {
         response: HTTPURLResponse?,
         responseBody: Data?,
         latencyMs: Int,
-        error: Error? = nil
+        error: Error? = nil,
+        traceId existingTraceId: String? = nil
     ) -> String {
-        let traceId = "itrace_\(UUID().uuidString.lowercased())"
+        let traceId = existingTraceId ?? "itrace_\(UUID().uuidString.lowercased())"
         guard InferenceTraceSettings.isEnabled() else { return traceId }
         do {
             try ensureReady()
@@ -95,7 +89,8 @@ actor InferenceTraceStore {
                 error: error
             )
         } catch {
-            print("[inference_trace] error trace_id=\(traceId) message=\"\(error.localizedDescription)\"")
+            print("[inference_trace] error trace_id=\(traceId) message=\"\(WorkflowPrivacy.text(error.localizedDescription))\"")
+            return ""
         }
         return traceId
     }
@@ -181,7 +176,7 @@ actor InferenceTraceStore {
         }
     }
 
-    private func ensureReady() throws {
+    func ensureReady() throws {
         if initialized { return }
         let databaseURL = InferenceTraceSettings.databaseURL
         try ensureDirectory(databaseURL.deletingLastPathComponent())
@@ -260,6 +255,7 @@ actor InferenceTraceStore {
         try execute("CREATE INDEX IF NOT EXISTS inference_calls_trace_group_created_at_idx ON inference_calls(trace_group_id, created_at);")
         try execute("CREATE INDEX IF NOT EXISTS inference_calls_artifact_idx ON inference_calls(artifact_type, artifact_id);")
         try execute("CREATE INDEX IF NOT EXISTS inference_calls_workflow_created_at_idx ON inference_calls(workflow_name, workflow_step, created_at);")
+        try migrateWorkflowStorage()
         initialized = true
     }
 
@@ -306,7 +302,7 @@ actor InferenceTraceStore {
     ) throws {
         guard let connection else { throw ScreenGraphError.capture("Inference trace DB is not open.") }
         let sql = """
-        INSERT INTO inference_calls (
+        INSERT OR REPLACE INTO inference_calls (
             trace_id, created_at, schema_version, provider, api_family, operation, project_id, run_id,
             trace_group_id, parent_trace_id, workflow_name, workflow_step, artifact_type, artifact_id,
             request_method, request_url, request_headers_json, request_body, request_body_format,
@@ -323,15 +319,15 @@ actor InferenceTraceStore {
         }
         defer { sqlite3_finalize(statement) }
 
-        let requestBody = metadata.captureRequestBody ? (request.httpBody ?? Data()) : Data()
-        let capturedResponseBody = metadata.captureResponseBody ? responseBody : Data()
+        let requestBody = metadata.captureRequestBody ? WorkflowPrivacy.body(request.httpBody ?? Data()) : Data()
+        let capturedResponseBody = metadata.captureResponseBody ? WorkflowPrivacy.body(responseBody) : Data()
         let requestHeaders = jsonString(sanitizedHeaders(request.allHTTPHeaderFields ?? [:]))
         let responseHeaders = jsonString(sanitizedHeaders(headersDictionary(response?.allHeaderFields ?? [:])))
         let requestBodyFormat = request.value(forHTTPHeaderField: "Content-Type") ?? metadata.requestBodyFormat
         let responseBodyFormat = response?.value(forHTTPHeaderField: "content-type") ?? metadata.responseBodyFormatHint
         let providerRequestId = firstHeaderValue(metadata.providerRequestIDHeaderCandidates, in: response)
         let nsError = error as NSError?
-        let success = ((response?.statusCode ?? 0) >= 200 && (response?.statusCode ?? 0) < 300) && error == nil
+        let success = ((response?.statusCode ?? 200) >= 200 && (response?.statusCode ?? 200) < 300) && error == nil
 
         bindText(traceId, to: statement, index: 1)
         bindText(DateFormats.now(), to: statement, index: 2)
@@ -348,13 +344,15 @@ actor InferenceTraceStore {
         bindText(metadata.artifactType, to: statement, index: 13)
         bindText(metadata.artifactId, to: statement, index: 14)
         bindText(request.httpMethod ?? "GET", to: statement, index: 15)
-        bindText(request.url?.absoluteString ?? "", to: statement, index: 16)
+        let requestLocation = metadata.apiFamily == "media_transfer" || metadata.operation.contains("download")
+            ? WorkflowPrivacy.mediaReference(request.url?.absoluteString ?? "") : WorkflowPrivacy.url(request.url)
+        bindText(requestLocation, to: statement, index: 16)
         bindText(requestHeaders, to: statement, index: 17)
         bindBlob(requestBody, to: statement, index: 18)
         bindText(requestBodyFormat, to: statement, index: 19)
         bindText("none", to: statement, index: 20)
         bindText(requestBody.isEmpty ? "" : sha256Hex(requestBody), to: statement, index: 21)
-        bindText(metadata.requestTextJSON, to: statement, index: 22)
+        bindText(WorkflowPrivacy.json(metadata.requestTextJSON), to: statement, index: 22)
         if let status = response?.statusCode {
             sqlite3_bind_int(statement, 23, Int32(status))
         } else {
@@ -365,8 +363,8 @@ actor InferenceTraceStore {
         bindText(responseBodyFormat, to: statement, index: 26)
         bindText("none", to: statement, index: 27)
         bindText(capturedResponseBody.isEmpty ? "" : sha256Hex(capturedResponseBody), to: statement, index: 28)
-        bindText(metadata.responseTextJSON, to: statement, index: 29)
-        bindText(metadata.mediaRefsJSON, to: statement, index: 30)
+        bindText(WorkflowPrivacy.json(metadata.responseTextJSON), to: statement, index: 29)
+        bindText(WorkflowPrivacy.json(metadata.mediaRefsJSON), to: statement, index: 30)
         bindText(providerRequestId, to: statement, index: 31)
         bindText("", to: statement, index: 32)
         bindText(metadata.model, to: statement, index: 33)
@@ -376,7 +374,7 @@ actor InferenceTraceStore {
         sqlite3_bind_int(statement, 37, Int32(max(0, latencyMs)))
         sqlite3_bind_int(statement, 38, success ? 1 : 0)
         bindText(nsError?.domain ?? "", to: statement, index: 39)
-        bindText(error?.localizedDescription ?? "", to: statement, index: 40)
+        bindText(WorkflowPrivacy.text(error?.localizedDescription ?? ""), to: statement, index: 40)
         bindText("", to: statement, index: 41)
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
@@ -416,7 +414,7 @@ actor InferenceTraceStore {
         bindOptionalInt(usage?.inputTokens, to: statement, index: 4)
         bindOptionalInt(usage?.outputTokens, to: statement, index: 5)
         bindOptionalInt(usage?.totalTokens, to: statement, index: 6)
-        bindText(parsedOutputJSON ?? "", to: statement, index: 7)
+        bindText(WorkflowPrivacy.json(parsedOutputJSON ?? ""), to: statement, index: 7)
         bindText(traceId, to: statement, index: 8)
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
@@ -462,9 +460,9 @@ actor InferenceTraceStore {
         bindText(workflowStep ?? "", to: statement, index: 4)
         bindText(artifactType ?? "", to: statement, index: 5)
         bindText(artifactId ?? "", to: statement, index: 6)
-        bindText(requestTextJSON ?? "", to: statement, index: 7)
-        bindText(responseTextJSON ?? "", to: statement, index: 8)
-        bindText(mediaRefsJSON ?? "", to: statement, index: 9)
+        bindText(WorkflowPrivacy.json(requestTextJSON ?? ""), to: statement, index: 7)
+        bindText(WorkflowPrivacy.json(responseTextJSON ?? ""), to: statement, index: 8)
+        bindText(WorkflowPrivacy.json(mediaRefsJSON ?? ""), to: statement, index: 9)
         bindText(traceId, to: statement, index: 10)
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
@@ -498,125 +496,77 @@ actor InferenceTraceStore {
 }
 
 enum TracedHTTPTransport {
-    static func send(
-        request: URLRequest,
-        recordedRequest: URLRequest? = nil,
-        metadata: InferenceTraceRequestMetadata
-    ) async throws -> TracedHTTPResult {
-        let startedAt = Date()
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let httpResponse = response as? HTTPURLResponse
-            let latencyMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-            let traceId = await InferenceTraceStore.shared.record(
-                request: recordedRequest ?? request,
-                metadata: metadata,
-                response: httpResponse,
-                responseBody: data,
-                latencyMs: latencyMs
-            )
-            return TracedHTTPResult(
-                traceId: traceId,
-                data: data,
-                response: httpResponse,
-                latencyMs: latencyMs
-            )
-        } catch {
-            let latencyMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-            let traceId = await InferenceTraceStore.shared.record(
-                request: recordedRequest ?? request,
-                metadata: metadata,
-                response: nil,
-                responseBody: nil,
-                latencyMs: latencyMs,
-                error: error
-            )
-            print("[inference_trace] request_error trace_id=\(traceId) provider=\(metadata.provider) operation=\(metadata.operation) message=\"\(error.localizedDescription)\"")
-            throw error
+    static func send(request: URLRequest, recordedRequest: URLRequest? = nil, metadata: InferenceTraceRequestMetadata) async throws -> TracedHTTPResult {
+        return try await WorkflowHTTP.owned(metadata: metadata) {
+            let metadata = WorkflowHTTP.scoped(metadata)
+            var prepared = metadata
+            prepared.operation += ".request_prepared"
+            prepared.workflowStep = "Request saved; provider outcome pending"
+            let traceId = await InferenceTraceStore.shared.record(request: recordedRequest ?? request, metadata: prepared, response: nil, responseBody: nil, latencyMs: 0)
+            guard !traceId.isEmpty else { throw ScreenGraphError.capture("Could not save request provenance; no provider request was sent") }
+            let started = Date()
+            do {
+                try await WorkflowCoordinator.shared.providerStarted(metadata, traceId: traceId, isSubmission: !["GET", "HEAD"].contains(request.httpMethod ?? "GET"))
+                let (data, response) = try await WorkflowHTTP.send(request: request, recordedRequest: recordedRequest, metadata: metadata, bytes: { $0 }) { attempt in
+                    try await URLSession.shared.data(for: attempt)
+                }
+                let latency = Int(Date().timeIntervalSince(started) * 1000)
+                _ = await InferenceTraceStore.shared.record(request: recordedRequest ?? request, metadata: metadata, response: response as? HTTPURLResponse, responseBody: data, latencyMs: latency, traceId: traceId)
+                await WorkflowCoordinator.shared.providerResponded(metadata, data: data, response: response as? HTTPURLResponse)
+                return TracedHTTPResult(traceId: traceId, data: data, response: response as? HTTPURLResponse, latencyMs: latency)
+            } catch {
+                _ = await InferenceTraceStore.shared.record(request: recordedRequest ?? request, metadata: metadata, response: nil, responseBody: nil, latencyMs: Int(Date().timeIntervalSince(started) * 1000), error: error, traceId: traceId)
+                throw error
+            }
         }
     }
 
-    /// Streams a request body from disk while recording the same safe trace
-    /// envelope as JSON calls. Callers must disable raw body capture for
-    /// multipart/binary uploads and describe the executable inputs through
-    /// requestTextJSON/mediaRefsJSON instead.
-    static func upload(
-        request: URLRequest,
-        fromFile fileURL: URL,
-        recordedRequest: URLRequest? = nil,
-        metadata: InferenceTraceRequestMetadata
-    ) async throws -> TracedHTTPResult {
-        let startedAt = Date()
-        do {
-            let (data, response) = try await URLSession.shared.upload(for: request, fromFile: fileURL)
-            let httpResponse = response as? HTTPURLResponse
-            let latencyMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-            let traceId = await InferenceTraceStore.shared.record(
-                request: recordedRequest ?? request,
-                metadata: metadata,
-                response: httpResponse,
-                responseBody: data,
-                latencyMs: latencyMs
-            )
-            return TracedHTTPResult(
-                traceId: traceId,
-                data: data,
-                response: httpResponse,
-                latencyMs: latencyMs
-            )
-        } catch {
-            let latencyMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-            let traceId = await InferenceTraceStore.shared.record(
-                request: recordedRequest ?? request,
-                metadata: metadata,
-                response: nil,
-                responseBody: nil,
-                latencyMs: latencyMs,
-                error: error
-            )
-            print("[inference_trace] upload_error trace_id=\(traceId) provider=\(metadata.provider) operation=\(metadata.operation) message=\"\(error.localizedDescription)\"")
-            throw error
+    static func upload(request: URLRequest, fromFile fileURL: URL, recordedRequest: URLRequest? = nil, metadata: InferenceTraceRequestMetadata) async throws -> TracedHTTPResult {
+        return try await WorkflowHTTP.owned(metadata: metadata) {
+            let metadata = WorkflowHTTP.scoped(metadata)
+            var prepared = metadata
+            prepared.operation += ".request_prepared"
+            prepared.workflowStep = "Request saved; provider outcome pending"
+            let traceId = await InferenceTraceStore.shared.record(request: recordedRequest ?? request, metadata: prepared, response: nil, responseBody: nil, latencyMs: 0)
+            guard !traceId.isEmpty else { throw ScreenGraphError.capture("Could not save request provenance; no provider request was sent") }
+            let started = Date()
+            do {
+                try await WorkflowCoordinator.shared.providerStarted(metadata, traceId: traceId, isSubmission: true)
+                let (data, response) = try await WorkflowHTTP.send(request: request, recordedRequest: recordedRequest, metadata: metadata, bytes: { $0 }) { attempt in
+                    try await URLSession.shared.upload(for: attempt, fromFile: fileURL)
+                }
+                let latency = Int(Date().timeIntervalSince(started) * 1000)
+                _ = await InferenceTraceStore.shared.record(request: recordedRequest ?? request, metadata: metadata, response: response as? HTTPURLResponse, responseBody: data, latencyMs: latency, traceId: traceId)
+                await WorkflowCoordinator.shared.providerResponded(metadata, data: data, response: response as? HTTPURLResponse)
+                return TracedHTTPResult(traceId: traceId, data: data, response: response as? HTTPURLResponse, latencyMs: latency)
+            } catch {
+                _ = await InferenceTraceStore.shared.record(request: recordedRequest ?? request, metadata: metadata, response: nil, responseBody: nil, latencyMs: Int(Date().timeIntervalSince(started) * 1000), error: error, traceId: traceId)
+                throw error
+            }
         }
     }
 
-    /// Downloads a binary response to URLSession's temporary file. Binary
-    /// bytes are deliberately excluded from the trace; callers enrich the row
-    /// with hashes/provenance after validating and moving the file.
-    static func download(
-        request: URLRequest,
-        recordedRequest: URLRequest? = nil,
-        metadata: InferenceTraceRequestMetadata
-    ) async throws -> TracedHTTPDownloadResult {
-        let startedAt = Date()
-        do {
-            let (temporaryURL, response) = try await URLSession.shared.download(for: request)
-            let httpResponse = response as? HTTPURLResponse
-            let latencyMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-            let traceId = await InferenceTraceStore.shared.record(
-                request: recordedRequest ?? request,
-                metadata: metadata,
-                response: httpResponse,
-                responseBody: nil,
-                latencyMs: latencyMs
-            )
-            return TracedHTTPDownloadResult(
-                traceId: traceId,
-                temporaryURL: temporaryURL,
-                response: httpResponse,
-                latencyMs: latencyMs
-            )
-        } catch {
-            let latencyMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-            let traceId = await InferenceTraceStore.shared.record(
-                request: recordedRequest ?? request,
-                metadata: metadata,
-                response: nil,
-                responseBody: nil,
-                latencyMs: latencyMs,
-                error: error
-            )
-            print("[inference_trace] download_error trace_id=\(traceId) provider=\(metadata.provider) operation=\(metadata.operation) message=\"\(error.localizedDescription)\"")
-            throw error
+    static func download(request: URLRequest, recordedRequest: URLRequest? = nil, metadata: InferenceTraceRequestMetadata) async throws -> TracedHTTPDownloadResult {
+        return try await WorkflowHTTP.owned(metadata: metadata) {
+            let metadata = WorkflowHTTP.scoped(metadata)
+            var prepared = metadata
+            prepared.operation += ".request_prepared"
+            prepared.workflowStep = "Request saved; provider outcome pending"
+            let traceId = await InferenceTraceStore.shared.record(request: recordedRequest ?? request, metadata: prepared, response: nil, responseBody: nil, latencyMs: 0)
+            guard !traceId.isEmpty else { throw ScreenGraphError.capture("Could not save request provenance; no provider request was sent") }
+            let started = Date()
+            do {
+                try await WorkflowCoordinator.shared.providerStarted(metadata, traceId: traceId, isSubmission: false)
+                let (url, response) = try await WorkflowHTTP.send(request: request, recordedRequest: recordedRequest, metadata: metadata, bytes: { _ in Data() }) { attempt in
+                    try await URLSession.shared.download(for: attempt)
+                }
+                let latency = Int(Date().timeIntervalSince(started) * 1000)
+                _ = await InferenceTraceStore.shared.record(request: recordedRequest ?? request, metadata: metadata, response: response as? HTTPURLResponse, responseBody: nil, latencyMs: latency, traceId: traceId)
+                return TracedHTTPDownloadResult(traceId: traceId, temporaryURL: url, response: response as? HTTPURLResponse, latencyMs: latency)
+            } catch {
+                _ = await InferenceTraceStore.shared.record(request: recordedRequest ?? request, metadata: metadata, response: nil, responseBody: nil, latencyMs: Int(Date().timeIntervalSince(started) * 1000), error: error, traceId: traceId)
+                throw error
+            }
         }
     }
 }
@@ -637,7 +587,7 @@ private func sanitizedHeaders(_ headers: [String: String]) -> [String: String] {
         ].contains(lowered) {
             continue
         }
-        sanitized[key] = value
+        sanitized[key] = lowered == "location" ? WorkflowPrivacy.mediaReference(value) : WorkflowPrivacy.text(value)
     }
     return sanitized
 }

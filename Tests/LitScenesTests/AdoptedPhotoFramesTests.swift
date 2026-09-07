@@ -118,17 +118,17 @@ private func video(_ id: String, modifiedAt: String = "2026-08-01T00:00:00Z") ->
         video("vClip")
     ]
     let inputs = scenesV2PoolInputs(displayedFrames: displayed, projectWideFrames: projectWide, items: items)
-    // The adopted photo keeps its second-by-date slot as a FRAME input and
-    // leaves the frames group; the newest photo stays a media input.
+    // The adopted photo keeps its source date among photos and renders;
+    // adoption time does not move it ahead of newer material.
     #expect(inputs.map(\.assetKey) == [
         "clip:pNew",
-        "frame:fAdoptOld",
         "frame:fRender",
+        "frame:fAdoptOld",
         "frame:fOther",
         "clip:vClip"
     ])
-    #expect(inputs[1].inputId == "source_frame_fAdoptOld")
-    #expect(inputs[1].addedAt == "2026-08-01T00:00:00Z")
+    #expect(inputs[2].inputId == "source_frame_fAdoptOld")
+    #expect(inputs[2].addedAt == "2026-08-01T00:00:00Z")
     #expect(Set(inputs.map(\.inputId)).count == inputs.count)
 }
 
@@ -163,7 +163,7 @@ private func video(_ id: String, modifiedAt: String = "2026-08-01T00:00:00Z") ->
     let orphan = photoRow("fOrphan", mediaId: "charsrc_quince", generatedAt: "2026-08-04T00:00:00Z")
     let displayed = [renderRow("fRender", generatedAt: "2026-08-02T00:00:00Z"), orphan]
     let inputs = scenesV2PoolInputs(displayedFrames: displayed, projectWideFrames: displayed, items: [photo("pOther")])
-    #expect(inputs.map(\.assetKey) == ["clip:pOther", "frame:fRender", "frame:fOrphan"])
+    #expect(inputs.map(\.assetKey) == ["frame:fOrphan", "frame:fRender", "clip:pOther"])
 }
 
 @Test func poolInputsNeverSubstituteRestyleChildren() {
@@ -178,7 +178,7 @@ private func video(_ id: String, modifiedAt: String = "2026-08-01T00:00:00Z") ->
     )
     // pHarbor substitutes its true adoption; pQuiet has none and stays a media
     // input; both children remain renders in the frames group.
-    #expect(inputs.map(\.assetKey) == ["frame:fAdopt", "clip:pQuiet", "frame:fChild", "frame:fLonely"])
+    #expect(inputs.map(\.assetKey) == ["frame:fChild", "frame:fLonely", "frame:fAdopt", "clip:pQuiet"])
 }
 
 @Test func poolInputsOwnEveryAdoptionOfASubstitutedPhoto() {

@@ -801,7 +801,7 @@ struct ProjectContextStore {
         guard var document = loadDBDocument(ProjectShotTimelineDocument.self, for: project, documentType: ProjectShotTimelineDocument.documentType) else {
             return ProjectShotTimelineDocument.empty(projectId: project.projectId)
         }
-        document.schemaVersion = ProjectShotTimelineDocument.schemaVersion
+        document = document.normalized()
         if document.projectId.isEmpty {
             document.projectId = project.projectId
         }
@@ -825,13 +825,16 @@ struct ProjectContextStore {
         }
     }
 
-    func saveShotTimeline(_ timeline: ProjectShotTimelineDocument, for project: ProjectRecord) throws {
+    @discardableResult
+    func saveShotTimeline(_ timeline: ProjectShotTimelineDocument, for project: ProjectRecord) throws -> ProjectShotTimelineDocument {
         try guardProjectIdentity(
             documentProjectId: timeline.projectId,
             project: project,
             documentType: ProjectShotTimelineDocument.documentType
         )
-        try saveDBDocument(timeline.normalized(), for: project, documentType: ProjectShotTimelineDocument.documentType)
+        let saved = timeline.normalized()
+        try saveDBDocument(saved, for: project, documentType: ProjectShotTimelineDocument.documentType)
+        return saved
     }
 
     func loadMediaGenerations(for project: ProjectRecord) -> ProjectMediaGenerationsDocument {

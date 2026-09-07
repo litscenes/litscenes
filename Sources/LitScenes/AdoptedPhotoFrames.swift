@@ -33,15 +33,11 @@ extension ProjectLensHeroImage {
 // MARK: - SCENES v2 inventory
 
 /// SCENES v2's pool inventory — every source photo is ONE Frame tile:
-/// - a photo whose enabled adopted row exists anywhere project-wide is emitted
-///   as that FRAME input in the photo group, at the photo's own position, so
-///   opening or adopting never moves a tile and a re-plan's new media version
-///   never doubles it;
-/// - a photo without an enabled adoption stays a media input (drops adopt it
-///   lazily, as they always did);
-/// - the frames group carries every other frame — displayed first in the given
-///   order, then the rest newest-first — including adopted rows whose photo is
-///   not in `items`, so nothing ever vanishes from the pool;
+/// - enabled adopted rows substitute their source photos using the photo's
+///   original date, so adoption and media-version changes never double a tile;
+/// - photos and frames share newest-first ordering, with updatedAt supplying
+///   the date for loading frames that do not yet have generatedAt;
+/// - adopted rows whose photos are absent remain in the inventory;
 /// - disabled rows are not inventory; footage comes last.
 /// The shared `projectPoolInputs` law is V1's and stays untouched.
 func scenesV2PoolInputs(
@@ -99,7 +95,7 @@ func scenesV2PoolInputs(
         StageInput(
             inputId: "source_frame_\(frame.imageId)",
             frameImageId: frame.imageId,
-            addedAt: frame.generatedAt
+            addedAt: frame.generatedAt.trimmed.nilIfEmpty ?? frame.updatedAt.trimmed
         )
     }
 
@@ -132,7 +128,13 @@ func scenesV2PoolInputs(
                 addedAt: $0.modifiedAt
             )
         }
-    return photoInputs + visibleFrames + otherFrames + footage
+    let stillInputs = (photoInputs + visibleFrames + otherFrames).sorted { lhs, rhs in
+        let leftDate = lhs.addedAt.trimmed
+        let rightDate = rhs.addedAt.trimmed
+        if leftDate == rightDate { return lhs.inputId < rhs.inputId }
+        return leftDate > rightDate
+    }
+    return stillInputs + footage
 }
 
 /// Rendered frames for the guided stage and the whisper's honest count: ready

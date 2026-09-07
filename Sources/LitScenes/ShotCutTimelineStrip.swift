@@ -472,7 +472,10 @@ func shotCutAssembly(
             ))
             if !path.isEmpty { seenPlayable = true }
         case .generated(let item):
-            let saved = version?.segmentClip(
+            let selectedContinuation = item.isAIExtension
+                ? shot.continuationRecord(entryId: item.pair.endPlacementEntryId)?.selectedTake?.segmentClip
+                : nil
+            let saved = selectedContinuation ?? version?.segmentClip(
                 placementStartEntryId: item.pair.startPlacementEntryId,
                 placementEndEntryId: item.pair.endPlacementEntryId,
                 forStart: item.pair.start?.imageId ?? "",
@@ -505,6 +508,29 @@ func shotCutAssembly(
             ))
             inputs.append(ShotCutPlanClipInput(
                 segmentKey: segmentKey,
+                clipPath: path,
+                durationSeconds: duration,
+                leadingTrimSeconds: trim
+            ))
+            if !path.isEmpty { seenPlayable = true }
+        case .preserved(let preserved):
+            let clip = preserved.clip
+            let path = fileExists(clip.clipPath) ? clip.clipPath : ""
+            let duration = clipDurationsByPath[path]
+                ?? (clip.durationSeconds > 0 ? clip.durationSeconds : Double(clip.requestedDurationSeconds))
+            let trim = seenPlayable ? handoffTrimSeconds : 0
+            bands.append(ShotStripBand(
+                segment: segment,
+                segmentKey: preserved.placementKey,
+                displayIndex: preserved.displayIndex,
+                clipPath: path,
+                label: "\(preserved.displayIndex + 1) · ORIGINAL · SAVED",
+                isFootage: false,
+                skipTarget: nil,
+                fillImagePath: nil
+            ))
+            inputs.append(ShotCutPlanClipInput(
+                segmentKey: preserved.placementKey,
                 clipPath: path,
                 durationSeconds: duration,
                 leadingTrimSeconds: trim
@@ -962,7 +988,7 @@ struct ShotCutTimelineStrip: View {
     // MARK: Rows
 
     private var runtimeRow: some View {
-        HStack(spacing: 10) {
+        ShotEditorFlow(spacing: 10) {
             PlateLabel(
                 text: "Output · ~\(Int(assembly.outputSeconds.rounded()))s",
                 size: 8.5,
@@ -1023,7 +1049,6 @@ struct ShotCutTimelineStrip: View {
                 .fixedSize(horizontal: true, vertical: false)
                 .help("\(unrenderedBandCount) of \(assembly.bands.count) segment\(assembly.bands.count == 1 ? "" : "s") ha\(unrenderedBandCount == 1 ? "s" : "ve") no rendered clip — razor, trim, and seek work on rendered material only. Render the shot to edit the hatched bands")
             }
-            Spacer(minLength: 0)
             Button(microphoneControlMode.buttonLabel) {
                 onToggleMicrophoneRecording()
             }

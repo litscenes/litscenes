@@ -6,7 +6,7 @@ struct LitScenesApp: App {
     private static let activationDelays: [TimeInterval] = [0.05, 0.2, 0.5, 1.0]
 
     @StateObject private var engine = RecorderEngine()
-    @StateObject private var library = LibraryEngine()
+    @StateObject private var workspace = ProjectWorkspaceCoordinator()
     @StateObject private var sessionRecorder = SessionRecorder()
     @NSApplicationDelegateAdaptor(SessionAppDelegate.self) private var sessionAppDelegate
     private let overlay = CaptureOverlayController()
@@ -22,10 +22,11 @@ struct LitScenesApp: App {
 
     var body: some Scene {
         WindowGroup {
-            LibraryRootView(library: library, recorder: engine, sessionRecorder: sessionRecorder)
+            ProjectWorkspaceHost(workspace: workspace, recorder: engine, sessionRecorder: sessionRecorder)
                 .frame(minWidth: 1180, idealWidth: 1360, minHeight: 760, idealHeight: 860)
                 .onAppear {
                     sessionAppDelegate.sessionRecorder = sessionRecorder
+                    sessionAppDelegate.workspace = workspace
                     activateMainWindow()
                 }
                 .onChange(of: engine.isRecording) { _, isRecording in

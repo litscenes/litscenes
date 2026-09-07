@@ -134,7 +134,7 @@ struct MediaCreationsSection: View {
     var onRevealLensTake: (String, String) -> Void
 
     var body: some View {
-        let groups = creationsInventory(items: library.items, lenses: library.projectLenses.lenses)
+        let groups = creationsInventory(items: library.browsableMediaItems, lenses: library.projectLenses.lenses)
         if !groups.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 8) {

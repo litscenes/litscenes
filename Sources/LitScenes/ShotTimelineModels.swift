@@ -46,8 +46,12 @@ struct ShotFrameEntry: Codable, Hashable, Identifiable, Sendable {
         case clipStartSeconds
         case clipEndSeconds
         case leadTransition
-        case isAIExtension
+        case isAIExtension = "isAiExtension"
         case isSkipped
+    }
+
+    private enum LegacyCodingKeys: String, CodingKey {
+        case isAIExtension
     }
 
     init(
@@ -78,7 +82,12 @@ struct ShotFrameEntry: Codable, Hashable, Identifiable, Sendable {
         clipStartSeconds = try container.decodeIfPresent(Double.self, forKey: .clipStartSeconds)
         clipEndSeconds = try container.decodeIfPresent(Double.self, forKey: .clipEndSeconds)
         leadTransition = try container.decodeIfPresent(String.self, forKey: .leadTransition) ?? ""
-        isAIExtension = try container.decodeIfPresent(Bool.self, forKey: .isAIExtension) ?? false
+        // Snake-case decoding normalizes AI to Ai. Accept the original
+        // camel-case key as well for documents encoded without that strategy.
+        let legacy = try decoder.container(keyedBy: LegacyCodingKeys.self)
+        isAIExtension = try container.decodeIfPresent(Bool.self, forKey: .isAIExtension)
+            ?? legacy.decodeIfPresent(Bool.self, forKey: .isAIExtension)
+            ?? false
         isSkipped = try container.decodeIfPresent(Bool.self, forKey: .isSkipped) ?? false
     }
 
@@ -109,12 +118,15 @@ struct ShotFrameEntry: Codable, Hashable, Identifiable, Sendable {
 /// material. Keep that one canonical placement and discard the structurally
 /// inert followers during tolerant document normalization.
 func collapsingConsecutiveAIExtensionEntries(
-    _ entries: [ShotFrameEntry]
+    _ entries: [ShotFrameEntry],
+    preservingEntryIds: Set<String> = []
 ) -> [ShotFrameEntry] {
     var collapsed: [ShotFrameEntry] = []
     collapsed.reserveCapacity(entries.count)
     for entry in entries {
-        if entry.isAIExtension, collapsed.last?.isAIExtension == true {
+        if entry.isAIExtension,
+           collapsed.last?.isAIExtension == true,
+           !preservingEntryIds.contains(entry.entryId) {
             continue
         }
         collapsed.append(entry)
@@ -694,6 +706,11 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
     /// activeRenderVersionId and mirrored onto renderArtifact.
     var renderVersions: [ShotRenderArtifact] = []
     var activeRenderVersionId: String = ""
+    /// Canonical per-marker continuation history. Scene render versions keep
+    /// immutable clip snapshots that point back here by take id; they never
+    /// become a second mutable take browser.
+    var continuationRecords: [ShotContinuationRecord] = []
+    var continuationOnlyVersionIds: [String] = []
     /// Immutable Lucy finishing passes. They are intentionally independent
     /// of render versions: the Original owns cuts and segment editing, while
     /// a Look is flattened picture derived from one exact visual edit.
@@ -742,6 +759,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
     /// shot rows remain preserved in the Stage group; these values are
     /// provenance, never live links.
     var combinedSources: [ShotCombinedSource] = []
+    var branchedFromShotId: String = ""
     /// Structural hard-cut seams introduced between copied source timelines.
     var sourceBoundaries: [ShotSourceBoundary] = []
     /// Readable clips inherited from source renders. Seeds make an editable
@@ -815,6 +833,10 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
     }
 
     /// The versions the browser offers: ready with a video file recorded.
+    var historicalWholeShotVersions: [ShotRenderArtifact] {
+        sortedRenderVersions.filter { !continuationOnlyVersionIds.contains($0.versionId) }
+    }
+
     var browsableRenderVersions: [ShotRenderArtifact] {
         sortedRenderVersions.filter(\.isReady)
     }
@@ -830,6 +852,8 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         case renderArtifact
         case renderVersions
         case activeRenderVersionId
+        case continuationRecords
+        case continuationOnlyVersionIds
         case lookVersions
         case activeLookVersionId
         case clipLookVersions
@@ -845,7 +869,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         case joinBridgeVersions
         case reverseProxies
         case cutList
-        case combinedSources
+        case combinedSources, branchedFromShotId
         case sourceBoundaries
         case seedSegmentClips
         case audioRegions
@@ -862,6 +886,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         renderArtifact: ShotRenderArtifact? = nil,
         renderVersions: [ShotRenderArtifact] = [],
         activeRenderVersionId: String = "",
+        continuationRecords: [ShotContinuationRecord] = [],
         lookVersions: [ShotRestyleArtifact] = [],
         activeLookVersionId: String = "",
         clipLookVersions: [ShotRestyleArtifact] = [],
@@ -892,6 +917,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         self.renderArtifact = renderArtifact
         self.renderVersions = renderVersions
         self.activeRenderVersionId = activeRenderVersionId
+        self.continuationRecords = continuationRecords
         self.lookVersions = lookVersions
         self.activeLookVersionId = activeLookVersionId
         self.clipLookVersions = clipLookVersions
@@ -925,6 +951,8 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         renderArtifact = try container.decodeIfPresent(ShotRenderArtifact.self, forKey: .renderArtifact)
         renderVersions = ((try? container.decodeIfPresent([ShotRenderArtifact].self, forKey: .renderVersions)) ?? nil) ?? []
         activeRenderVersionId = try container.decodeIfPresent(String.self, forKey: .activeRenderVersionId) ?? ""
+        continuationRecords = ((try? container.decodeIfPresent([ShotContinuationRecord].self, forKey: .continuationRecords)) ?? nil) ?? []
+        continuationOnlyVersionIds = try container.decodeIfPresent([String].self, forKey: .continuationOnlyVersionIds) ?? []
         lookVersions = ((try? container.decodeIfPresent([ShotRestyleArtifact].self, forKey: .lookVersions)) ?? nil) ?? []
         activeLookVersionId = try container.decodeIfPresent(String.self, forKey: .activeLookVersionId) ?? ""
         clipLookVersions = ((try? container.decodeIfPresent([ShotRestyleArtifact].self, forKey: .clipLookVersions)) ?? nil) ?? []
@@ -941,6 +969,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         reverseProxies = ((try? container.decodeIfPresent([ShotReverseProxyArtifact].self, forKey: .reverseProxies)) ?? nil) ?? []
         cutList = ((try? container.decodeIfPresent(ShotCutList.self, forKey: .cutList)) ?? nil) ?? ShotCutList()
         combinedSources = ((try? container.decodeIfPresent([ShotCombinedSource].self, forKey: .combinedSources)) ?? nil) ?? []
+        branchedFromShotId = try container.decodeIfPresent(String.self, forKey: .branchedFromShotId) ?? ""
         sourceBoundaries = ((try? container.decodeIfPresent([ShotSourceBoundary].self, forKey: .sourceBoundaries)) ?? nil) ?? []
         seedSegmentClips = ((try? container.decodeIfPresent([ShotRenderSegmentClip].self, forKey: .seedSegmentClips)) ?? nil) ?? []
         audioRegions = ((try? container.decodeIfPresent([ShotAudioRegion].self, forKey: .audioRegions)) ?? nil) ?? []
@@ -950,6 +979,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt) ?? ""
         migrateLegacyShotRenderPreferencesIfNeeded()
         migrateLegacyRenderArtifactIfNeeded()
+        migrateLegacyContinuationRecordsIfNeeded()
     }
 
     /// Rewrites only future-render preferences. Render artifacts keep their
@@ -968,7 +998,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
             return value
         }
         if !preferredRenderStack.isEmpty {
-            segmentRenderOverrides.removeAll { $0.stack == preferredRenderStack }
+            segmentRenderOverrides = segmentRenderOverrides.filter { $0.stack != preferredRenderStack || continuationRecord(entryId: $0.placementEndEntryId) != nil }
         }
     }
 
@@ -1011,6 +1041,181 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         }
     }
 
+    /// Indexes historical open-ended clips as continuation takes without
+    /// copying their media. Modern clips already carry a take id; legacy ids
+    /// are deterministic from immutable render provenance so repeated loads
+    /// cannot mint duplicates.
+    mutating func migrateLegacyContinuationRecordsIfNeeded() {
+        var recordsByEntry = Dictionary(
+            continuationRecords.map { ($0.entryId, $0.normalized()) },
+            uniquingKeysWith: { _, newest in newest }
+        )
+        // Older decoders lost the AI marker during a persistence round trip.
+        // A continuation-owned position without a Frame or Footage reference
+        // can recover its identity from that durable record. Destination
+        // Frames retain their ordinary Frame identity.
+        for index in entries.indices where !entries[index].isAIExtension
+            && entries[index].frameImageId.trimmed.isEmpty
+            && !entries[index].isClip {
+            if recordsByEntry[entries[index].entryId] != nil {
+                entries[index].isAIExtension = true
+            }
+        }
+        let activeVersion = renderVersions.first { $0.versionId == activeRenderVersionId }
+        var enrichedVersionClip = false
+        for (entryIndex, entry) in entries.enumerated() where entry.isAIExtension {
+            let sourceEntryId = entryIndex > 0 ? entries[entryIndex - 1].entryId : ""
+            var record = recordsByEntry[entry.entryId] ?? ShotContinuationRecord(
+                entryId: entry.entryId,
+                sourceEntryId: sourceEntryId,
+                createdAt: createdAt,
+                updatedAt: updatedAt
+            )
+            if record.sourceEntryId.isEmpty { record.sourceEntryId = sourceEntryId }
+
+            for version in sortedRenderVersions {
+                guard var clip = version.segmentClips.first(where: {
+                    $0.placementEndEntryId == entry.entryId
+                        && !$0.clipPath.trimmed.isEmpty
+                }) else { continue }
+                let takeId = clip.continuationTakeId.trimmed.nilIfEmpty
+                    ?? "continuation_take_\(shortHash("legacy:\(shotId):\(entry.entryId):\(version.versionId):\(clip.clipPath):\(clip.requestId)", length: 18))"
+                guard !record.takes.contains(where: { $0.takeId == takeId }) else { continue }
+                clip.continuationTakeId = takeId
+                let upstreamClip = version.segmentClips.first {
+                    $0.placementEndEntryId == sourceEntryId && !$0.clipPath.trimmed.isEmpty
+                } ?? version.segmentClips.first {
+                    $0.placementStartEntryId == sourceEntryId
+                        && $0.placementEndEntryId.isEmpty
+                        && !$0.clipPath.trimmed.isEmpty
+                }
+                let upstreamTake = upstreamClip.flatMap { sourceClip in
+                    recordsByEntry[sourceEntryId]?.takes.first {
+                        $0.takeId == sourceClip.continuationTakeId
+                            || $0.segmentClip?.clipPath == sourceClip.clipPath
+                    }
+                }
+                let frameFingerprint = upstreamTake?.outputFingerprint.trimmed.nilIfEmpty
+                    ?? clip.continuationAnchorFingerprint.trimmed.nilIfEmpty
+                    ?? clip.sourceFingerprint.trimmed.nilIfEmpty
+                    ?? sha256Hex(Data("legacy-anchor|\(clip.startFrameImageId)|\(clip.placementStartEntryId)".utf8))
+                let anchor = ShotContinuationAnchor(
+                    sourceKind: upstreamTake != nil
+                        ? "continuation_take"
+                        : (upstreamClip?.provider == "footage" ? "footage" : "legacy_render_segment"),
+                    sourceEntryId: clip.placementStartEntryId.trimmed.nilIfEmpty ?? sourceEntryId,
+                    sourceTakeId: upstreamTake?.takeId ?? "",
+                    sourceRenderVersionId: version.versionId,
+                    sourceSegmentPlacementKey: upstreamClip?.placementKey ?? clip.placementKey,
+                    framePath: upstreamTake?.finalFramePath ?? "",
+                    frameFingerprint: frameFingerprint,
+                    tailClipPath: upstreamTake?.segmentClip?.clipPath ?? upstreamClip?.clipPath ?? "",
+                    tailClipStartSeconds: 0,
+                    tailClipEndSeconds: (upstreamTake?.segmentClip ?? upstreamClip).map {
+                        $0.durationSeconds > 0
+                            ? $0.durationSeconds
+                            : Double(max($0.requestedDurationSeconds, 0))
+                    } ?? 0,
+                    tailClipFingerprint: "",
+                    anchorFingerprint: clip.continuationAnchorFingerprint
+                ).normalized()
+                clip.continuationAnchorFingerprint = anchor.resolvedFingerprint
+                if let versionIndex = renderVersions.firstIndex(where: { $0.versionId == version.versionId }),
+                   let clipIndex = renderVersions[versionIndex].segmentClips.firstIndex(where: {
+                       $0.placementEndEntryId == entry.entryId
+                           && $0.clipPath == clip.clipPath
+                           && $0.requestId == clip.requestId
+                   }) {
+                    renderVersions[versionIndex].segmentClips[clipIndex].continuationTakeId = takeId
+                    renderVersions[versionIndex].segmentClips[clipIndex].continuationAnchorFingerprint = anchor.resolvedFingerprint
+                    enrichedVersionClip = true
+                }
+                let outputFingerprint = sha256Hex(Data("legacy-output|\(clip.clipPath)|\(clip.requestId)|\(clip.updatedAt)".utf8))
+                record = record.upsertingTake(
+                    ShotContinuationTake(
+                        takeId: takeId,
+                        takeNumber: (record.takes.map(\.takeNumber).max() ?? 0) + 1,
+                        status: ShotContinuationTakeStatus.ready.rawValue,
+                        anchor: anchor,
+                        prompt: clip.prompt,
+                        mode: clip.providerOperation.contains("extend")
+                            ? ShotContinuationMode.nativeExtend.rawValue
+                            : ShotContinuationMode.outFrame.rawValue,
+                        stack: shotContinuationRenderStack(for: clip).rawValue,
+                        segmentClip: clip,
+                        finalFramePath: "",
+                        outputFingerprint: outputFingerprint,
+                        requestId: clip.requestId,
+                        traceId: clip.traceId,
+                        errorMessage: "",
+                        createdAt: version.generatedAt,
+                        updatedAt: clip.updatedAt
+                    ),
+                    select: false,
+                    now: updatedAt
+                )
+            }
+
+            if record.selectedTakeId.isEmpty, let selectedClip = activeVersion?.segmentClips.first(where: {
+                $0.placementEndEntryId == entry.entryId
+            }) {
+                let selectedId = selectedClip.continuationTakeId.trimmed.nilIfEmpty
+                    ?? record.takes.first(where: { $0.segmentClip?.clipPath == selectedClip.clipPath })?.takeId
+                if let selectedId { record.selectedTakeId = selectedId }
+            }
+            if record.selectedTakeId.isEmpty {
+                record.selectedTakeId = record.readyTakes.last?.takeId ?? ""
+            }
+            if !record.takes.isEmpty || recordsByEntry[entry.entryId] != nil {
+                recordsByEntry[entry.entryId] = record.normalized()
+            }
+        }
+        continuationRecords = recordsByEntry.values.sorted { $0.entryId < $1.entryId }
+        if enrichedVersionClip,
+           let active = renderVersions.first(where: { $0.versionId == activeRenderVersionId }) {
+            renderArtifact = active
+        }
+    }
+
+    func continuationRecord(entryId: String) -> ShotContinuationRecord? {
+        continuationRecords.first { $0.entryId == entryId }
+    }
+
+    func continuationTake(entryId: String, takeId: String) -> ShotContinuationTake? {
+        continuationRecord(entryId: entryId)?.takes.first { $0.takeId == takeId }
+    }
+
+    func upsertingContinuationRecord(_ record: ShotContinuationRecord, now: String) -> ProjectShot {
+        let normalizedRecord = record.normalized()
+        guard !normalizedRecord.entryId.isEmpty else { return self }
+        var value = self
+        value.continuationRecords.removeAll { $0.entryId == normalizedRecord.entryId }
+        value.continuationRecords.append(normalizedRecord)
+        value.updatedAt = now
+        return value
+    }
+
+    func selectingContinuationTake(entryId: String, takeId: String, now: String) -> ProjectShot {
+        guard var record = continuationRecord(entryId: entryId),
+              record.takes.contains(where: { $0.takeId == takeId && $0.isReady }) else { return self }
+        record.selectedTakeId = takeId
+        record.updatedAt = now
+        return upsertingContinuationRecord(record, now: now)
+    }
+
+    /// Mirrors an immutable Scene version's continuation choices into the
+    /// working selectors. Entries absent from that version are untouched so
+    /// an unrendered append suffix remains an append suffix.
+    func selectingContinuationTakes(from version: ShotRenderArtifact, now: String) -> ProjectShot {
+        var value = self
+        for clip in version.segmentClips {
+            guard let entryId = clip.placementEndEntryId.trimmed.nilIfEmpty,
+                  let takeId = clip.continuationTakeId.trimmed.nilIfEmpty else { continue }
+            value = value.selectingContinuationTake(entryId: entryId, takeId: takeId, now: now)
+        }
+        return value
+    }
+
     /// Legacy-mirror write, kept for old call sites and tests; engine renders
     /// go through upsertingRenderVersion instead.
     func settingRenderArtifact(_ artifact: ShotRenderArtifact?, now: String) -> ProjectShot {
@@ -1033,6 +1238,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         if activate {
             value.activeRenderVersionId = normalizedVersion.versionId
             value.renderArtifact = normalizedVersion
+            value = value.selectingContinuationTakes(from: normalizedVersion, now: now)
         }
         value.updatedAt = now
         return value
@@ -1044,6 +1250,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         var value = self
         value.activeRenderVersionId = version.versionId
         value.renderArtifact = version
+        value = value.selectingContinuationTakes(from: version, now: now)
         value.updatedAt = now
         return value
     }
@@ -1128,6 +1335,23 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
             failed.updatedAt = now
             changed = true
             return failed
+        }
+        value.continuationRecords = value.continuationRecords.map { record in
+            guard !record.renderingTakeId.isEmpty else { return record }
+            var updatedRecord = record
+            updatedRecord.takes = record.takes.map { take in
+                guard take.takeId == record.renderingTakeId,
+                      [.queued, .generating].contains(take.takeStatus) else { return take }
+                var interrupted = take
+                interrupted.status = ShotContinuationTakeStatus.interrupted.rawValue
+                interrupted.errorMessage = "Interrupted before completion"
+                interrupted.updatedAt = now
+                changed = true
+                return interrupted
+            }
+            updatedRecord.renderingTakeId = ""
+            updatedRecord.updatedAt = now
+            return updatedRecord.normalized()
         }
         // A half-written proxy is not resumable — there is no remote job behind
         // it, only a dead local encode. Reconcile simply re-bakes.
@@ -1232,7 +1456,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
     func settingPreferredRenderStack(_ stack: ShotRenderStack, now: String) -> ProjectShot {
         var value = self
         value.preferredRenderStack = stack.rawValue
-        value.segmentRenderOverrides.removeAll { $0.stack == stack.rawValue }
+        value.segmentRenderOverrides = value.segmentRenderOverrides.filter { $0.stack != stack.rawValue || value.continuationRecord(entryId: $0.placementEndEntryId) != nil }
         // Narration-driven stacks are whole-shot-only by law: as segment
         // overrides they refuse every render, and the gated menu can no
         // longer show them. Leaving the shot's narration lane means any
@@ -1264,6 +1488,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         value.renderArtifact = nil
         value.renderVersions = []
         value.activeRenderVersionId = ""
+        value.continuationRecords = []
         value.lookVersions = []
         value.activeLookVersionId = ""
         value.clipLookVersions = []
@@ -1347,9 +1572,9 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         }
     }
 
-    /// Sets or removes one inherited render-recipe exception. Persisting a
-    /// value equal to the Shot default would create false customization, so
-    /// it is normalized to removal.
+    /// Ordinary segments inherit the Shot default. Continuations inherit
+    /// their selected take's saved recipe, so an explicit next-take setting
+    /// must survive even when it equals the Shot default.
     func settingSegmentRenderOverride(
         startFrameImageId: String,
         endFrameImageId: String,
@@ -1375,7 +1600,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
                 && $0.endFrameImageId == endId
         }
         if let stack,
-           stack != renderStack,
+           (stack != renderStack || continuationRecord(entryId: placementEndId) != nil),
            usesPlacementIdentity || !startId.isEmpty || !endId.isEmpty {
             value.segmentRenderOverrides.append(ShotSegmentRenderOverride(
                 startFrameImageId: startId,
@@ -1666,13 +1891,33 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         var value = self
         value.shotId = value.shotId.trimmed
         value.name = value.name.trimmed
-        value.entries = collapsingConsecutiveAIExtensionEntries(
-            value.entries.filter { entry in
-                !entry.entryId.trimmed.isEmpty
-                    && (!entry.frameImageId.trimmed.isEmpty || entry.isClip || entry.isAIExtension)
-            }
-        )
+        let referencedEntries = Set(value.renderVersions.flatMap(\.renderedEntryIds))
+            .union(value.continuationRecords.map(\.entryId))
+            .union(value.continuationRecords.flatMap(\.takes).map { $0.anchor.sourceEntryId })
+        value.entries = value.entries.filter { entry in
+            !entry.entryId.trimmed.isEmpty
+                && (!entry.frameImageId.trimmed.isEmpty || entry.isClip || entry.isAIExtension
+                    || referencedEntries.contains(entry.entryId))
+        }
         value.renderVersions = value.renderVersions.map { $0.normalized() }
+        // Promote the legacy singleton before continuation migration and
+        // adjacent-marker collapse. Otherwise a directly constructed legacy
+        // value can lose a realized second link before its clip is indexed.
+        value.migrateLegacyRenderArtifactIfNeeded()
+        value.continuationRecords = value.continuationRecords
+            .map { $0.normalized() }
+            .filter { !$0.entryId.isEmpty }
+        value.migrateLegacyContinuationRecordsIfNeeded()
+        for index in value.continuationRecords.indices where value.continuationRecords[index].preservedSourceClips.isEmpty {
+            let record = value.continuationRecords[index]
+            if let prefix = shotContinuationRenderedSourceClips(shot: value, record: record) {
+                value.continuationRecords[index].preservedSourceClips = prefix.clips
+            }
+        }
+        value.entries = collapsingConsecutiveAIExtensionEntries(
+            value.entries,
+            preservingEntryIds: Set(value.continuationRecords.map(\.entryId))
+        )
         value.lookVersions = value.lookVersions
             .map { $0.normalized() }
             .filter { !$0.versionId.isEmpty }
@@ -1731,7 +1976,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
             entries: value.entries
         )
         value.migrateLegacyShotRenderPreferencesIfNeeded()
-        value.migrateLegacyRenderArtifactIfNeeded()
+        value.migrateLegacyContinuationRecordsIfNeeded()
         return value
     }
 }
@@ -1784,7 +2029,8 @@ struct TrashedShot: Codable, Hashable, Identifiable, Sendable {
 }
 
 struct ProjectShotTimelineDocument: Codable, Hashable, Sendable {
-    static let schemaVersion = "litscenes.shot_timeline.v0.3"
+    static let schemaVersion = "litscenes.shot_timeline.v0.6"
+    static let legacyPreservationVersions: Set<String> = Set((1...5).map { "litscenes.shot_timeline.v0.\($0)" })
     static let documentType = "project_shot_timeline"
     static let flatOrganizationVersion = "flat_shots_v1"
 
@@ -1832,7 +2078,7 @@ struct ProjectShotTimelineDocument: Codable, Hashable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        schemaVersion = try container.decodeIfPresent(String.self, forKey: .schemaVersion) ?? Self.schemaVersion
+        schemaVersion = try container.decodeIfPresent(String.self, forKey: .schemaVersion) ?? "litscenes.shot_timeline.v0.1"
         projectId = try container.decodeIfPresent(String.self, forKey: .projectId) ?? ""
         shots = try container.decodeIfPresent([ProjectShot].self, forKey: .shots) ?? []
         updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt) ?? ""
@@ -1843,6 +2089,12 @@ struct ProjectShotTimelineDocument: Codable, Hashable, Sendable {
 
     func normalized() -> ProjectShotTimelineDocument {
         var value = self
+        // Additive continuation lifecycle and immutable-prefix migration.
+        // Unknown future versions are retained rather than downgraded.
+        if Self.legacyPreservationVersions.contains(value.schemaVersion) {
+            value.shots = value.shots.map(recoveringLegacyShotContinuations)
+            value.schemaVersion = Self.schemaVersion
+        }
         var seenShotIds: Set<String> = []
         value.shots = value.shots
             .map { $0.normalized() }
@@ -2902,6 +3154,10 @@ struct ShotRenderSegmentClip: Codable, Hashable, Sendable {
     var model: String = ""
     var providerOperation: String = ""
     var traceId: String = ""
+    /// Nonempty only when this immutable clip is one version of a live Scene
+    /// continuation marker.
+    var continuationTakeId: String = ""
+    var continuationAnchorFingerprint: String = ""
     var generateAudio: Bool = false
     var resolution: String = ""
     var requestedDurationSeconds: Int = 0
@@ -2950,6 +3206,8 @@ struct ShotRenderSegmentClip: Codable, Hashable, Sendable {
         value.model = value.model.trimmed
         value.providerOperation = value.providerOperation.trimmed
         value.traceId = value.traceId.trimmed
+        value.continuationTakeId = value.continuationTakeId.trimmed
+        value.continuationAnchorFingerprint = value.continuationAnchorFingerprint.trimmed.lowercased()
         value.resolution = value.resolution.trimmed
         value.requestedDurationSeconds = max(value.requestedDurationSeconds, 0)
         value.durationSeconds = max(value.durationSeconds.isFinite ? value.durationSeconds : 0, 0)
@@ -2970,7 +3228,9 @@ struct ShotRenderSegmentClip: Codable, Hashable, Sendable {
         case startFrameImageId, endFrameImageId
         case placementStartEntryId, placementEndEntryId
         case clipPath, requestId, prompt
-        case provider, model, providerOperation, traceId, generateAudio, resolution
+        case provider, model, providerOperation, traceId
+        case continuationTakeId, continuationAnchorFingerprint
+        case generateAudio, resolution
         case requestedDurationSeconds, durationSeconds
         case sourceCutId, sourceRenderVersionId
         case sourceMediaId, sourceRangeStartSeconds, sourceRangeEndSeconds, sourceFingerprint
@@ -2990,6 +3250,8 @@ struct ShotRenderSegmentClip: Codable, Hashable, Sendable {
         model: String = "",
         providerOperation: String = "",
         traceId: String = "",
+        continuationTakeId: String = "",
+        continuationAnchorFingerprint: String = "",
         generateAudio: Bool = false,
         resolution: String = "",
         requestedDurationSeconds: Int = 0,
@@ -3017,6 +3279,8 @@ struct ShotRenderSegmentClip: Codable, Hashable, Sendable {
         self.model = model
         self.providerOperation = providerOperation
         self.traceId = traceId
+        self.continuationTakeId = continuationTakeId
+        self.continuationAnchorFingerprint = continuationAnchorFingerprint
         self.generateAudio = generateAudio
         self.resolution = resolution
         self.requestedDurationSeconds = requestedDurationSeconds
@@ -3047,6 +3311,8 @@ struct ShotRenderSegmentClip: Codable, Hashable, Sendable {
         model = try container.decodeIfPresent(String.self, forKey: .model) ?? ""
         providerOperation = try container.decodeIfPresent(String.self, forKey: .providerOperation) ?? ""
         traceId = try container.decodeIfPresent(String.self, forKey: .traceId) ?? ""
+        continuationTakeId = try container.decodeIfPresent(String.self, forKey: .continuationTakeId) ?? ""
+        continuationAnchorFingerprint = try container.decodeIfPresent(String.self, forKey: .continuationAnchorFingerprint) ?? ""
         generateAudio = try container.decodeIfPresent(Bool.self, forKey: .generateAudio) ?? false
         resolution = try container.decodeIfPresent(String.self, forKey: .resolution) ?? ""
         requestedDurationSeconds = try container.decodeIfPresent(Int.self, forKey: .requestedDurationSeconds) ?? 0
@@ -4154,17 +4420,25 @@ struct ShotSegmentPromptPlanItem: Identifiable {
     /// Native Extend is executable only when the extension directly follows
     /// this placed footage clip. The exact range travels with the plan item.
     var nativeExtendSourceClip: ShotFootageClip? = nil
+    /// Generalized executable tail source. Footage keeps the legacy field
+    /// above for source-access resolution; rendered clips and prior takes use
+    /// this value directly.
+    var nativeExtendSource: ShotNativeExtendSource? = nil
+    var continuationTakeId: String = ""
+    var continuationAnchor: ShotContinuationAnchor? = nil
 
     var nativeExtendContextSeconds: Double? {
-        guard let source = nativeExtendSourceClip else { return nil }
+        guard let source = nativeExtendSource ?? nativeExtendSourceClip.map(ShotNativeExtendSource.footage) else { return nil }
         return ltxShotExtendContextSeconds(
-            sourceDurationSeconds: source.resolvedDurationSeconds,
+            sourceDurationSeconds: source.durationSeconds,
             extensionDurationSeconds: renderStack.segmentSeconds
         )
     }
 
     var canUseNativeFootageExtend: Bool {
-        isAIExtension && nativeExtendSourceClip != nil && nativeExtendContextSeconds != nil
+        isAIExtension
+            && (nativeExtendSource != nil || nativeExtendSourceClip != nil)
+            && nativeExtendContextSeconds != nil
     }
 
     /// Which editing surface owns this segment's prompt.
@@ -4204,9 +4478,15 @@ func makeShotSegmentPromptPlanItem(
     displayIndex: Int = 0,
     skipTarget: ShotSkippedSegmentPlaceholder.RestoreAction? = nil,
     isAIExtension: Bool = false,
-    nativeExtendSourceClip: ShotFootageClip? = nil
+    nativeExtendSourceClip: ShotFootageClip? = nil,
+    nativeExtendSource: ShotNativeExtendSource? = nil,
+    continuationTakeId: String = "",
+    continuationAnchor: ShotContinuationAnchor? = nil
 ) -> ShotSegmentPromptPlanItem {
-    let renderStack = shot.segmentRenderStack(for: pair)
+    let continuation = isAIExtension ? shot.continuationRecord(entryId: pair.endPlacementEntryId) : nil
+    let take = continuation?.selectedTake ?? continuation?.renderingTake ?? continuation?.sortedTakes.last
+    let renderStack = shot.hasSegmentRenderOverride(for: pair)
+        ? shot.segmentRenderStack(for: pair) : (take?.renderStack ?? shot.segmentRenderStack(for: pair))
     let record = shot.segmentDirectionPlan(for: pair)
     var compiled: ShotCompiledSegmentDirection?
     if let record, record.mode == .beats, !record.plan.isEmpty,
@@ -4231,8 +4511,8 @@ func makeShotSegmentPromptPlanItem(
     return ShotSegmentPromptPlanItem(
         index: index,
         pair: pair,
-        generatedPrompt: compiled?.canonicalText ?? shotSegmentPrompt(pair: pair),
-        overridePrompt: shot.segmentPromptOverride(for: pair),
+        generatedPrompt: compiled?.canonicalText ?? take?.prompt ?? shotSegmentPrompt(pair: pair),
+        overridePrompt: shot.segmentPromptOverride(for: pair) ?? (compiled == nil ? take?.prompt : nil),
         renderStack: renderStack,
         hasRenderOverride: shot.hasSegmentRenderOverride(for: pair),
         displayIndex: displayIndex,
@@ -4241,7 +4521,10 @@ func makeShotSegmentPromptPlanItem(
         directionPlan: record,
         directionPlanIsStale: isStale,
         isAIExtension: isAIExtension,
-        nativeExtendSourceClip: nativeExtendSourceClip
+        nativeExtendSourceClip: nativeExtendSourceClip,
+        nativeExtendSource: nativeExtendSource ?? nativeExtendSourceClip.map(ShotNativeExtendSource.footage),
+        continuationTakeId: continuationTakeId,
+        continuationAnchor: continuationAnchor
     )
 }
 
@@ -4286,62 +4569,50 @@ func shotSegmentPromptPlan(
 enum ShotSegmentRenderDecision: Equatable {
     case generate
     case reuse(ShotRenderSegmentClip)
+    /// A strict one-segment continuation request must never turn an unrelated
+    /// missing clip into an unpriced provider call.
+    case omit
 }
 
 /// Reuse happens only under a partial-render filter, for segments NOT in the
 /// filter whose saved clip record exists AND whose file is still on disk —
-/// anything else generates. A filter is a minimum-render request, never a
-/// reason to fail: legacy versions without saved clips render those segments
-/// too.
+/// anything else normally generates. A filter is a minimum-render request,
+/// never a reason to fail: legacy versions without saved clips render those
+/// segments too. The strict continuation path opts into omission so its
+/// one-segment price can never hide unrelated generation.
 func shotSegmentRenderDecisions(
     items: [ShotSegmentPromptPlanItem],
     onlySegmentKeys: Set<String>?,
     reuseSource: ShotRenderArtifact?,
-    fileExists: (String) -> Bool
+    fileExists: (String) -> Bool,
+    omitUnselectedMissing: Bool = false
 ) -> [ShotSegmentRenderDecision] {
     items.map { item in
         guard let filter = onlySegmentKeys,
               !filter.contains(item.pair.placementKey),
-              !filter.contains(item.pair.segmentKey),
-              let clip = reuseSource?.segmentClip(
-                  placementStartEntryId: item.pair.startPlacementEntryId,
-                  placementEndEntryId: item.pair.endPlacementEntryId,
-                  forStart: item.pair.start?.imageId ?? "",
-                  end: item.pair.end?.imageId ?? ""
-              ),
-              fileExists(clip.clipPath) else {
+              !filter.contains(item.pair.segmentKey) else {
             return .generate
         }
-        return .reuse(clip)
+        if let clip = reuseSource?.segmentClip(
+            placementStartEntryId: item.pair.startPlacementEntryId,
+            placementEndEntryId: item.pair.endPlacementEntryId,
+            forStart: item.pair.start?.imageId ?? "",
+            end: item.pair.end?.imageId ?? ""
+        ), fileExists(clip.clipPath) {
+            return .reuse(clip)
+        }
+        return omitUnselectedMissing ? .omit : .generate
     }
 }
 
-/// The segment clip the player can preview for a pair: the ACTIVE render
-/// version's saved clip, and only when its file is still on disk.
+/// Preview the selected saved media for this placement: a continuation take,
+/// current render clip, or reusable seed, with its file still on disk.
 func previewableSegmentClip(
     shot: ProjectShot,
     pair: ShotRenderPair,
     fileExists: (String) -> Bool
 ) -> ShotRenderSegmentClip? {
-    let rendered = shot.activeRenderVersion?.segmentClip(
-        placementStartEntryId: pair.startPlacementEntryId,
-        placementEndEntryId: pair.endPlacementEntryId,
-        forStart: pair.start?.imageId ?? "",
-        end: pair.end?.imageId ?? ""
-    )
-    let seed = shot.seedSegmentClips.first {
-        if !pair.startPlacementEntryId.isEmpty || !pair.endPlacementEntryId.isEmpty {
-            return $0.placementStartEntryId == pair.startPlacementEntryId
-                && $0.placementEndEntryId == pair.endPlacementEntryId
-        }
-        return $0.placementStartEntryId.isEmpty
-            && $0.placementEndEntryId.isEmpty
-            && $0.startFrameImageId == pair.start?.imageId ?? ""
-            && $0.endFrameImageId == pair.end?.imageId ?? ""
-    }
-    guard let clip = rendered ?? seed, fileExists(clip.clipPath) else {
-        return nil
-    }
+    guard let clip = shotSavedSegmentClip(shot: shot, pair: pair), fileExists(clip.clipPath) else { return nil }
     return clip
 }
 
@@ -4354,12 +4625,11 @@ func previewableSegmentClip(
 /// EntryId-based on purpose: saved-clip keys repeat under duplicate frame
 /// placements and would mislabel an appended duplicate as rendered.
 func shotSuffixTailStartIndex(shot: ProjectShot) -> Int? {
-    guard let version = shot.activeRenderVersion, version.isReady,
-          !version.renderedEntryIds.isEmpty else { return nil }
-    let rendered = Set(version.renderedEntryIds)
-    guard let last = shot.entries.lastIndex(where: { rendered.contains($0.entryId) }) else {
-        return 0
-    }
+    let readyContinuationIds = shot.continuationRecords.compactMap { $0.selectedTake == nil ? nil : $0.entryId }
+    let version = shot.activeRenderVersion
+    guard (version?.isReady == true && version?.renderedEntryIds.isEmpty == false) || !readyContinuationIds.isEmpty else { return nil }
+    let rendered = Set((version?.renderedEntryIds ?? []) + readyContinuationIds)
+    guard let last = shot.entries.lastIndex(where: { rendered.contains($0.entryId) }) else { return 0 }
     return last + 1
 }
 
@@ -4391,7 +4661,10 @@ func shotSuffixRenderPlan(
     let version = shot.activeRenderVersion
     var plan = ShotSuffixRenderPlan()
     for item in generatedItems {
-        let saved = version?.segmentClip(
+        let selectedContinuation = (item.isAIExtension || shot.continuationRecord(entryId: item.pair.endPlacementEntryId) != nil)
+            ? shot.continuationRecord(entryId: item.pair.endPlacementEntryId)?.selectedTake?.segmentClip
+            : nil
+        let saved = selectedContinuation ?? version?.segmentClip(
             placementStartEntryId: item.pair.startPlacementEntryId,
             placementEndEntryId: item.pair.endPlacementEntryId,
             forStart: item.pair.start?.imageId ?? "",
@@ -4416,6 +4689,13 @@ func shotSuffixRenderPlan(
             plan.reusableSegmentCount += 1
         } else {
             plan.missingKeys.insert(key)
+        }
+    }
+    for case .preserved(let preserved) in segments {
+        if fileExists(preserved.clip.clipPath) {
+            plan.reusableSegmentCount += 1
+        } else {
+            plan.missingKeys.insert(preserved.placementKey)
         }
     }
     return plan
@@ -4535,6 +4815,19 @@ struct ShotFootagePlanSegment: Identifiable {
     }
 }
 
+/// A zero-cost, immutable video segment that was already rendered before a
+/// continuation was appended. It stays in the live plan so player, export,
+/// runtime, and the next local stitch all agree that the new clip follows the
+/// existing Shot rather than replacing it.
+struct ShotPreservedRenderPlanSegment: Identifiable {
+    var displayIndex: Int
+    var sourceVersionId: String
+    var clip: ShotRenderSegmentClip
+
+    var id: String { "\(sourceVersionId)#\(clip.placementKey)#\(displayIndex)" }
+    var placementKey: String { clip.placementKey }
+}
+
 /// The synthetic band's payload when the live plan resolves no playable
 /// clips but a render version's full video exists — runtime-only (never
 /// persisted, never emitted by the plan generator; only `shotCutAssembly`
@@ -4553,6 +4846,7 @@ struct ShotArtifactPlanSegment: Hashable {
 enum ShotRenderPlanSegment: Identifiable {
     case generated(ShotSegmentPromptPlanItem)
     case footage(ShotFootagePlanSegment)
+    case preserved(ShotPreservedRenderPlanSegment)
     /// Never produced by the plan generator — the assembly's fallback band
     /// over the playable version's full video.
     case artifactFallback(ShotArtifactPlanSegment)
@@ -4561,6 +4855,7 @@ enum ShotRenderPlanSegment: Identifiable {
         switch self {
         case .generated(let item): return "gen_\(item.id)"
         case .footage(let segment): return "footage_\(segment.id)"
+        case .preserved(let segment): return "preserved_\(segment.id)"
         case .artifactFallback(let segment): return "artifact_\(segment.versionId)"
         }
     }
@@ -4618,7 +4913,7 @@ func shotRenderSegmentPlan(
     enum StripNodeKind {
         case frame(ProjectLensHeroImage)
         case clip(ShotFootageClip)
-        case aiExtension
+        case aiExtension(ShotContinuationRecord?)
     }
     struct StripNode {
         var kind: StripNodeKind
@@ -4637,6 +4932,11 @@ func shotRenderSegmentPlan(
             if case .aiExtension = kind { return true }
             return false
         }
+
+        var continuationRecord: ShotContinuationRecord? {
+            guard case .aiExtension(let record) = kind else { return nil }
+            return record
+        }
     }
     struct SkipSeed {
         var label: String
@@ -4651,6 +4951,7 @@ func shotRenderSegmentPlan(
     var pendingSkipSeeds: [SkipSeed] = []
     var pendingSourceBoundary = false
     var skipSeedsByNodeIndex: [Int: [SkipSeed]] = [:]
+    let pendingEndingIds = shotPendingEndingEntryIds(shot)
     for entry in shot.entries {
         if sourceBoundaryEntryIds.contains(entry.entryId) {
             pendingSourceBoundary = true
@@ -4680,9 +4981,9 @@ func shotRenderSegmentPlan(
             ))
             continue
         }
-        if entry.isAIExtension {
+        if entry.isAIExtension || shot.continuationRecord(entryId: entry.entryId) != nil || pendingEndingIds.contains(entry.entryId) {
             nodes.append(StripNode(
-                kind: .aiExtension,
+                kind: .aiExtension(shot.continuationRecord(entryId: entry.entryId)),
                 entry: entry,
                 followsSkippedEntry: !pendingSkipSeeds.isEmpty,
                 startsSourceSection: pendingSourceBoundary
@@ -4744,10 +5045,22 @@ func shotRenderSegmentPlan(
         switch node.kind {
         case .frame(let frame): return frame
         case .clip(let clip): return shotFootageBoundaryFrame(clip: clip, edge: edge)
-        case .aiExtension:
-            // Never reached: extension nodes are excluded from every pair —
-            // their final frame doesn't exist until rendered.
-            return ProjectLensHeroImage(imageId: "extension_endpoint_invalid")
+        case .aiExtension(let record):
+            guard case .end = edge,
+                  let take = record?.selectedTake,
+                  !take.finalFramePath.trimmed.isEmpty else {
+                return ProjectLensHeroImage(imageId: "extension_endpoint_invalid")
+            }
+            return ProjectLensHeroImage(
+                imageId: "continuation_output_\(shortHash(take.outputFingerprint.trimmed.nilIfEmpty ?? take.takeId, length: 20))",
+                label: "Continuation take \(take.takeNumber)",
+                provider: "continuation",
+                model: take.renderStack.model.label,
+                imagePath: take.finalFramePath,
+                prompt: take.prompt,
+                sourcePrompt: take.prompt,
+                status: "ready"
+            )
         }
     }
 
@@ -4785,7 +5098,10 @@ func shotRenderSegmentPlan(
         pair: ShotRenderPair,
         skipTarget: ShotSkippedSegmentPlaceholder.RestoreAction? = nil,
         isAIExtension: Bool = false,
-        nativeExtendSourceClip: ShotFootageClip? = nil
+        nativeExtendSourceClip: ShotFootageClip? = nil,
+        nativeExtendSource: ShotNativeExtendSource? = nil,
+        continuationTakeId: String = "",
+        continuationAnchor: ShotContinuationAnchor? = nil
     ) {
         let item = makeShotSegmentPromptPlanItem(
             shot: shot,
@@ -4794,10 +5110,37 @@ func shotRenderSegmentPlan(
             displayIndex: segments.count,
             skipTarget: skipTarget,
             isAIExtension: isAIExtension,
-            nativeExtendSourceClip: nativeExtendSourceClip
+            nativeExtendSourceClip: nativeExtendSourceClip,
+            nativeExtendSource: nativeExtendSource,
+            continuationTakeId: continuationTakeId,
+            continuationAnchor: continuationAnchor
         )
         segments.append(.generated(item))
         generatedItems.append(item)
+    }
+
+    func appendPreservedSourceIfNeeded(_ record: ShotContinuationRecord?, nodeIndex: Int) {
+        guard let source = shotContinuationRenderedSourceClips(shot: shot, record: record) else { return }
+        // Replace this source section's complete prefix, retaining earlier
+        // sections when this Shot was assembled from multiple sources.
+        let sectionStart = nodes.prefix(nodeIndex + 1).lastIndex(where: \.startsSourceSection) ?? 0
+        let prefixIds = Set(nodes[sectionStart..<nodeIndex].map { $0.entry.entryId })
+        segments.removeAll { segment in
+            switch segment {
+            case .generated(let item): return prefixIds.contains(item.pair.startPlacementEntryId) || prefixIds.contains(item.pair.endPlacementEntryId)
+            case .footage(let footage): return prefixIds.contains(footage.clip.entryId)
+            case .preserved(let saved): return prefixIds.contains(saved.clip.placementStartEntryId) || prefixIds.contains(saved.clip.placementEndEntryId)
+            case .artifactFallback: return false
+            }
+        }
+        generatedItems.removeAll { prefixIds.contains($0.pair.startPlacementEntryId) || prefixIds.contains($0.pair.endPlacementEntryId) }
+        for clip in source.clips {
+            segments.append(.preserved(ShotPreservedRenderPlanSegment(
+                displayIndex: segments.count,
+                sourceVersionId: source.versionId,
+                clip: clip
+            )))
+        }
     }
 
     if nodes.count == 1, case .frame(let only) = nodes[0].kind {
@@ -4844,6 +5187,12 @@ func shotRenderSegmentPlan(
                 )))
             }
             if node.isExtensionNode {
+                var prefixRecord = node.continuationRecord
+                if prefixRecord == nil, let anchor = shotEndingSourceAnchor(shot: shot, entryId: node.entry.entryId) {
+                    let pending = ShotContinuationTake(takeId: "pending_ending", status: "queued", anchor: anchor)
+                    prefixRecord = ShotContinuationRecord(entryId: node.entry.entryId, sourceEntryId: anchor.sourceEntryId, renderingTakeId: pending.takeId, takes: [pending])
+                }
+                appendPreservedSourceIfNeeded(prefixRecord, nodeIndex: index)
                 let hasPreviousInSection = index > 0
                     && !node.startsSourceSection
                     && !node.followsSkippedEntry
@@ -4865,9 +5214,15 @@ func shotRenderSegmentPlan(
                         skipTarget: .entry(entryId: node.entry.entryId),
                         isAIExtension: true
                     )
-                } else if hasPreviousInSection, !nodes[index - 1].isExtensionNode {
+                } else if hasPreviousInSection {
                     // The extension IS an open-ended generated segment picking
-                    // up from its left neighbor's final frame.
+                    // up from the exact anchor captured for its active/rendering
+                    // take. Legacy markers fall back to their left material.
+                    if nodes[index - 1].isExtensionNode,
+                       nodes[index - 1].continuationRecord == nil {
+                        skipped.append("AI extension (needs a frame or clip before it)")
+                        continue
+                    }
                     bridgedNodeIndexes.insert(index - 1)
                     bridgedNodeIndexes.insert(index)
                     let nativeSourceClip: ShotFootageClip?
@@ -4876,17 +5231,29 @@ func shotRenderSegmentPlan(
                     } else {
                         nativeSourceClip = nil
                     }
-                    appendGenerated(
-                        pair: ShotRenderPair(
-                            start: endpoint(nodes[index - 1], edge: .end),
-                            end: nil,
-                            startPlacementEntryId: nodes[index - 1].entry.entryId,
-                            endPlacementEntryId: node.entry.entryId
-                        ),
-                        skipTarget: .entry(entryId: node.entry.entryId),
-                        isAIExtension: true,
-                        nativeExtendSourceClip: nativeSourceClip
-                    )
+                    let take = node.continuationRecord?.selectedTake ?? node.continuationRecord?.renderingTake ?? node.continuationRecord?.sortedTakes.last
+                    let capturedAnchor = take?.anchor ?? shotEndingSourceAnchor(shot: shot, entryId: node.entry.entryId)
+                    let targetFrame = take?.targetFrame?.frame ?? (node.entry.isAIExtension ? nil : frameLookup[node.entry.frameImageId])
+                    let resolvedStart = capturedAnchor?.syntheticFrame
+                        ?? endpoint(nodes[index - 1], edge: .end)
+                    if resolvedStart.imageId != "extension_endpoint_invalid" {
+                        appendGenerated(
+                            pair: ShotRenderPair(
+                                start: resolvedStart,
+                                end: targetFrame,
+                                startPlacementEntryId: nodes[index - 1].entry.entryId,
+                                endPlacementEntryId: node.entry.entryId
+                            ),
+                            skipTarget: .entry(entryId: node.entry.entryId),
+                            isAIExtension: true,
+                            nativeExtendSourceClip: nativeSourceClip,
+                            nativeExtendSource: capturedAnchor.flatMap(ShotNativeExtendSource.anchor),
+                            continuationTakeId: take?.takeId ?? "",
+                            continuationAnchor: capturedAnchor
+                        )
+                    } else {
+                        skipped.append("AI extension (previous continuation needs a ready take)")
+                    }
                 } else if !hasPreviousInSection && !hasNextInSection {
                     skipped.append("AI extension (needs a frame or clip beside it)")
                 } else if index == 0 || node.startsSourceSection {
@@ -4953,6 +5320,9 @@ struct ShotRuntimeSummary: Hashable {
     var clips: Int = 0
     var bridges: Int = 0
     var footageSeconds: Double = 0
+    /// Existing rendered video retained before a continuation. This is exact
+    /// saved-media duration, not another generated-duration estimate.
+    var preservedSeconds: Double = 0
     var joinBridgeSeconds: Double = 0
     /// The cut layer's subtraction: razor ranges plus the shot-level in/out.
     var razorCutSeconds: Double = 0
@@ -4975,7 +5345,7 @@ struct ShotRuntimeSummary: Hashable {
     }
 
     func estimatedSeconds(generatedSeconds: Double) -> Int {
-        var total = generatedSeconds + footageSeconds + joinBridgeSeconds - razorCutSeconds
+        var total = generatedSeconds + footageSeconds + preservedSeconds + joinBridgeSeconds - razorCutSeconds
         if let shotOutSeconds {
             total = min(total, shotOutSeconds)
         }
@@ -5070,6 +5440,16 @@ func shotRuntimeSummary(
     summary.frames = nodes.filter { !$0.isClip && !$0.isExtension }.count
     summary.clips = nodes.filter(\.isClip).count
     summary.footageSeconds = nodes.reduce(0) { $0 + $1.footageSeconds }
+    let continuationPlan = shotRenderSegmentPlan(
+        shot: shot,
+        frameLookup: frameLookup,
+        mediaLookup: mediaLookup,
+        meaningNodes: []
+    )
+    summary.preservedSeconds = continuationPlan.segments.reduce(0) { total, segment in
+        guard case .preserved(let preserved) = segment else { return total }
+        return total + preserved.clip.durationSeconds
+    }
     summary.razorCutSeconds = shot.cutList.razorSecondsTotal
     summary.loopSeconds = shotPictureInsertionRuntimeSeconds(shot: shot)
     summary.outputLoopCount = shot.cutList.normalized().outputLoopCount
@@ -5081,41 +5461,7 @@ func shotRuntimeSummary(
     }
     summary.shotInSeconds = shot.cutList.shotInSeconds
     summary.shotOutSeconds = shot.cutList.shotOutSeconds
-    if nodes.count == 1, !nodes[0].isClip, !nodes[0].isExtension {
-        summary.bridges = 1  // the lone-frame open-ended segment
-    } else if nodes.count > 1 {
-        // An AI lead-in (extension at the front, anchored on a real right
-        // neighbor) is its own generated segment — the loop below starts at
-        // index 1 and never sees node 0.
-        if nodes[0].isExtension, !nodes[1].isExtension {
-            summary.bridges += 1
-        }
-        for index in 1..<nodes.count {
-            // An extension is its own generated segment (anchored to a real
-            // left neighbor); seams touching extensions never bridge.
-            if nodes[index].isExtension {
-                if !nodes[index - 1].isExtension {
-                    summary.bridges += 1
-                }
-                continue
-            }
-            if nodes[index - 1].isExtension {
-                continue
-            }
-            // A seam a skip created always heals to a hard cut.
-            if nodes[index].followsSkip {
-                continue
-            }
-            let style = resolvedShotSeamStyle(
-                leftIsClip: nodes[index - 1].isClip,
-                rightIsClip: nodes[index].isClip,
-                rightPreference: nodes[index].preference
-            )
-            if style == .bridge {
-                summary.bridges += 1
-            }
-        }
-    }
+    summary.bridges = continuationPlan.generatedItems.count
     return summary
 }
 

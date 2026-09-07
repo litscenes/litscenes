@@ -33,12 +33,14 @@ struct CharactersWorkspaceView: View {
 
     private enum CharactersAlert: Identifiable {
         case delete(ProjectCharacter)
+        case deleteSheet(projectId: String, characterId: String, sheet: MediaItemRecord)
         case resetPrompt(ProjectCharacter)
         case redraft(ProjectCharacter)
 
         var id: String {
             switch self {
             case .delete(let character): return "delete:\(character.characterId)"
+            case .deleteSheet(let projectId, _, let sheet): return "delete-sheet:\(projectId):\(sheet.mediaId)"
             case .resetPrompt(let character): return "reset:\(character.characterId)"
             case .redraft(let character): return "redraft:\(character.characterId)"
             }
@@ -54,7 +56,7 @@ struct CharactersWorkspaceView: View {
     private var stacks: [RenderStack] { RenderStackRegistry.shared.stacks() }
 
     private var imageCandidates: [MediaItemRecord] {
-        library.items.filter { $0.kind == .image }
+        library.browsableMediaItems.filter { $0.kind == .image }
     }
 
     private var selectedName: String { selectedCharacter?.name ?? "" }
@@ -90,10 +92,10 @@ struct CharactersWorkspaceView: View {
             MediaPickerSheet(
                 title: "Add source images for \(character.name)",
                 subtitle: "Chosen images become source images the sheet is rendered from; the first ones lead.",
-                items: library.items.filter { $0.kind == .image && !$0.isCharacterSheet && !current.contains($0.mediaId) },
+                items: library.browsableMediaItems.filter { $0.kind == .image && !$0.isCharacterSheet && !current.contains($0.mediaId) },
                 observationsById: library.mediaObservationsById,
                 storyInputMediaIds: Set(library.enabledContentItems.map(\.mediaId)),
-                generatedFrameCandidates: generatedFrameReferenceCandidates(lenses: library.projectLenses.lenses, items: library.items),
+                generatedFrameCandidates: generatedFrameReferenceCandidates(lenses: library.projectLenses.lenses, items: library.browsableMediaItems),
                 confirmLabel: "Add as sources",
                 onConfirm: { picks in
                     isMediaPickerPresented = false
@@ -241,7 +243,7 @@ struct CharactersWorkspaceView: View {
         } ?? false
         inputs.activeOrdinal = sheetOrdinal(for: characterId)
         inputs.promptIsCurrent = promptState?.isCurrent ?? true
-        inputs.isRenderingSheet = library.isGeneratingCharacterSheet && library.activeCharacterSheetCharacterId == characterId
+        inputs.isRenderingSheet = library.activeCharacterSheetIds.contains(characterId)
         inputs.isDrafting = library.draftingCharacterIds.contains(characterId)
         if case .draft = library.characterIdentityDraftDecision(for: character) { inputs.draftsFirst = true }
         inputs.lastFailure = (note?.lane == .sheet || note?.lane == .draft) ? (note?.message ?? "") : ""
@@ -260,18 +262,14 @@ struct CharactersWorkspaceView: View {
         guard let stack else { return .noStack }
         if let blocker = library.renderStackCredentialBlocker(for: stack) { return .credential(blocker) }
         if library.isGenerationPaused { return .paused }
-        if library.isGeneratingCharacterSheet, library.activeCharacterSheetCharacterId != characterId { return .busy }
-        if library.isGeneratingCharacterRender {
-            return library.activeCharacterRenderCharacterId == characterId ? .studyRunning : .busy
-        }
+        if library.activeCharacterSheetIds.contains(characterId) { return .busy }
+        if library.activeCharacterRenderIds.contains(characterId) { return .studyRunning }
         return nil
     }
 
     private func sheetOrdinal(for characterId: String) -> Int? {
         guard let active = library.activeCharacterSheetItem(for: characterId) else { return nil }
-        let versions = library.characterSheetItems(characterId: characterId)
-        guard let index = versions.firstIndex(where: { $0.mediaId == active.mediaId }) else { return nil }
-        return versions.count - index
+        return library.characterSheetOrdinal(characterId: characterId, mediaId: active.mediaId)
     }
 
     private func masthead(for character: ProjectCharacter, copy: CharacterCastingCopy) -> some View {
@@ -291,9 +289,13 @@ struct CharactersWorkspaceView: View {
             name: character.name,
             activeSheet: library.activeCharacterSheetItem(for: character.characterId),
             sheetVersions: library.characterSheetItems(characterId: character.characterId),
+            versionOrdinal: { library.characterSheetOrdinal(characterId: character.characterId, mediaId: $0) ?? 1 },
             plateHeight: sheetPlateHeight(workspaceHeight: workspaceHeight),
             stage: stage,
             onUseVersion: { _ = library.setActiveCharacterSheet(characterId: character.characterId, mediaId: $0) },
+            onDeleteVersion: { sheet in
+                alert = .deleteSheet(projectId: currentProjectId, characterId: character.characterId, sheet: sheet)
+            },
             onEnlarge: { item in
                 imagePreview = StyleImagePreviewRequest(
                     url: URL(fileURLWithPath: item.path).absoluteString,
@@ -462,7 +464,7 @@ struct CharactersWorkspaceView: View {
     // MARK: Studio
 
     private func isGeneratingStudy(for characterId: String) -> Bool {
-        library.isGeneratingCharacterRender && library.activeCharacterRenderCharacterId == characterId
+        library.activeCharacterRenderIds.contains(characterId)
     }
 
     private func studio(for character: ProjectCharacter, stack: RenderStack?) -> some View {
@@ -513,10 +515,8 @@ struct CharactersWorkspaceView: View {
         if library.draftingCharacterIds.contains(characterId) { return "Casting from the story…" }
         if let blocker = library.renderStackCredentialBlocker(for: stack) { return blocker }
         if library.isGenerationPaused { return "Generation is paused. Resume it from Activity to continue." }
-        if library.isGeneratingCharacterSheet { return "A sheet is rendering. Generate when it lands." }
-        if library.isGeneratingCharacterRender, library.activeCharacterRenderCharacterId != characterId {
-            return "Another character's study is generating."
-        }
+        if library.activeCharacterSheetIds.contains(characterId) { return "This character’s sheet is rendering." }
+        if library.activeCharacterRenderIds.contains(characterId) { return "This character’s study is generating." }
         return ""
     }
 
@@ -682,7 +682,7 @@ struct CharactersWorkspaceView: View {
     }
 
     private func addAttachments(_ characterId: String, _ mediaIds: [String]) {
-        let merged = uniqueNonEmpty(session.attachments(for: characterId) + mediaIds)
+        let merged = uniqueNonEmpty(session.attachments(for: characterId) + mediaIds).filter(library.isMediaAvailableForSelection)
         session.setAttachments(Array(merged.prefix(8)), for: characterId)
     }
 
@@ -781,6 +781,32 @@ struct CharactersWorkspaceView: View {
                 message: Text("Their sheets and source images stay in the Library; only the character and its conversation go."),
                 primaryButton: .destructive(Text("Delete")) {
                     _ = library.deleteCharacter(characterId: character.characterId)
+                },
+                secondaryButton: .cancel()
+            )
+        case .deleteSheet(let projectId, let characterId, let sheet):
+            let ordinal = library.characterSheetOrdinal(characterId: characterId, mediaId: sheet.mediaId) ?? 1
+            let isActive = library.projectCharacters.character(withId: characterId)?.activeSheetMediaId == sheet.mediaId
+            let replacement = library.characterSheetItems(characterId: characterId).first { $0.mediaId != sheet.mediaId }
+            let consequence: String
+            if isActive, let replacement {
+                let nextOrdinal = library.characterSheetOrdinal(characterId: characterId, mediaId: replacement.mediaId) ?? 1
+                consequence = "Sheet \(characterSheetOrdinalLabel(nextOrdinal)) will become current."
+            } else if isActive {
+                consequence = "This character will have no reference sheet."
+            } else {
+                consequence = "The current sheet stays selected."
+            }
+            return Alert(
+                title: Text("Delete sheet \(characterSheetOrdinalLabel(ordinal))?"),
+                message: Text("\(consequence) This version will disappear from browsing and selection. Its files stay available to existing work and generation history."),
+                primaryButton: .destructive(Text("Delete Version")) {
+                    guard currentProjectId == projectId,
+                          library.deleteCharacterSheetVersion(characterId: characterId, mediaId: sheet.mediaId) else { return }
+                    session.removePendingMedia(sheet.mediaId)
+                    if imagePreview?.url == URL(fileURLWithPath: sheet.path).absoluteString {
+                        imagePreview = nil
+                    }
                 },
                 secondaryButton: .cancel()
             )

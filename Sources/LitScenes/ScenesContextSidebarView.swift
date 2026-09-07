@@ -9,7 +9,6 @@ enum ScenesContextSidebarTab: String, CaseIterable, Identifiable {
     case objects = "Objects"
     case places = "Places"
     case voices = "Voice & Audio"
-    case logs = "Logs"
 
     var id: String { rawValue }
 }
@@ -63,8 +62,6 @@ struct ScenesContextSidebarView: View {
                     placesTab
                 case .voices:
                     voicesTab
-                case .logs:
-                    logsTab
                 }
             }
             Spacer(minLength: 0)
@@ -85,7 +82,7 @@ struct ScenesContextSidebarView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Show the Characters / Objects / Places / Voice & Audio / Logs panel")
+            .help("Show the Characters / Objects / Places / Voice & Audio panel")
             Spacer(minLength: 0)
         }
         .padding(.top, 12)
@@ -150,14 +147,14 @@ struct ScenesContextSidebarView: View {
                         lens: lens,
                         versionId: versionId,
                         groups: identityGroups,
-                        candidates: library.items.filter { $0.kind == .image },
+                        candidates: library.browsableMediaItems.filter { $0.kind == .image },
                         isObjects: !isCharacters,
                         hasOpenAICredential: credentialStatus(.openAI)?.isConfigured == true,
                         hasCivitaiCredential: credentialStatus(.civitai)?.isConfigured == true,
                         hasFALCredential: credentialStatus(.fal)?.isConfigured == true,
                         hasStabilityCredential: credentialStatus(.stability)?.isConfigured == true,
-                        isRenderBlocked: library.lensHeroTakeStartBlockReason != nil,
-                        renderBlockerHelp: library.lensHeroTakeStartBlockReason,
+                        isRenderBlocked: library.frameSubmissionBlockReason != nil,
+                        renderBlockerHelp: library.frameSubmissionBlockReason,
                         isPaused: library.isGenerationPaused,
                         isAnimatingLensArtifact: library.isAnimatingLensArtifact,
                         onOpenImage: onOpenFrame,
@@ -668,115 +665,6 @@ struct ScenesContextSidebarView: View {
         }
     }
 
-    private var logsTab: some View {
-        let versions = Array(library.projectLenses.bodyVersions(for: lens.lensId).reversed())
-        let generationEntries = Array(library.generationLogEntries.reversed().prefix(40))
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("GENERATION ACTIVITY")
-                    .font(CanonType.archive(10, weight: .semibold))
-                    .foregroundStyle(CanonColor.ink.opacity(0.45))
-                if generationEntries.isEmpty {
-                    Text("No image or video generations yet this session.")
-                        .font(CanonType.editorial(13))
-                        .foregroundStyle(CanonColor.ink.opacity(0.50))
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    ForEach(generationEntries) { entry in
-                        generationLogRow(entry)
-                    }
-                }
-
-                Divider().padding(.vertical, 4)
-
-                Text("LENS BODY VERSIONS")
-                    .font(CanonType.archive(10, weight: .semibold))
-                    .foregroundStyle(CanonColor.ink.opacity(0.45))
-                if versions.isEmpty {
-                    Text("No Scene Plan versions saved yet.")
-                        .font(CanonType.editorial(13))
-                        .foregroundStyle(CanonColor.ink.opacity(0.50))
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    ForEach(Array(versions.prefix(12)), id: \.versionId) { version in
-                        lensVersionRow(version)
-                    }
-                }
-            }
-            .padding(.bottom, 12)
-        }
-    }
-
-    private func generationLogRow(_ entry: MediaAnalysisLogEntry) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: generationLogIcon(for: entry.kind))
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(generationLogColor(for: entry.kind))
-                .frame(width: 15, height: 15)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(String(entry.timestamp.prefix(19)).replacingOccurrences(of: "T", with: " "))
-                    .font(CanonType.archive(9, weight: .medium))
-                    .foregroundStyle(CanonColor.ink.opacity(0.42))
-                Text(entry.message)
-                    .font(CanonType.interface(12))
-                    .foregroundStyle(CanonColor.ink.opacity(0.82))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func generationLogIcon(for kind: String) -> String {
-        if kind.hasSuffix(".error") { return "exclamationmark.triangle" }
-        if kind.hasSuffix(".completed") { return "checkmark.circle" }
-        if kind.hasPrefix("video") { return "film" }
-        if kind.hasPrefix("image") { return "photo" }
-        return "circle"
-    }
-
-    private func generationLogColor(for kind: String) -> Color {
-        if kind.hasSuffix(".error") { return CanonColor.rust }
-        if kind.hasSuffix(".completed") { return CanonColor.olive }
-        return CanonColor.brass
-    }
-
-    private func lensVersionRow(_ version: ProjectLensBodyVersion) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
-                if version.isActive {
-                    Circle()
-                        .fill(CanonColor.olive)
-                        .frame(width: 7, height: 7)
-                }
-                Text(version.changeSummary.trimmed.isEmpty ? "Scene Plan version" : version.changeSummary)
-                    .font(CanonType.interface(12, weight: .semibold))
-                    .foregroundStyle(CanonColor.ink)
-                    .lineLimit(2)
-            }
-            Text(version.createdAt)
-                .font(CanonType.archive(10, weight: .medium))
-                .foregroundStyle(CanonColor.ink.opacity(0.48))
-                .lineLimit(1)
-            if !version.model.trimmed.isEmpty {
-                Text(version.model)
-                    .font(CanonType.archive(9, weight: .medium))
-                    .foregroundStyle(CanonColor.ink.opacity(0.42))
-                    .lineLimit(1)
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            version.isActive ? CanonColor.softGold.opacity(0.22) : Color.white.opacity(0.38),
-            in: RoundedRectangle(cornerRadius: 8)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(version.isActive ? CanonColor.brass.opacity(0.36) : CanonColor.hairlinePaper.opacity(0.70))
-        )
-    }
-
     private func credentialStatus(_ provider: LitScenesProviderCredential) -> CredentialStatus? {
         library.videoProviderCredentialStatuses.first { $0.provider == provider }
     }
@@ -897,6 +785,7 @@ struct ScenesPlaceDetailView: View {
 
     private var referenceItems: [MediaItemRecord] {
         place.referenceMediaIds
+            .filter(library.isMediaAvailableForSelection)
             .compactMap { mediaId in library.items.first { $0.mediaId == mediaId } }
             .filter { $0.kind == .image }
     }

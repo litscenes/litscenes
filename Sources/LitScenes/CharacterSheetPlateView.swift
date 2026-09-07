@@ -9,9 +9,11 @@ struct CharacterSheetPlateView<Card: View>: View {
     let activeSheet: MediaItemRecord?
     /// Newest first, as the engine lists them.
     let sheetVersions: [MediaItemRecord]
+    let versionOrdinal: (String) -> Int
     let plateHeight: CGFloat
     let stage: CharacterCastingStage
     var onUseVersion: (String) -> Void
+    var onDeleteVersion: (MediaItemRecord) -> Void
     var onEnlarge: (MediaItemRecord) -> Void
     /// The casting card shown while no sheet exists.
     @ViewBuilder var card: () -> Card
@@ -70,12 +72,30 @@ struct CharacterSheetPlateView<Card: View>: View {
     private var versionStrip: some View {
         CanonHScroller {
             HStack(spacing: 10) {
-                ForEach(Array(sheetVersions.enumerated()), id: \.element.mediaId) { index, sheet in
-                    versionMini(sheet, ordinal: sheetVersions.count - index)
+                ForEach(sheetVersions, id: \.mediaId) { sheet in
+                    VStack(spacing: 5) {
+                        versionMini(sheet, ordinal: versionOrdinal(sheet.mediaId))
+                            .contextMenu { deleteVersionButton(sheet) }
+                        Menu {
+                            deleteVersionButton(sheet)
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .frame(width: 28, height: 18)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .help("Sheet version actions")
+                        .accessibilityLabel("Actions for sheet \(characterSheetOrdinalLabel(versionOrdinal(sheet.mediaId)))")
+                    }
                 }
             }
             .padding(.vertical, 2)
         }
+    }
+
+    private func deleteVersionButton(_ sheet: MediaItemRecord) -> some View {
+        Button("Delete Version…", role: .destructive) { onDeleteVersion(sheet) }
     }
 
     private func versionMini(_ sheet: MediaItemRecord, ordinal: Int) -> some View {

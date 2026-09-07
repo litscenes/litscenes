@@ -612,6 +612,7 @@ func buildCombinedCut(
 
     let parentCutId = "shot_\(shortHash("combined:\(sources.map(\.shotId).joined(separator: ":")):\(now):\(UUID().uuidString)", length: 12))"
     var parentEntries: [ShotFrameEntry] = []
+    var parentContinuations: [ShotContinuationRecord] = []
     var combinedSources: [ShotCombinedSource] = []
     var sourceBoundaries: [ShotSourceBoundary] = []
     var seedClips: [ShotRenderSegmentClip] = []
@@ -655,6 +656,27 @@ func buildCombinedCut(
             ))
         }
         parentEntries.append(contentsOf: copiedEntries)
+        for record in source.continuationRecords {
+            guard let selected = record.selectedTake else { continue }
+            func remap(_ clip: ShotRenderSegmentClip) -> ShotRenderSegmentClip {
+                var value = clip
+                value.placementStartEntryId = entryMap[clip.placementStartEntryId] ?? clip.placementStartEntryId
+                value.placementEndEntryId = entryMap[clip.placementEndEntryId] ?? clip.placementEndEntryId
+                if value.sourceCutId.isEmpty { value.sourceCutId = source.shotId }
+                return value
+            }
+            var copied = record
+            copied.entryId = entryMap[record.entryId] ?? record.entryId
+            copied.sourceEntryId = entryMap[record.sourceEntryId] ?? record.sourceEntryId
+            copied.renderingTakeId = ""
+            copied.rebuildPending = false
+            var take = selected
+            if take.targetFrame != nil { take.targetFrame?.entryId = copied.entryId }
+            take.segmentClip = selected.segmentClip.map(remap)
+            copied.takes = [take]
+            copied.preservedSourceClips = (shotContinuationRenderedSourceClips(shot: source, record: record)?.clips ?? []).map(remap)
+            parentContinuations.append(copied)
+        }
 
         combinedSources.append(ShotCombinedSource(
             sourceId: "combined_source_\(shortHash("\(parentCutId):\(source.shotId)", length: 12))",
@@ -706,6 +728,9 @@ func buildCombinedCut(
             startFrameImageId: String,
             endFrameImageId: String
         ) -> ShotRenderSegmentClip? {
+            if let selected = source.continuationRecord(entryId: placementEndEntryId)?.selectedTake?.segmentClip {
+                return selected
+            }
             if let rendered = source.playableRenderVersion?.segmentClip(
                 placementStartEntryId: placementStartEntryId,
                 placementEndEntryId: placementEndEntryId,
@@ -782,6 +807,29 @@ func buildCombinedCut(
                         stack: item.renderStack.rawValue,
                         updatedAt: now
                     ))
+                }
+            case .preserved(let preserved):
+                let parentStartEntryId = entryMap[preserved.clip.placementStartEntryId] ?? ""
+                let parentEndEntryId = entryMap[preserved.clip.placementEndEntryId] ?? ""
+                let parentKey = shotPlacementSegmentKey(
+                    startEntryId: parentStartEntryId,
+                    endEntryId: parentEndEntryId,
+                    legacyStartId: preserved.clip.startFrameImageId,
+                    legacyEndId: preserved.clip.endFrameImageId
+                )
+                parentKeyBySourceKey[preserved.placementKey] = parentKey
+                if fileExists(preserved.clip.clipPath) {
+                    var saved = preserved.clip
+                    saved.placementStartEntryId = parentStartEntryId
+                    saved.placementEndEntryId = parentEndEntryId
+                    if saved.sourceCutId.isEmpty { saved.sourceCutId = source.shotId }
+                    if saved.sourceRenderVersionId.isEmpty {
+                        saved.sourceRenderVersionId = preserved.sourceVersionId
+                    }
+                    seedClips.append(saved)
+                    preflight.reusableSegmentCount += 1
+                } else {
+                    preflight.missingSegmentCount += 1
                 }
             case .footage(let footage):
                 let parentEntryId = entryMap[footage.clip.entryId] ?? ""
@@ -964,6 +1012,7 @@ func buildCombinedCut(
         shotId: parentCutId,
         name: sources.map { $0.name.trimmed.nilIfEmpty ?? "CUT" }.joined(separator: " + "),
         entries: parentEntries,
+        continuationRecords: parentContinuations,
         audioMix: parentMix,
         preferredRenderStack: sources.first?.preferredRenderStack ?? "",
         segmentPromptOverrides: promptOverrides,

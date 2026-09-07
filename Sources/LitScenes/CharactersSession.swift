@@ -111,6 +111,16 @@ final class CharactersSession: ObservableObject {
         studios[characterId] = draft
     }
 
+    /// Drop deleted media from pending inputs without changing any unsent text.
+    func removePendingMedia(_ mediaId: String) {
+        pendingAttachments = pendingAttachments.mapValues { $0.filter { $0 != mediaId } }
+        studios = studios.mapValues { draft in
+            var value = draft
+            value.referenceIds.removeAll { $0 == mediaId }
+            return value
+        }
+    }
+
     private func persistSelection() {
         guard !projectId.isEmpty else { return }
         LitScenesPreferences.store.set(selectedCharacterId, forKey: Self.selectionKey(projectId))

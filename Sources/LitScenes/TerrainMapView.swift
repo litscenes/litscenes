@@ -528,7 +528,7 @@ struct TerrainMapView: View {
             MediaPickerSheet(
                 title: map.isSeeded ? "Pick a new seed map" : "Pick a seed map",
                 subtitle: "One top-down image becomes the world map canvas. Growth passes extend it outward from there.",
-                items: library.items.filter { $0.kind == .image },
+                items: library.browsableMediaItems.filter { $0.kind == .image },
                 observationsById: [:],
                 selectionLimit: 1,
                 confirmLabel: "Seed map",

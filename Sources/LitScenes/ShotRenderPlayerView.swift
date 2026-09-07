@@ -4,11 +4,42 @@ import AVKit
 import AppKit
 
 /// Identifies which shot's rendered video is open in the player.
+enum ShotEditorEntryIntent: Hashable {
+    case play
+    case edit
+    case focus(String)
+    case provenance
+    case ending(String)
+}
+
 struct ShotVideoRequest: Identifiable, Hashable {
     var shotId: String
-    /// Open with the Re-render segment-prompts panel already slid out.
-    var openRerenderPanel: Bool = false
-    var id: String { shotId }
+    var intent: ShotEditorEntryIntent
+    var id: String { "\(shotId)#\(intent)" }
+    var openRerenderPanel: Bool { intent != .provenance }
+    var focusedEntryId: String {
+        switch intent { case .focus(let id), .ending(let id): return id; default: return "" }
+    }
+    var autoplay: Bool { intent == .play }
+    var openProvenance: Bool { intent == .provenance }
+    var openEndingReview: Bool { if case .ending = intent { return true }; return false }
+    init(shotId: String, intent: ShotEditorEntryIntent) { self.shotId = shotId; self.intent = intent }
+    /// Existing callers remain source-compatible while presentation intent
+    /// becomes one value, included in sheet identity.
+    init(shotId: String, openRerenderPanel: Bool = false, focusedEntryId: String = "",
+         autoplay: Bool = true, openProvenance: Bool = false, openEndingReview: Bool = false) {
+        self.shotId = shotId
+        if openEndingReview { intent = .ending(focusedEntryId) }
+        else if openProvenance { intent = .provenance }
+        else if !focusedEntryId.isEmpty { intent = .focus(focusedEntryId) }
+        else { intent = autoplay ? .play : .edit }
+    }
+}
+
+private enum ShotPlayerViewingSelection {
+    case current
+    case history(String)
+    case segment(ShotSegmentPreview)
 }
 
 /// Opens the Ambient Bed Tuner as a nested sheet of the shot player modal.
@@ -34,7 +65,16 @@ struct ShotRenderPlayerModal: View {
     /// Live FAL rates for the re-render panel's spend estimates.
     var falPricing: FALPricingSnapshot? = nil
     var isFetchingVideoPricing: Bool = false
-    var onActivateVersion: (String) -> Void
+    var initialFocusedEntryId: String
+    var autoplayOnOpen: Bool
+    var openProvenanceOnOpen: Bool
+    var onInspectSource: (String) -> Void
+    var onReviewEnding: (String) -> Void
+    var continuationEntryEstimate: ([String]) -> ShotRenderCostEstimate
+    var continuationBranchImpact: (String, String) -> ShotContinuationBranchImpact?
+    var onUseContinuationTake: (ShotContinuationBranchImpact) -> Void
+    var onRepairContinuationTake: (String, String) async -> Bool
+    var onRechainContinuations: () async -> Bool
     var onSetDefaultRenderStack: (ShotRenderStack) -> Void
     var onSetSegmentRenderStack: (ShotRenderPair, ShotRenderStack?) -> Void
     var onRender: ([ShotSegmentPromptOverride]) -> Void
@@ -131,9 +171,40 @@ struct ShotRenderPlayerModal: View {
     @State private var collectFailed = false
     @State private var isPreparingPlayer = false
     @State private var playbackError = ""
+    var onExtend: (() -> Void)?
+    var onNewVersion: (() -> Void)?
+    var onRebuild: (([ShotSegmentPromptOverride]) -> Void)?
+    var rebuildEstimate: ShotRenderCostEstimate
+    @State private var focusedSegmentKey = ""
+    @State private var currentReturnSeconds = 0.0
+    @State private var currentReturnPlaying = false
+    @State private var requestedPlayback: Bool?
+    @State private var takeBrowserEntryId = ""
     @State private var isPanelOpen: Bool
     /// The segment clip playing instead of the full shot (panel preview).
-    @State private var previewClip: ShotRenderSegmentClip?
+    @State private var viewingSelection: ShotPlayerViewingSelection = .current
+    @State private var didResolveInitialFocus = false
+    @State private var didLoadPlayer = false
+    private var previewClip: ShotRenderSegmentClip? {
+        get {
+            switch viewingSelection {
+            case .current: return nil
+            case .segment(let preview): return preview.clip
+            case .history(let id):
+                return shot.renderVersions.first { $0.versionId == id }.map {
+                    ShotRenderSegmentClip(clipPath: $0.videoPath, durationSeconds: Double($0.totalSeconds))
+                }
+            }
+        }
+        nonmutating set { viewingSelection = newValue.map { ShotPlayerViewingSelection.segment(ShotSegmentPreview(clip: $0)) } ?? .current }
+    }
+    private var previewedVersionId: String? {
+        if case .history(let id) = viewingSelection { return id }; return nil
+    }
+    private var previewRenderLabel: String {
+        guard let id = previewedVersionId, let version = shot.renderVersions.first(where: { $0.versionId == id }) else { return "" }
+        return "HISTORY \(FrameCreatorModal.romanNumeral(version.versionNumber))"
+    }
     /// Honest per-clip durations, loaded off the saved files; the strip and
     /// the composition fall back to estimates until they land.
     @State private var clipDurationsByPath: [String: Double] = [:]
@@ -150,6 +221,7 @@ struct ShotRenderPlayerModal: View {
     @State private var microphoneAnchorSeconds: Double = 0
     @State private var microphoneStatus = ""
     @State private var isVersionsPlateOpen = false
+    @State private var pendingTakeReviewEntryId = ""
     /// Mirrors `ShotPlayerTransportPreference.loopEnabled` for drawing; the
     /// loop observer reads the LIVE preference (its closure outlives toggles).
     @State private var isLoopEnabled = ShotPlayerTransportPreference.loopEnabled
@@ -210,7 +282,20 @@ struct ShotRenderPlayerModal: View {
         falPricing: FALPricingSnapshot? = nil,
         isFetchingVideoPricing: Bool = false,
         openPanelInitially: Bool = false,
-        onActivateVersion: @escaping (String) -> Void,
+        initialFocusedEntryId: String = "",
+        autoplayOnOpen: Bool = true,
+        openProvenanceOnOpen: Bool = false,
+        onInspectSource: @escaping (String) -> Void = { _ in },
+        onReviewEnding: @escaping (String) -> Void = { _ in },
+        onExtend: (() -> Void)? = nil,
+        onNewVersion: (() -> Void)? = nil,
+        onRebuild: (([ShotSegmentPromptOverride]) -> Void)? = nil,
+        rebuildEstimate: ShotRenderCostEstimate = ShotRenderCostEstimate(),
+        continuationEntryEstimate: @escaping ([String]) -> ShotRenderCostEstimate = { _ in ShotRenderCostEstimate() },
+        continuationBranchImpact: @escaping (String, String) -> ShotContinuationBranchImpact? = { _, _ in nil },
+        onUseContinuationTake: @escaping (ShotContinuationBranchImpact) -> Void = { _ in },
+        onRepairContinuationTake: @escaping (String, String) async -> Bool = { _, _ in false },
+        onRechainContinuations: @escaping () async -> Bool = { false },
         onSetDefaultRenderStack: @escaping (ShotRenderStack) -> Void = { _ in },
         onSetSegmentRenderStack: @escaping (ShotRenderPair, ShotRenderStack?) -> Void = { _, _ in },
         onRender: @escaping ([ShotSegmentPromptOverride]) -> Void,
@@ -267,6 +352,15 @@ struct ShotRenderPlayerModal: View {
         onClose: @escaping () -> Void
     ) {
         self.shot = shot
+        self.initialFocusedEntryId = initialFocusedEntryId
+        self.autoplayOnOpen = autoplayOnOpen
+        self.openProvenanceOnOpen = openProvenanceOnOpen
+        self.onInspectSource = onInspectSource
+        self.onReviewEnding = onReviewEnding
+        self.onExtend = onExtend
+        self.onNewVersion = onNewVersion
+        self.onRebuild = onRebuild
+        self.rebuildEstimate = rebuildEstimate
         self.shotOrdinal = shotOrdinal
         self.planSegments = planSegments
         self.skipped = skipped
@@ -275,7 +369,11 @@ struct ShotRenderPlayerModal: View {
         self.configuredRenderModels = configuredRenderModels
         self.falPricing = falPricing
         self.isFetchingVideoPricing = isFetchingVideoPricing
-        self.onActivateVersion = onActivateVersion
+        self.continuationEntryEstimate = continuationEntryEstimate
+        self.continuationBranchImpact = continuationBranchImpact
+        self.onUseContinuationTake = onUseContinuationTake
+        self.onRepairContinuationTake = onRepairContinuationTake
+        self.onRechainContinuations = onRechainContinuations
         self.onSetDefaultRenderStack = onSetDefaultRenderStack
         self.onSetSegmentRenderStack = onSetSegmentRenderStack
         self.onRender = onRender
@@ -374,6 +472,12 @@ struct ShotRenderPlayerModal: View {
             ?? artifact?.videoPath.trimmed.nilIfEmpty
     }
 
+    private var playerSourceKey: String {
+        if let id = previewedVersionId { return "history:\(id)" }
+        if case .segment(let preview) = viewingSelection { return "segment:\(preview.clip.clipPath)#\(preview.sourceStartSeconds)#\(preview.sourceEndSeconds ?? -1)" }
+        return "current:\(currentVideoPath ?? "")"
+    }
+
     private var isPreviewingClip: Bool { previewClip != nil }
 
     /// Full-shot playback assembles the saved segment clips live through the
@@ -419,6 +523,8 @@ struct ShotRenderPlayerModal: View {
     }
 
     private var timelineDurationSeconds: Double {
+        if case .segment(let preview) = viewingSelection { return preview.durationSeconds }
+        if let previewClip { return previewClip.durationSeconds }
         if let activeLook {
             return max(ShotAudioComposition.effectiveLookDurationSeconds(activeLook), 0)
                 * Double(outputLoopCount)
@@ -467,12 +573,13 @@ struct ShotRenderPlayerModal: View {
                     playerSurface
                         .frame(minWidth: 880, minHeight: 380, maxHeight: .infinity)
                         .overlay { microphoneRecordingOverlay }
+                    if !shot.entries.isEmpty, previewedVersionId == nil { sourceActions.padding(.horizontal, 16).padding(.vertical, 5) }
                     if activeLook != nil {
                         Rectangle().fill(PlateColor.hairline).frame(height: 1)
                         lookControlBar
                             .padding(.horizontal, 16)
                             .padding(.vertical, 9)
-                    } else if !assembly.bands.isEmpty {
+                    } else if !assembly.bands.isEmpty, !isPreviewingClip {
                         Rectangle().fill(PlateColor.hairline).frame(height: 1)
                         cutTimelineStrip
                             .padding(.horizontal, 16)
@@ -544,7 +651,16 @@ struct ShotRenderPlayerModal: View {
                 onCancel: { isRestyleStylePickerOpen = false }
             )
         }
-        .sheet(isPresented: $isVersionsPlateOpen) {
+        .sheet(isPresented: Binding(get: { !takeBrowserEntryId.isEmpty }, set: { if !$0 { takeBrowserEntryId = "" } }), onDismiss: {
+            if !pendingTakeReviewEntryId.isEmpty {
+                let id = pendingTakeReviewEntryId; pendingTakeReviewEntryId = ""; onReviewEnding(id)
+            }
+        }) { directTakeBrowser }
+        .sheet(isPresented: $isVersionsPlateOpen, onDismiss: {
+            if !pendingTakeReviewEntryId.isEmpty {
+                let id = pendingTakeReviewEntryId; pendingTakeReviewEntryId = ""; onReviewEnding(id)
+            }
+        }) {
             versionsPlateSheet()
         }
         .sheet(isPresented: $isKeymapOpen) {
@@ -636,6 +752,18 @@ struct ShotRenderPlayerModal: View {
         }
         .onAppear {
             refreshMicrophoneDevices()
+            isVersionsPlateOpen = openProvenanceOnOpen
+            if !initialFocusedEntryId.isEmpty, !shot.hasSavedPlayback { isPanelOpen = true }
+            if let segment = planSegments.first(where: { segment in
+                switch segment {
+                case .generated(let item): return item.pair.endPlacementEntryId == initialFocusedEntryId || item.pair.startPlacementEntryId == initialFocusedEntryId
+                case .preserved(let item): return item.clip.placementStartEntryId == initialFocusedEntryId || item.clip.placementEndEntryId == initialFocusedEntryId
+                case .footage(let item): return item.clip.entryId == initialFocusedEntryId
+                case .artifactFallback: return false
+                }
+            }), !initialFocusedEntryId.isEmpty {
+                focusedSegmentKey = ShotSegmentPresentation(shot: shot, segment: segment).id
+            }
             preparePlayer()
             tunerUndo.applyRegion = { region in audioRegionActions.restore(region) }
             tunerUndo.deleteRegion = { regionId in _ = audioRegionActions.delete(regionId) }
@@ -649,7 +777,18 @@ struct ShotRenderPlayerModal: View {
             // `ensureReverseProxies` is a no-op for everything else.
             await onRetryReverseProxies()
         }
-        .onChange(of: currentVideoPath) { _, _ in
+        .onChange(of: initialFocusedEntryId) { _, id in
+            if let segment = planSegments.first(where: { segment in
+                switch segment {
+                case .generated(let item): return item.pair.endPlacementEntryId == id || item.pair.startPlacementEntryId == id
+                case .preserved(let item): return item.clip.placementStartEntryId == id || item.clip.placementEndEntryId == id
+                case .footage(let item): return item.clip.entryId == id
+                case .artifactFallback: return false
+                }
+            }) { focusSegment(ShotSegmentPresentation(shot: shot, segment: segment).id) }
+            else { isPanelOpen = true; transportStatus = "The appended Frame is still being prepared." }
+        }
+        .onChange(of: playerSourceKey) { _, _ in
             preparePlayer(resume: false)
         }
         .onChange(of: playbackFingerprint) { _, _ in
@@ -709,9 +848,9 @@ struct ShotRenderPlayerModal: View {
             isRenderBlocked: isRenderBlocked,
             previewingSegmentKey: previewClip?.placementKey,
             configuredRenderModels: configuredRenderModels,
-            onRender: onRender,
-            onRenderSegment: onRenderSegment,
-            onPreviewSegment: { clip in previewClip = clip },
+            onRender: { overrides in pauseForEditorAction(); onRender(overrides) },
+            onRenderSegment: { overrides, key in pauseForEditorAction(); onRenderSegment(overrides, key) },
+            onPreviewSegment: previewSegment,
             onSetDefaultRenderStack: onSetDefaultRenderStack,
             onSetSegmentRenderStack: onSetSegmentRenderStack,
             onSetSeamStyle: { entryId, style in
@@ -733,8 +872,97 @@ struct ShotRenderPlayerModal: View {
             draftingDirectionKeys: draftingDirectionKeys,
             directionDraftErrors: directionDraftErrors,
             onDraftDirectionPlan: onDraftDirectionPlan,
-            onDraftAllDirectionPlans: onDraftAllDirectionPlans
+            onDraftAllDirectionPlans: onDraftAllDirectionPlans,
+            focusedSegmentKey: focusedSegmentKey,
+            onFocusSegment: focusSegment,
+            onCopyVideo: { preview in
+                ShotPictureClipboard.write(ShotPictureSegmentClipboardPayload(spans: [
+                    ShotPictureSegmentSpanRef(segmentKey: preview.clip.placementKey, clipPath: preview.clip.clipPath,
+                        startSeconds: preview.sourceStartSeconds,
+                        endSeconds: preview.sourceEndSeconds ?? preview.durationSeconds,
+                        label: "Saved segment", seedClip: preview.clip)
+                ], sourceShotId: shot.shotId, sourceProjectId: projectId))
+                transportStatus = "Saved video copied · paste it into the timeline at $0"
+            },
+            onOpenTakes: { pauseForEditorAction(); takeBrowserEntryId = $0 },
+            onInspectInput: pauseForEditorAction,
+            onExtend: onExtend.map { action in { pauseForEditorAction(); action() } },
+            onNewVersion: onNewVersion.map { action in { pauseForEditorAction(); action() } },
+            onRebuild: onRebuild.map { action in { overrides in pauseForEditorAction(); action(overrides) } },
+            rebuildEstimate: rebuildEstimate,
+            outputSeconds: assembly.outputSeconds,
+            historyVersion: previewedVersionId.flatMap { id in shot.renderVersions.first { $0.versionId == id } },
+            onEditCurrent: returnToCurrent,
+            savedFallback: assembly.bands.first.flatMap { band in
+                if case .artifactFallback = band.segment { return band.segment }; return nil
+            }
         )
+    }
+
+    private func pauseForEditorAction() {
+        requestedPlayback = false
+        currentReturnPlaying = false
+        player?.pause()
+    }
+
+    private func focusSegment(_ key: String) {
+        focusedSegmentKey = key
+        isPanelOpen = true
+        requestedPlayback = false
+        player?.pause()
+        guard let clip = assembly.planClips.first(where: { $0.segmentKey == key }) else {
+            if isPreviewingClip {
+                pendingSeekSeconds = currentReturnSeconds
+                viewingSelection = .current
+            }
+            transportStatus = "Saved media can be previewed; this segment has no current output position."
+            return
+        }
+        let seconds = assembly.outputSeconds(forMaterialSeconds: clip.materialStartSeconds)
+        if isPreviewingClip {
+            pendingSeekSeconds = seconds
+            viewingSelection = .current
+        } else {
+            requestedPlayback = nil
+            seek(toOutputSeconds: seconds)
+            player?.pause()
+        }
+    }
+
+    private func previewSegment(_ preview: ShotSegmentPreview) {
+        if !isPreviewingClip {
+            currentReturnSeconds = currentPlayheadSeconds()
+            currentReturnPlaying = (player?.rate ?? 0) != 0
+        }
+        pendingSeekSeconds = 0
+        requestedPlayback = true
+        viewingSelection = .segment(preview)
+    }
+
+    private func returnToCurrent() {
+        guard isPreviewingClip else { return }
+        pendingSeekSeconds = currentReturnSeconds
+        requestedPlayback = currentReturnPlaying
+        viewingSelection = .current
+    }
+
+    @ViewBuilder private var directTakeBrowser: some View {
+        if let record = shot.continuationRecord(entryId: takeBrowserEntryId) {
+            let stale = shotContinuationStaleEntryIds(shot)
+            ShotContinuationTakeBrowserView(record: record,
+                selectedEntryIsStale: stale.contains(record.entryId), rechainEntryIds: stale,
+                isRendering: isRenderBlocked, rechainEstimate: continuationEntryEstimate,
+                branchImpact: { continuationBranchImpact(record.entryId, $0) },
+                onUse: { impact in returnToCurrent(); onUseContinuationTake(impact) },
+                onUseAndRechain: { impact in
+                    returnToCurrent(); onUseContinuationTake(impact); takeBrowserEntryId = ""
+                    Task { _ = await onRechainContinuations() }
+                },
+                onRechain: { takeBrowserEntryId = ""; Task { _ = await onRechainContinuations() } },
+                onRepair: { id in Task { _ = await onRepairContinuationTake(record.entryId, id) } },
+                onNewTake: { pendingTakeReviewEntryId = record.entryId; takeBrowserEntryId = "" },
+                onClose: { takeBrowserEntryId = "" })
+        }
     }
 
     /// Output-space audio landmarks pulled back to MATERIAL seconds for the
@@ -761,6 +989,32 @@ struct ShotRenderPlayerModal: View {
             outputEdges.append(take.startSeconds + take.durationSeconds)
         }
         return outputEdges.map { cutAssembly.materialSeconds(forOutputSeconds: $0) }
+    }
+
+    private var sourceActions: some View {
+        HStack(spacing: 10) {
+            Menu("SOURCES") {
+                ForEach(Array(shot.entries.enumerated()), id: \.element.entryId) { index, entry in
+                    if !entry.isAIExtension {
+                        Button("\(index + 1) · \(entry.isClip ? "Inspect Footage" : "View Frame")") { pauseForEditorAction(); onInspectSource(entry.entryId) }
+                    }
+                }
+            }
+            if let entry = shot.entries.first(where: { $0.entryId == initialFocusedEntryId }) {
+                Text("Selected source · \((shot.entries.firstIndex(of: entry) ?? 0) + 1)").font(.caption)
+                if !entry.isAIExtension {
+                    Button(entry.isClip ? "INSPECT FOOTAGE" : "VIEW FRAME") { pauseForEditorAction(); onInspectSource(entry.entryId) }
+                }
+                if shotPendingEndingEntryIds(shot).contains(entry.entryId) {
+                    Button("RENDER ENDING") { pauseForEditorAction(); onReviewEnding(entry.entryId) }.disabled(isRenderBlocked)
+                }
+            }
+            if !shot.continuationRecords.isEmpty {
+                Button("TAKES") { pauseForEditorAction(); isVersionsPlateOpen = true }
+            }
+            Spacer()
+        }
+        .buttonStyle(PlateButtonStyle())
     }
 
     private var cutTimelineStrip: some View {
@@ -1263,12 +1517,7 @@ struct ShotRenderPlayerModal: View {
             transportStatus = "Lead-in and extension segments can't carry yet — they anchor on a neighbor"
             return
         }
-        var seed = shot.playableRenderVersion?.segmentClip(
-            placementStartEntryId: item.pair.startPlacementEntryId,
-            placementEndEntryId: item.pair.endPlacementEntryId,
-            forStart: startId,
-            end: endId
-        ) ?? shot.seedSegmentClips.first { $0.placementKey == item.pair.placementKey }
+        var seed = shotSavedSegmentClip(shot: shot, pair: item.pair)
         if let candidate = seed,
            candidate.clipPath.trimmed.isEmpty
             || !FileManager.default.fileExists(atPath: candidate.clipPath) {
@@ -2011,7 +2260,7 @@ struct ShotRenderPlayerModal: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 14) {
+        ShotEditorFlow(spacing: 10) {
             lookCycler
             if activeLook == nil {
                 versionCycler
@@ -2025,14 +2274,12 @@ struct ShotRenderPlayerModal: View {
                     ? previewSeconds
                     : Double(requestedSeconds > 0 ? requestedSeconds : shot.renderStack.segmentSeconds)
                 PlateLabel(
-                    text: "SEGMENT · ~\(Int(segmentSeconds.rounded()))s",
+                    text: "\(previewRenderLabel.isEmpty ? "SEGMENT" : previewRenderLabel) · ~\(Int(segmentSeconds.rounded()))s",
                     size: 8.5,
                     weight: .semibold,
                     color: PlateColor.ink
                 )
-                Button("Full shot") {
-                    previewClip = nil
-                }
+                Button("Full shot", action: returnToCurrent)
                 .buttonStyle(PlateButtonStyle())
                 .help("Return the player to the full shot video")
             } else if let activeLook {
@@ -2085,7 +2332,6 @@ struct ShotRenderPlayerModal: View {
                 PlateLabel(text: youtubeExportStatus, size: 8.5, color: PlateColor.inkFaint)
                     .lineLimit(1)
             }
-            Spacer()
             if activeLook != nil {
                 // Named for what it DOES: this Look already IS this cut's
                 // output (a version, not a row) — this is the gesture that
@@ -2256,19 +2502,21 @@ struct ShotRenderPlayerModal: View {
     }
 
     /// The version browser: one lowercase numeral per ready render, the active
-    /// one distinct. Tapping a numeral makes that version the shot's selected
-    /// render (persisted) — viewing IS selecting.
+    /// one distinct. Numerals preview immutable saved video without selecting
+    /// a working render or changing continuation choices.
     @ViewBuilder
     private var versionCycler: some View {
-        let versions = shot.browsableRenderVersions
-        if versions.count > 1 {
+        let versions = shot.historicalWholeShotVersions.filter(\.isReady)
+        if !versions.isEmpty || shot.hasSavedPlayback {
             HStack(spacing: 8) {
+                Button("CURRENT", action: returnToCurrent)
+                    .font(.system(size: 9, weight: previewClip == nil ? .bold : .regular))
+                    .foregroundStyle(previewClip == nil ? PlateColor.ink : PlateColor.inkFaint)
+                    .buttonStyle(.plain)
                 ForEach(versions, id: \.versionId) { version in
-                    let isActive = shot.isActiveRenderVersion(version)
+                    let isActive = previewedVersionId == version.versionId
                     Button {
-                        if !isActive {
-                            onActivateVersion(version.versionId)
-                        }
+                        previewRender(version.versionId)
                     } label: {
                         Text(FrameCreatorModal.romanNumeral(version.versionNumber).lowercased())
                             .font(.system(size: 11, weight: isActive ? .bold : .regular, design: .serif))
@@ -2283,8 +2531,8 @@ struct ShotRenderPlayerModal: View {
                     }
                     .buttonStyle(.plain)
                     .help(isActive
-                        ? "Version \(version.versionNumber) — the shot's selected render"
-                        : "Show version \(version.versionNumber) and make it the shot's selected render")
+                        ? "Previewing historical version \(version.versionNumber)"
+                        : "Preview historical version \(version.versionNumber); the current sequence is unchanged")
                 }
             }
         }
@@ -2293,21 +2541,41 @@ struct ShotRenderPlayerModal: View {
     private func versionsPlateSheet() -> some View {
         ShotRenderVersionsPlateView(
             shot: shot,
+            currentClips: shotSequenceClips(shot: shot, segments: planSegments),
             planPlacementKeys: planSegments.map { segment in
                 switch segment {
                 case .generated(let item): return item.pair.placementKey
                 case .footage(let footage): return footage.placementKey
+                case .preserved(let preserved): return preserved.placementKey
                 // Never in planSegments (assembly-only); the artifact key can
                 // never collide with a saved clip's placement key.
                 case .artifactFallback(let artifact): return shotArtifactSegmentKey(versionId: artifact.versionId)
                 }
             },
-            onActivateVersion: { versionId in
-                onActivateVersion(versionId)
+            onPreviewVersion: { versionId in
+                previewRender(versionId)
                 isVersionsPlateOpen = false
             },
+            isRendering: isRenderBlocked,
+            continuationEntryEstimate: continuationEntryEstimate,
+            continuationBranchImpact: continuationBranchImpact,
+            onUseContinuationTake: { impact in previewClip = nil; onUseContinuationTake(impact) },
+            onRepairContinuationTake: onRepairContinuationTake,
+            onRechainContinuations: onRechainContinuations,
+            onNewContinuationTake: { entryId in pendingTakeReviewEntryId = entryId; isVersionsPlateOpen = false },
             onClose: { isVersionsPlateOpen = false }
         )
+    }
+
+    private func previewRender(_ versionId: String) {
+        guard let version = shot.renderVersions.first(where: { $0.versionId == versionId }) else { return }
+        if !isPreviewingClip {
+            currentReturnSeconds = currentPlayheadSeconds()
+            currentReturnPlaying = (player?.rate ?? 0) != 0
+        }
+        pendingSeekSeconds = 0
+        requestedPlayback = true
+        viewingSelection = .history(version.versionId)
     }
 
     private var loopToggleButton: some View {
@@ -2331,15 +2599,20 @@ struct ShotRenderPlayerModal: View {
     /// ("WAN 2.7 + Kling 3 Pro"), never flattened to a shrug. With no
     /// artifact at all, the default is intent and says so.
     private var footerProvenanceLabel: String {
-        if let artifact { return shotRenderProvenanceSummary(version: artifact) }
-        return "NEXT · \(shot.renderStack.shortLabel)"
+        if let id = previewedVersionId, let version = shot.renderVersions.first(where: { $0.versionId == id }) {
+            return shotRenderProvenanceSummary(version: version)
+        }
+        if case .segment(let preview) = viewingSelection {
+            return shotClipModelShortLabel(provider: preview.clip.provider, model: preview.clip.model)
+        }
+        return shotSequenceProvenance(shot: shot, segments: planSegments)
     }
 
     /// One click from the numerals to the whole provenance story. Shown from
     /// the first version — archaeology should not wait for a second render.
     @ViewBuilder
     private var versionsPlateButton: some View {
-        if !shot.renderVersions.isEmpty {
+        if shot.hasSavedPlayback {
             Button {
                 isVersionsPlateOpen = true
             } label: {
@@ -2385,6 +2658,8 @@ struct ShotRenderPlayerModal: View {
 
     private func preparePlayer(resume: Bool = true) {
         guard videoExists else { return }
+        let shouldPlay = requestedPlayback ?? (!didLoadPlayer ? autoplayOnOpen : (player?.rate ?? 0) != 0)
+        requestedPlayback = nil
         let resumeTime = resume ? player?.currentTime() : nil
         if pendingSeekSeconds == nil,
            let resumeTime,
@@ -2412,6 +2687,11 @@ struct ShotRenderPlayerModal: View {
                     await loadClipDurations()
                 }
                 guard token == playerLoadToken else { return }
+                if !didResolveInitialFocus, !initialFocusedEntryId.isEmpty {
+                    pendingSeekSeconds = shotEntryFocusSeconds(shot: shot, entryId: initialFocusedEntryId, assembly: assembly)
+                    if pendingSeekSeconds == nil { transportStatus = "This source has no saved timeline position yet" }
+                    didResolveInitialFocus = true
+                }
                 let item = try await makePlayerItem()
                 guard token == playerLoadToken else { return }
                 let newPlayer = AVPlayer(playerItem: item)
@@ -2453,7 +2733,8 @@ struct ShotRenderPlayerModal: View {
                 }
                 playbackError = ""
                 isPreparingPlayer = false
-                newPlayer.play()
+                didLoadPlayer = true
+                if shouldPlay { newPlayer.play() }
             } catch {
                 guard token == playerLoadToken else { return }
                 isPreparingPlayer = false
@@ -2490,9 +2771,16 @@ struct ShotRenderPlayerModal: View {
     /// Preview and export share one track graph: cut-aware source audio,
     /// narration, and the active microphone take with persisted lane gains.
     private func makePlayerItem() async throws -> AVPlayerItem {
-        if let previewClip {
-            return AVPlayerItem(url: URL(fileURLWithPath: previewClip.clipPath))
+        if case .segment(let preview) = viewingSelection, let end = preview.sourceEndSeconds {
+            let built = try await VideoChainMedia.buildStitchComposition(specs: [VideoChainMedia.StitchClipSpec(
+                url: URL(fileURLWithPath: preview.clip.clipPath),
+                keepRanges: [ShotKeepRange(start: preview.sourceStartSeconds, end: end)])],
+                profile: .standard(.landscape16x9, fitPolicy: .fitWithBlurFill))
+            let item = AVPlayerItem(asset: built.composition)
+            item.videoComposition = built.videoComposition
+            return item
         }
+        if let previewClip { return AVPlayerItem(url: URL(fileURLWithPath: previewClip.clipPath)) }
         // One snapshot for the whole function: the specs that lay the audio down
         // and the source gain windows that shape it MUST come from the same
         // assembly, or the windows land at the wrong seconds.

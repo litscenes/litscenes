@@ -51,6 +51,7 @@ func spendClockLabel(_ isoAt: String) -> String {
 let spendHonestyCaption = "Estimates at submission-time rates — not a bill"
 
 struct ActivityPopover: View {
+    @ObservedObject private var workflows = WorkflowCoordinator.shared
     @ObservedObject var library: LibraryEngine
     var onOpenLedger: () -> Void
     var onDismiss: () -> Void
@@ -59,7 +60,6 @@ struct ActivityPopover: View {
         VStack(alignment: .leading, spacing: 13) {
             header
             runningSection
-            pauseSection
             recentSection
             spendSection
             footer
@@ -101,21 +101,16 @@ struct ActivityPopover: View {
     // MARK: - Running
 
     private var runningSection: some View {
-        let rows = library.activitySnapshot
-        return VStack(alignment: .leading, spacing: 7) {
-            Text("RUNNING")
-                .font(CanonType.archive(8, weight: .semibold))
-                .kerning(1.1)
-                .foregroundStyle(CanonColor.muted)
-            if rows.isEmpty {
-                Text("Nothing running.")
-                    .font(CanonType.interface(11))
-                    .foregroundStyle(CanonColor.muted)
-            } else {
-                ForEach(rows) { row in
-                    runningRow(row)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("RUNNING · QUEUED · NEEDS ATTENTION").font(CanonType.archive(8, weight: .semibold))
+            if workflows.activeJobs.isEmpty { Text("Nothing running.").font(CanonType.interface(11)) }
+            ForEach(workflows.activeJobs.prefix(12)) { job in
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(job.label).font(CanonType.interface(11, weight: .semibold))
+                    Text("\(job.projectName) · \(job.state.label)").font(CanonType.interface(10)).foregroundStyle(CanonColor.ink.opacity(0.6))
                 }
             }
+            Button("Open Logs") { onDismiss(); workflows.showingLogs = true }.buttonStyle(.plain).font(CanonType.interface(11))
         }
     }
 
@@ -154,27 +149,6 @@ struct ActivityPopover: View {
             RoundedRectangle(cornerRadius: 7)
                 .fill(CanonColor.paperInset.opacity(0.52))
         )
-    }
-
-    // MARK: - Pause
-
-    private var pauseSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle(isOn: Binding(
-                get: { library.isGenerationPaused },
-                set: { library.setGenerationPaused($0) }
-            )) {
-                Text("Pause all generation")
-                    .font(CanonType.interface(11.5, weight: .semibold))
-                    .foregroundStyle(CanonColor.ink)
-            }
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            Text("Paid work refuses to start while paused; an in-flight step finishes, then parks. Free local bakes continue.")
-                .font(CanonType.archive(9))
-                .foregroundStyle(CanonColor.muted)
-                .fixedSize(horizontal: false, vertical: true)
-        }
     }
 
     // MARK: - Recent

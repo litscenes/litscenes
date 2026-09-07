@@ -164,7 +164,7 @@ struct ScenesV2WorkbenchView: View {
         let poolInputs = scenesV2PoolInputs(
             displayedFrames: scenesV2PoolSourceFrames(primaryLens?.heroImages(mediaVersion: newestVersionId) ?? []),
             projectWideFrames: scenesV2PoolSourceFrames(Array(frameLookup.values)),
-            items: scenesV2SourceMaterialItems(library.items)
+            items: scenesV2SourceMaterialItems(library.browsableMediaItems)
         )
         let actions = boxActions(frameLookup: frameLookup, mediaLookup: mediaLookup)
         let sequenceCardsValue = sequenceCards(frameLookup: frameLookup)
@@ -479,7 +479,7 @@ struct ScenesV2WorkbenchView: View {
                         ScenesSequenceRowView(
                             cards: sequenceCards,
                             selectedSceneId: session.selectedSceneId,
-                            isExporting: library.isExportingForYouTube,
+                            isExporting: false,
                             exportStatus: library.youtubeExportStatus,
                             onOpen: { session.select($0) },
                             onRemove: { requestUnmark(shotId: $0) },
@@ -577,7 +577,7 @@ struct ScenesV2WorkbenchView: View {
     /// completed render.
     private var railIsVisible: Bool {
         scenesV2RailIsVisible(badges: library.shotTimeline.visibleShots.map {
-            sceneRenderBadgeLive(shot: $0, activeShotRenderId: library.activeShotRenderId)
+            sceneRenderBadgeLive(shot: $0, activeShotRenderId: library.activeShotRenderIds.contains($0.shotId) ? $0.shotId : "")
         })
     }
 
@@ -678,7 +678,7 @@ struct ScenesV2WorkbenchView: View {
                     suggestionCount: spotlightFrames.planned.count,
                     // Placeable Frames: renders plus every source photo (a photo is a Frame).
                     renderedCount: spotlightFrames.rendered.count
-                        + scenesV2SourceMaterialItems(library.items).filter { $0.kind == .image }.count
+                        + scenesV2SourceMaterialItems(library.browsableMediaItems).filter { $0.kind == .image }.count
                 )
             )
             .padding(12)
@@ -815,7 +815,7 @@ struct ScenesV2WorkbenchView: View {
         guard let lens = primaryLens, !planned.isEmpty else { return SuggestionData() }
         let roster = library.projectCharacters.characters
         let namesById = characterNamesById
-        let items = library.items
+        let items = library.browsableMediaItems
         let rosterByName = Dictionary(
             roster.map { ($0.name.trimmed.lowercased(), $0) },
             uniquingKeysWith: { first, _ in first }
@@ -909,7 +909,7 @@ struct ScenesV2WorkbenchView: View {
 
     /// The engine's hard refusals, in words, before any click.
     private var renderBlockReason: String {
-        if let reason = library.lensHeroTakeStartBlockReason { return reason }
+        if let reason = library.frameSubmissionBlockReason { return reason }
         guard let stack = library.defaultFrameStack() else { return "Add an API key in App Settings to render" }
         return library.renderStackCredentialBlocker(for: stack) ?? ""
     }
@@ -934,7 +934,7 @@ struct ScenesV2WorkbenchView: View {
             return .startScene
         }
         let shot = visible[index]
-        let locked = library.activeShotRenderId == shot.shotId
+        let locked = library.activeShotRenderIds.contains(shot.shotId)
             || shot.renderArtifact?.status == "generating"
             || (!shot.browsableRenderVersions.isEmpty && shotSuffixTailStartIndex(shot: shot) == nil)
         return scenesV2TileAction(stagedSceneName: sceneDisplayName(shot: shot, index: index), stagedSceneIsLocked: locked)
@@ -1249,7 +1249,7 @@ struct ScenesV2WorkbenchView: View {
             uniquingKeysWith: { first, _ in first }
         )
         let scenes = library.shotTimeline.visibleShots.enumerated().map { index, shot in
-            let progress = sceneRenderProgress(shot: shot, activeShotRenderId: library.activeShotRenderId)
+            let progress = sceneRenderProgress(shot: shot, activeShotRenderId: library.activeShotRenderIds.contains(shot.shotId) ? shot.shotId : "")
             return SceneIndexEntry(
                 projectId: currentId,
                 shotId: shot.shotId,
@@ -1260,7 +1260,7 @@ struct ScenesV2WorkbenchView: View {
                     frameStillPathById: stillPaths,
                     footageThumbnailPathByMediaId: footageThumbs
                 ),
-                badge: sceneRenderBadgeLive(shot: shot, activeShotRenderId: library.activeShotRenderId),
+                badge: sceneRenderBadgeLive(shot: shot, activeShotRenderId: library.activeShotRenderIds.contains(shot.shotId) ? shot.shotId : ""),
                 ledgerLine: sceneLedgerLine(shot: shot, frameLookup: frameLookup, mediaLookup: mediaLookup),
                 modelLabel: shot.renderStack.shortLabel.components(separatedBy: " · ").first ?? "",
                 hasNarration: shot.narrationArtifact?.isReady == true,

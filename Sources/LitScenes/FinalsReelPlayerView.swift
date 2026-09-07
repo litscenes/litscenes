@@ -491,11 +491,11 @@ struct FinalsReelPlayerView: View {
             }
             .buttonStyle(.plain)
             .help("Keyboard reference (?)")
-            Button(library.isExportingForYouTube ? "Exporting for YouTube…" : "Export for YouTube") {
+            Button("Export for YouTube") {
                 exportForYouTube()
             }
             .buttonStyle(PlateButtonStyle())
-            .disabled(isExporting || library.isExportingForYouTube || readyClips.isEmpty)
+            .disabled(isExporting || readyClips.isEmpty)
             .help(readyClips.count < finals.count
                 ? "Writes the reel exactly as the preview plays (\(finals.count - readyClips.count) picked cut\(finals.count - readyClips.count == 1 ? " is" : "s are") not in it) plus a YouTube title + description into ~/Downloads/LitScenes-Finals"
                 : "One click: the reel .mp4 plus a YouTube title + description .md land in ~/Downloads/LitScenes-Finals")
@@ -505,7 +505,7 @@ struct FinalsReelPlayerView: View {
                 exportReel()
             }
             .buttonStyle(PlateButtonStyle(isProminent: true))
-            .disabled(isExporting || library.isExportingForYouTube || readyClips.isEmpty)
+            .disabled(isExporting || readyClips.isEmpty)
             .help(readyClips.count < finals.count
                 ? "Exports exactly what the preview plays — \(finals.count - readyClips.count) picked cut\(finals.count - readyClips.count == 1 ? " is" : "s are") not in it (see the board)"
                 : "Export exactly what the preview plays — one 16:9 mp4, no re-encode of the cuts")

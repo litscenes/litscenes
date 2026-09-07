@@ -4,9 +4,12 @@ version = 1
 path = [
     "Package.swift",
     "Package.resolved",
+    "AGENTS.md",
     "README.md",
     "Sources/**",
     "Tests/**",
+    "docs/**",
+    "plans/**",
     "design/community/**",
     "scripts/**",
     "CONTRIBUTING.md",
@@ -17,8 +20,6 @@ path = [
     "NOTICE",
     "SECURITY.md",
     "TRADEMARKS.md",
-    "EXPORT-MANIFEST.sha256",
-    "UNRELEASED-PREVIEW",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Kevin Riggen"

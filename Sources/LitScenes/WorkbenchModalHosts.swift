@@ -15,6 +15,76 @@ struct ShotPlayerSheetHost: View {
     var onReopen: (ShotVideoRequest) -> Void
     /// Dismisses and focuses the narration strip on the shot's row.
     var onFocusNarration: (String) -> Void
+    @State private var sourceInspection: ShotClipInspectorRequest?
+    @State private var endingReview: ShotContinuationAvailability?
+    @State private var endingEntryId = ""
+    @State private var endingMessage = ""
+
+    @State private var isTailPickerOpen = false
+    @State private var frameCreatorLaunch: WorkbenchFrameCreatorLaunch?
+    @State private var pendingFrameCreatorLaunch: WorkbenchFrameCreatorLaunch?
+    @State private var pendingTailReview = false
+    @State private var reviewPreparationId: UUID?
+    @State private var promptDraftSaveFailed = false
+    @State private var directionDraftSaveFailed = false
+    @State private var styleImagePreview: StyleImagePreviewRequest?
+    @Environment(\.openSettings) private var openSettings
+    @State private var focusedEntryId = ""
+    @StateObject private var editorPictureUndo = ShotPictureUndoCoordinator()
+
+    private var tailActions: CutStripActions {
+        makeCutStripActions(library: library,
+            lensId: library.projectLenses.lenses.first?.lensId ?? "",
+            frameLookup: library.projectWideFrameLookup,
+            mediaLookup: Dictionary(library.items.map { ($0.mediaId, $0) }, uniquingKeysWith: { first, _ in first }),
+            surface: CutStripWorkbenchSurface(
+                onOpenPlayer: { next in
+                    if !next.focusedEntryId.isEmpty { focusedEntryId = next.focusedEntryId }
+                    if next.openEndingReview { reviewEnding(next.focusedEntryId) }
+                },
+                onLaunchFrameCreator: { pendingFrameCreatorLaunch = $0; isTailPickerOpen = false },
+                pictureUndo: editorPictureUndo))
+    }
+
+    private var tailInputs: [StageInput] {
+        scenesV2PoolInputs(displayedFrames: [],
+            projectWideFrames: scenesV2PoolSourceFrames(Array(library.projectWideFrameLookup.values)),
+            items: scenesV2SourceMaterialItems(library.browsableMediaItems))
+    }
+
+    private func savePromptDrafts(_ overrides: [ShotSegmentPromptOverride]) -> Bool {
+        let saved = library.setShotSegmentPromptOverrides(shotId: request.shotId, overrides: overrides)
+        promptDraftSaveFailed = !saved
+        if !saved { endingMessage = "The prompt draft could not be saved. Retry from its segment card before rendering." }
+        return saved
+    }
+
+    private var draftsSaved: Bool { !promptDraftSaveFailed && !directionDraftSaveFailed }
+
+    private func reviewTail() { prepareSegmentReview(entryId: nil) }
+
+    private func reviewEnding(_ entryId: String) { prepareSegmentReview(entryId: entryId) }
+
+    private func prepareSegmentReview(entryId: String?) {
+        guard draftsSaved else {
+            endingMessage = "The latest segment drafts could not be saved. Retry from the segment card before rendering."
+            return
+        }
+        let preparationId = UUID()
+        reviewPreparationId = preparationId
+        Task {
+            let review: ShotContinuationAvailability
+            if let entryId {
+                review = await library.prepareShotContinuationRetakeAvailability(shotId: request.shotId, entryId: entryId)
+            } else {
+                review = await library.prepareShotContinuationAvailability(shotId: request.shotId)
+            }
+            guard reviewPreparationId == preparationId else { return }
+            reviewPreparationId = nil
+            if review.canContinue { endingEntryId = entryId ?? ""; endingReview = review }
+            else { endingMessage = review.lockReason?.message ?? "The segment inputs are not available" }
+        }
+    }
 
     @ViewBuilder
     var body: some View {
@@ -26,17 +96,58 @@ struct ShotPlayerSheetHost: View {
                 planSegments: plan?.segments ?? [],
                 skipped: plan?.skipped ?? [],
                 skippedPlaceholders: plan?.skippedPlaceholders ?? [],
-                isRenderBlocked: !library.activeShotRenderId.isEmpty
-                    || !library.activeShotJoinRenderId.isEmpty
-                    || !library.activeShotRestyleId.isEmpty,
+                isRenderBlocked: library.cutHasInFlightVideoOperation(cutId: request.shotId),
                 configuredRenderModels: Set(
                     ShotRenderModel.allCases.filter(library.canExecuteShotRenderModel)
                 ),
                 falPricing: library.falPricing,
                 isFetchingVideoPricing: library.isFetchingFALPricing,
                 openPanelInitially: request.openRerenderPanel,
-                onActivateVersion: { versionId in
-                    library.activateShotRenderVersion(shotId: request.shotId, versionId: versionId)
+                initialFocusedEntryId: focusedEntryId.isEmpty ? request.focusedEntryId : focusedEntryId,
+                autoplayOnOpen: request.autoplay,
+                openProvenanceOnOpen: request.openProvenance,
+                onInspectSource: { entryId in
+                    sourceInspection = ShotClipInspectorRequest(shotId: request.shotId, entryId: entryId)
+                },
+                onReviewEnding: { entryId in reviewEnding(entryId) },
+                onExtend: { isTailPickerOpen = true },
+                onNewVersion: {
+                    guard draftsSaved else {
+                        endingMessage = "Save the current segment drafts before creating a New Version."
+                        return
+                    }
+                    let copyId = library.duplicateCut(cutId: request.shotId)
+                    if !copyId.isEmpty {
+                        focusedEntryId = ""
+                        promptDraftSaveFailed = false
+                        directionDraftSaveFailed = false
+                        reviewPreparationId = nil
+                        onReopen(ShotVideoRequest(shotId: copyId, intent: .edit))
+                    }
+                },
+                onRebuild: { overrides in
+                    guard savePromptDrafts(overrides), draftsSaved else { return }
+                    Task { _ = await library.rebuildShotGeneratedChain(shotId: request.shotId) }
+                },
+                rebuildEstimate: library.shotContinuationRechainEstimate(shotId: request.shotId, rebuildAll: true),
+                continuationEntryEstimate: { entryIds in
+                    library.shotContinuationEstimate(shotId: request.shotId, entryIds: entryIds)
+                },
+                continuationBranchImpact: { entryId, takeId in
+                    library.shotContinuationBranchImpact(
+                        shotId: request.shotId,
+                        entryId: entryId,
+                        takeId: takeId
+                    )
+                },
+                onUseContinuationTake: { impact in
+                    library.useShotContinuationTake(shotId: request.shotId, impact: impact)
+                },
+                onRepairContinuationTake: { entryId, takeId in
+                    await library.repairShotContinuationTake(shotId: request.shotId, entryId: entryId, takeId: takeId)
+                },
+                onRechainContinuations: {
+                    await library.rechainShotContinuations(shotId: request.shotId)
                 },
                 onSetDefaultRenderStack: { stack in
                     library.setShotRenderStack(shotId: request.shotId, stack: stack)
@@ -53,25 +164,34 @@ struct ShotPlayerSheetHost: View {
                 },
                 onRender: { overrides in
                     let shotId = request.shotId
-                    library.setShotSegmentPromptOverrides(shotId: shotId, overrides: overrides)
-                    onDismiss()
-                    Task {
-                        await library.renderShot(shotId: shotId)
+                    guard savePromptDrafts(overrides), draftsSaved else { return }
+                    if let shot = library.shotTimeline.shots.first(where: { $0.shotId == shotId }),
+                       let entryId = shotPendingEndingForRender(shot: shot, segments: library.shotRenderPromptPlan(shotId: shotId)?.segments ?? [], keys: nil) {
+                        reviewEnding(entryId)
+                        return
                     }
+                    Task { await library.renderShot(shotId: shotId) }
                 },
                 onRenderSegment: { overrides, segmentKey in
                     let shotId = request.shotId
-                    library.setShotSegmentPromptOverrides(shotId: shotId, overrides: overrides)
-                    onDismiss()
-                    Task {
-                        await library.renderShot(shotId: shotId, onlySegmentKeys: [segmentKey])
+                    guard savePromptDrafts(overrides), draftsSaved else { return }
+                    let livePlan = library.shotRenderPromptPlan(shotId: shotId)?.segments ?? []
+                    if let shot = library.shotTimeline.shots.first(where: { $0.shotId == shotId }),
+                       let item = livePlan.compactMap({ segment -> ShotSegmentPromptPlanItem? in
+                           if case .generated(let item) = segment { return item }; return nil
+                       }).first(where: { $0.pair.placementKey == segmentKey }),
+                       shot.continuationRecord(entryId: item.pair.endPlacementEntryId) != nil
+                        || shotPendingEndingEntryIds(shot).contains(item.pair.endPlacementEntryId) {
+                        reviewEnding(item.pair.endPlacementEntryId)
+                        return
                     }
+                    Task { await library.renderShot(shotId: shotId, onlySegmentKeys: [segmentKey]) }
                 },
-                onAutosaveOverrides: { overrides in
-                    library.setShotSegmentPromptOverrides(shotId: request.shotId, overrides: overrides)
-                },
+                onAutosaveOverrides: { overrides in _ = savePromptDrafts(overrides) },
                 onSaveDirectionPlans: { plans in
-                    library.setShotSegmentDirectionPlans(shotId: request.shotId, plans: plans)
+                    let saved = library.setShotSegmentDirectionPlans(shotId: request.shotId, plans: plans)
+                    directionDraftSaveFailed = !saved
+                    if !saved { endingMessage = "The Beats draft could not be saved. Retry from its segment card before rendering." }
                 },
                 draftingDirectionKeys: library.draftingDirectionSegmentKeys,
                 directionDraftErrors: library.directionDraftErrors,
@@ -115,7 +235,7 @@ struct ShotPlayerSheetHost: View {
                     .first(where: { $0.provider == .fal })?.isConfigured == true,
                 hasDecartCredential: library.videoProviderCredentialStatuses
                     .first(where: { $0.provider == .decart })?.isConfigured == true,
-                activeShotJoinRenderId: library.activeShotJoinRenderId,
+                activeShotJoinRenderId: library.activeJoinId(for: request.shotId),
                 onSetJoinRepair: { cutId, repair in
                     library.setShotRazorJoinRepair(
                         shotId: request.shotId,
@@ -347,7 +467,7 @@ struct ShotPlayerSheetHost: View {
                     }
                 ),
                 restylePromptSeed: library.shotLookPromptSeed(),
-                activeShotRestyleId: library.activeShotRestyleId,
+                activeShotRestyleId: library.activeLookVersionId(for: request.shotId),
                 onActivateLook: { versionId in
                     library.activateShotLookVersion(shotId: request.shotId, versionId: versionId)
                 },
@@ -441,7 +561,63 @@ struct ShotPlayerSheetHost: View {
                     onDismiss()
                 }
             )
+            .id(request.shotId)
+            .sheet(item: $sourceInspection) { source in
+                if library.shotTimeline.shots.first(where: { $0.shotId == source.shotId })?.entries.first(where: { $0.entryId == source.entryId })?.isClip == true {
+                    ShotClipInspectorView(library: library, shotId: source.shotId, entryId: source.entryId,
+                        onClose: { sourceInspection = nil })
+                } else {
+                    ShotSourceFrameInspection(library: library, shotId: source.shotId, entryId: source.entryId,
+                        onClose: { sourceInspection = nil })
+                }
+            }
+            .sheet(isPresented: $isTailPickerOpen, onDismiss: {
+                if let launch = pendingFrameCreatorLaunch {
+                    pendingFrameCreatorLaunch = nil
+                    frameCreatorLaunch = launch
+                } else if pendingTailReview {
+                    pendingTailReview = false
+                    reviewTail()
+                }
+            }) {
+                ShotTailPickerMenu(cut: library.shotTimeline.shots[index], poolInputs: tailInputs,
+                    actions: tailActions,
+                    onAI: { pendingTailReview = true; isTailPickerOpen = false },
+                    onClose: { isTailPickerOpen = false })
+            }
+            .sheet(item: $frameCreatorLaunch) { launch in
+                if let lens = library.projectLenses.lenses.first(where: { $0.lensId == launch.lensId }) {
+                    FrameCreatorModalHost(library: library, lens: lens, launch: launch,
+                        onDismiss: { frameCreatorLaunch = nil },
+                        onPreviewStyle: { styleImagePreview = $0 },
+                        onOpenAppSettings: { openSettings() })
+                        .sheet(item: $styleImagePreview) { request in StyleImagePreviewModal(request: request) }
+                }
+            }
+            .onChange(of: library.shotTimeline.shots[index].entries.map(\.entryId)) { old, new in
+                if let appended = new.last, !old.contains(appended) { focusedEntryId = appended }
+            }
+            .sheet(isPresented: Binding(get: { endingReview != nil }, set: { if !$0 { endingReview = nil } })) {
+                if let review = endingReview {
+                    ShotContinuationReviewView(availability: review,
+                        configuredModels: Set(ShotRenderModel.allCases.filter(library.canExecuteShotRenderModel)),
+                        pricing: library.falPricing, title: review.targetFrame == nil ? (endingEntryId.isEmpty ? "Extend Scene" : "New Continuation Take") : "Render Ending",
+                        onCancel: { endingReview = nil }, onRender: { recipe in
+                            let entryId = endingEntryId
+                            endingReview = nil
+                            Task {
+                                if entryId.isEmpty { _ = await library.startShotContinuation(shotId: request.shotId, request: recipe) }
+                                else { _ = await library.startShotContinuationRetake(shotId: request.shotId, entryId: entryId, request: recipe) }
+                            }
+                        })
+                }
+            }
+            .onDisappear { reviewPreparationId = nil }
+            .alert("Segment Review", isPresented: Binding(get: { !endingMessage.isEmpty }, set: { if !$0 { endingMessage = "" } })) {
+                Button("OK") { endingMessage = "" }
+            } message: { Text(endingMessage) }
             .onAppear {
+                if request.openEndingReview { reviewEnding(request.focusedEntryId) }
                 // The re-render panel shows spend estimates; refresh the
                 // day-cached FAL rates whenever the player opens (mirrors
                 // the render-plan strip's onRenderPlanOpened trigger).
@@ -532,8 +708,8 @@ struct FrameCreatorModalHost: View {
             hasCivitaiCredential: credentialConfigured(.civitai),
             hasFALCredential: credentialConfigured(.fal),
             hasStabilityCredential: credentialConfigured(.stability),
-            isRenderBlocked: library.lensHeroTakeStartBlockReason != nil,
-            renderBlockerHelp: library.lensHeroTakeStartBlockReason,
+            isRenderBlocked: library.frameSubmissionBlockReason != nil,
+            renderBlockerHelp: library.frameSubmissionBlockReason,
             takeLaneFreeSlots: library.lensHeroTakeLaneFreeSlots,
             formGenerations: library.frameForms.generations.map(\.options).filter { !$0.isEmpty },
             isAnalyzingMoods: library.isAnalyzingMedia,
@@ -555,12 +731,20 @@ struct FrameCreatorModalHost: View {
                 )
             },
             onSubmit: { requests in
-                onDismiss()
-                onSubmitted()
+                var acceptedCount = 0
                 // One Task per request: each start AWAITS its render, so the
                 // batch must fan out for the take lane to hold them at once.
                 for (index, request) in requests.enumerated() {
                     Task {
+                        await WorkflowCoordinator.shared.run(project: library.currentProject, workflow: "frame_render",
+                            artifactType: "scene_plan", artifactId: launch.lensId, lane: .image,
+                            recipeJSON: workflowRecipe(request), failure: (), onAccepted: {
+                                acceptedCount += 1
+                                if acceptedCount == requests.count {
+                                    onDismiss()
+                                    onSubmitted()
+                                }
+                            }) {
                         switch launch.context {
                         case .blankFrame(let category):
                             _ = await library.startLensHeroNewTakeRender(
@@ -631,12 +815,13 @@ struct FrameCreatorModalHost: View {
                             )
                         }
                         onAfterMutation()
+                        }
                     }
                 }
             },
             onCancel: onDismiss,
             mentionEntries: library.frameCreatorMentionEntries(for: lens),
-            mentionReferenceItems: library.items.filter { $0.kind == .image },
+            mentionReferenceItems: library.browsableMediaItems.filter { $0.kind == .image },
             onEnsureMentionSheet: { entry in
                 switch entry.kind {
                 case .character:
@@ -647,11 +832,11 @@ struct FrameCreatorModalHost: View {
                     return await library.buildPlaceCompositeSheet(placeId: entry.id)
                 }
             },
-            referenceLibraryItems: library.items.filter { $0.kind == .image },
+            referenceLibraryItems: library.browsableMediaItems.filter { $0.kind == .image },
             initialReferenceItems: launch.referenceMediaIds.compactMap { mediaId in
                 library.items.first { $0.mediaId == mediaId && $0.kind == .image }
             },
-            generatedFrameCandidates: generatedFrameReferenceCandidates(lenses: library.projectLenses.lenses, items: library.items),
+            generatedFrameCandidates: generatedFrameReferenceCandidates(lenses: library.projectLenses.lenses, items: library.browsableMediaItems),
             onAdoptGeneratedFrame: { hero in
                 await library.archiveHeroFrameAsReference(hero)
             },
@@ -710,7 +895,7 @@ struct HeroPreviewModalHost: View {
                 currentBrowseId: currentBrowseId(),
                 onOpenBrowseItem: { item in openBrowseItem(item) },
                 zoomScale: $zoom,
-                reframeSubmissionBlockReason: library.lensHeroReframeBlockReason,
+                reframeSubmissionBlockReason: library.frameSubmissionBlockReason ?? "",
                 isNarrating: library.isGeneratingLensNarration,
                 hasOpenAICredential: credentialConfigured(.openAI),
                 hasFALCredential: credentialConfigured(.fal),

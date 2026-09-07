@@ -184,8 +184,10 @@ struct FALVideoClient: @unchecked Sendable {
             upload.httpMethod = "PUT"
             upload.timeoutInterval = 1_800
             upload.setValue("video/mp4", forHTTPHeaderField: "Content-Type")
-            let (_, response) = try await URLSession.shared.upload(for: upload, fromFile: request.sourceURL)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let transfer = try await TracedHTTPTransport.upload(request: upload, fromFile: request.sourceURL,
+                metadata: InferenceTraceRequestMetadata(provider: "fal", apiFamily: "media_transfer", operation: "source_upload",
+                    projectId: request.projectId, runId: request.artifactId, captureRequestBody: false, captureResponseBody: false))
+            guard let http = transfer.response, (200..<300).contains(http.statusCode) else {
                 throw ScreenGraphError.capture("FAL private source upload failed.")
             }
         }
@@ -201,26 +203,16 @@ struct FALVideoClient: @unchecked Sendable {
         while let chunk = try handle.read(upToCount: chunkSize), !chunk.isEmpty {
             try Task.checkCancellation()
             let partURL = falMultipartURL(base: uploadURL, suffix: String(partNumber))
-            var lastError: Error?
-            var partObject: [String: Any]?
-            for _ in 0..<3 {
-                do {
-                    var partRequest = URLRequest(url: partURL)
-                    partRequest.httpMethod = "PUT"
-                    partRequest.timeoutInterval = 600
-                    let (data, response) = try await URLSession.shared.upload(for: partRequest, from: chunk)
-                    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-                          let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                        throw ScreenGraphError.capture("FAL multipart part \(partNumber) failed.")
-                    }
-                    partObject = object
-                    break
-                } catch {
-                    lastError = error
-                }
-            }
-            guard let partObject else {
-                throw lastError ?? ScreenGraphError.capture("FAL multipart part \(partNumber) exhausted retries.")
+            var partRequest = URLRequest(url: partURL)
+            partRequest.httpMethod = "PUT"
+            partRequest.timeoutInterval = 600
+            partRequest.httpBody = chunk
+            let transfer = try await TracedHTTPTransport.send(request: partRequest,
+                metadata: InferenceTraceRequestMetadata(provider: "fal", apiFamily: "media_transfer", operation: "source_upload_part",
+                    requestTextJSON: inferenceTraceJSONString(["part_number": partNumber, "bytes": chunk.count]), captureRequestBody: false))
+            guard let http = transfer.response, (200..<300).contains(http.statusCode),
+                  let partObject = try JSONSerialization.jsonObject(with: transfer.data) as? [String: Any] else {
+                throw ScreenGraphError.capture("FAL multipart part \(partNumber) failed.")
             }
             let returnedPart = (partObject["partNumber"] as? NSNumber)?.intValue
                 ?? (partObject["part_number"] as? NSNumber)?.intValue
@@ -238,8 +230,9 @@ struct FALVideoClient: @unchecked Sendable {
         complete.timeoutInterval = 600
         complete.setValue("application/json", forHTTPHeaderField: "Content-Type")
         complete.httpBody = try JSONSerialization.data(withJSONObject: ["parts": parts], options: [.sortedKeys])
-        let (_, response) = try await URLSession.shared.data(for: complete)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        let transfer = try await TracedHTTPTransport.send(request: complete,
+            metadata: InferenceTraceRequestMetadata(provider: "fal", apiFamily: "media_transfer", operation: "source_upload_complete"))
+        guard let http = transfer.response, (200..<300).contains(http.statusCode) else {
             throw ScreenGraphError.capture("FAL multipart upload could not be completed.")
         }
     }
@@ -368,8 +361,12 @@ struct FALVideoClient: @unchecked Sendable {
     func downloadRestyleOutput(_ request: FALRestyleRequest, remoteURL: URL) async throws {
         var downloadRequest = URLRequest(url: remoteURL)
         downloadRequest.timeoutInterval = 1_800
-        let (temporaryURL, response) = try await URLSession.shared.download(for: downloadRequest)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        let transfer = try await TracedHTTPTransport.download(request: downloadRequest,
+            metadata: InferenceTraceRequestMetadata(provider: "fal", apiFamily: "media_transfer", operation: "restyle_output_download",
+                projectId: request.projectId, runId: request.artifactId, captureResponseBody: false))
+        let temporaryURL = transfer.temporaryURL
+        let response = transfer.response
+        guard let http = response, (200..<300).contains(http.statusCode) else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let statusText = status > 0 ? "HTTP \(status)" : "an invalid response"
             let recovery = [403, 404, 410].contains(status)
@@ -1617,8 +1614,11 @@ struct FALVideoClient: @unchecked Sendable {
             throw ScreenGraphError.capture("FAL join bridge \(requestId) returned no downloadable video.")
         }
         try ensureDirectory(request.outputURL.deletingLastPathComponent())
-        let (temporaryURL, urlResponse) = try await URLSession.shared.download(from: videoURL)
-        guard let http = urlResponse as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        let transfer = try await TracedHTTPTransport.download(request: URLRequest(url: videoURL),
+            metadata: InferenceTraceRequestMetadata(provider: "fal", apiFamily: "media_transfer", operation: "join_output_download",
+                projectId: request.projectId, artifactType: "shot", artifactId: request.shotId, captureResponseBody: false))
+        let temporaryURL = transfer.temporaryURL
+        guard let http = transfer.response, (200..<300).contains(http.statusCode) else {
             throw ScreenGraphError.capture("FAL join-bridge download failed.")
         }
         if FileManager.default.fileExists(atPath: request.outputURL.path) {

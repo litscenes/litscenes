@@ -36,11 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: No dated comments in shipped source
-        run: |
-          if grep -rnE '(^|[^:])//.*20(25|26)-[0-9]{2}-[0-9]{2}' Sources Tests --include='*.swift'; then
-            echo 'Dated engineering comment found in shipped source.' >&2
-            exit 1
-          fi
+      - name: Source hygiene
+        run: scripts/check_source_hygiene.sh
       - name: REUSE compliance
         uses: fsfe/reuse-action@v4

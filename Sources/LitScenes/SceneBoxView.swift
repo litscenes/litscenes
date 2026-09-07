@@ -52,14 +52,14 @@ struct SceneBoxView: View {
 
     private var isLocked: Bool {
         guard let shot else { return false }
-        return actions.activeShotRenderId == shot.shotId
+        return actions.activeShotRenderIds.contains(shot.shotId)
             || shot.renderArtifact?.status == "generating"
             || !shot.browsableRenderVersions.isEmpty
     }
 
     private var isActivelyRendering: Bool {
         guard let shot else { return false }
-        return actions.activeShotRenderId == shot.shotId
+        return actions.activeShotRenderIds.contains(shot.shotId)
             || shot.renderArtifact?.status == "generating"
     }
 

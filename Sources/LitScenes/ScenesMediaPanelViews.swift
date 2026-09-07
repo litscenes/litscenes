@@ -24,10 +24,10 @@ struct ScenesMediaPanel: View {
     var body: some View {
         let layout = library.videoTrayLayoutForDisplay
         let inventory = scenesMediaInventory(
-            items: library.items,
+            items: library.browsableMediaItems,
             isRejected: { library.curation(for: $0).rejected }
         )
-        let creations = creationsInventory(items: library.items, lenses: library.projectLenses.lenses)
+        let creations = creationsInventory(items: library.browsableMediaItems, lenses: library.projectLenses.lenses)
         let roleIndex = library.mediaRoleIndex
         let isEmpty = layout.visibleGroups.isEmpty && layout.hiddenItems.isEmpty
             && inventory.storyInputs.isEmpty && inventory.hiddenImages.isEmpty

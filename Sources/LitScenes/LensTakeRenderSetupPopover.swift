@@ -116,7 +116,7 @@ struct LensTakeRenderSetupPopover: View {
                     .background(RoundedRectangle(cornerRadius: 7).fill(CanonColor.brass))
                 }
                 .buttonStyle(.plain)
-                .disabled(onAnimate == nil || isAnimatingLensArtifact || image.motionArtifact?.normalized().status == "generating")
+                .disabled(onAnimate == nil || image.motionArtifact?.normalized().status == "generating")
             } else {
                 VStack(alignment: .leading, spacing: 7) {
                     Text("LENS STACK")

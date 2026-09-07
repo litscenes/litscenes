@@ -164,64 +164,70 @@ enum MediaExportGuard {
         let content = await contentSeconds(for: session)
         let deadline = deadlineSeconds(forContentSeconds: content)
         let carried = CarriedExportSession(session: session)
-        let timedOut = TimeoutFlag()
-        do {
-            try await withThrowingTaskGroup(of: Void.self) { group in
-                group.addTask {
-                    try await carried.session.export(to: outputURL, as: fileType)
+        let metadata = InferenceTraceRequestMetadata(provider: "local", apiFamily: "local_workflow", operation: operation.isEmpty ? "media_export" : operation,
+            artifactType: "export", artifactId: sha256Hex(Data(outputURL.path.utf8)))
+        return try await WorkflowHTTP.owned(metadata: metadata) {
+            try await WorkflowRequestGate.perform(metadata: metadata) {
+                let timedOut = TimeoutFlag()
+                do {
+                    try await withThrowingTaskGroup(of: Void.self) { group in
+                        group.addTask {
+                            try await carried.session.export(to: outputURL, as: fileType)
+                        }
+                        group.addTask {
+                            try await Task.sleep(for: .seconds(deadline))
+                            // Mark BEFORE cancelling: if the export child's
+                            // cancellation error races us to the group, the catch
+                            // must still classify this as a stall, never as an
+                            // operator cancel.
+                            timedOut.set()
+                            // Release the encoder rather than leaving the stalled
+                            // session holding it behind us.
+                            carried.session.cancelExport()
+                            throw MediaExportFailure(
+                                message: stallMessage(
+                                    deadlineSeconds: deadline,
+                                    fileType: fileType,
+                                    operation: operation,
+                                    contentSeconds: content
+                                ),
+                                underlying: nil
+                            )
+                        }
+                        // First finisher wins; the loser is cancelled on scope exit
+                        // and its error discarded by the group.
+                        defer { group.cancelAll() }
+                        try await group.next()
+                    }
+                } catch {
+                    // A truncated export is worse than no export: it reads as corrupt
+                    // media long after the encoder recovers.
+                    try? FileManager.default.removeItem(at: outputURL)
+                    if timedOut.isSet, isCancellation(error) {
+                        throw MediaExportFailure(
+                            message: stallMessage(
+                                deadlineSeconds: deadline,
+                                fileType: fileType,
+                                operation: operation,
+                                contentSeconds: content
+                            ),
+                            underlying: error
+                        )
+                    }
+                    if isCancellation(error) {
+                        // Caller gave up (task cancellation): the sleep dies before
+                        // the watchdog body runs, so nothing else tells the session
+                        // to stop — a wedged encoder must be released here too.
+                        carried.session.cancelExport()
+                        throw error
+                    }
+                    if isEncoderContentionFailure(error) {
+                        guard fileType != .m4a else { throw error }
+                        throw MediaExportFailure(message: encoderContentionMessage, underlying: error)
+                    }
+                    throw error
                 }
-                group.addTask {
-                    try await Task.sleep(for: .seconds(deadline))
-                    // Mark BEFORE cancelling: if the export child's
-                    // cancellation error races us to the group, the catch
-                    // must still classify this as a stall, never as an
-                    // operator cancel.
-                    timedOut.set()
-                    // Release the encoder rather than leaving the stalled
-                    // session holding it behind us.
-                    carried.session.cancelExport()
-                    throw MediaExportFailure(
-                        message: stallMessage(
-                            deadlineSeconds: deadline,
-                            fileType: fileType,
-                            operation: operation,
-                            contentSeconds: content
-                        ),
-                        underlying: nil
-                    )
-                }
-                // First finisher wins; the loser is cancelled on scope exit
-                // and its error discarded by the group.
-                defer { group.cancelAll() }
-                try await group.next()
             }
-        } catch {
-            // A truncated export is worse than no export: it reads as corrupt
-            // media long after the encoder recovers.
-            try? FileManager.default.removeItem(at: outputURL)
-            if timedOut.isSet, isCancellation(error) {
-                throw MediaExportFailure(
-                    message: stallMessage(
-                        deadlineSeconds: deadline,
-                        fileType: fileType,
-                        operation: operation,
-                        contentSeconds: content
-                    ),
-                    underlying: error
-                )
-            }
-            if isCancellation(error) {
-                // Caller gave up (task cancellation): the sleep dies before
-                // the watchdog body runs, so nothing else tells the session
-                // to stop — a wedged encoder must be released here too.
-                carried.session.cancelExport()
-                throw error
-            }
-            if isEncoderContentionFailure(error) {
-                guard fileType != .m4a else { throw error }
-                throw MediaExportFailure(message: encoderContentionMessage, underlying: error)
-            }
-            throw error
         }
     }
 

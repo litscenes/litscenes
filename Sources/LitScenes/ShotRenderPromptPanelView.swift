@@ -24,7 +24,7 @@ struct ShotRenderPromptPanel: View {
     /// segments' saved clips; passes all edited drafts like a full render.
     var onRenderSegment: ([ShotSegmentPromptOverride], String) -> Void
     /// Play a segment's saved clip in the player.
-    var onPreviewSegment: (ShotRenderSegmentClip) -> Void
+    var onPreviewSegment: (ShotSegmentPreview) -> Void
     var onSetDefaultRenderStack: (ShotRenderStack) -> Void
     var onSetSegmentRenderStack: (ShotRenderPair, ShotRenderStack?) -> Void
     /// Seam toggle on a footage row: (right entry's id, new style).
@@ -55,6 +55,23 @@ struct ShotRenderPromptPanel: View {
     var onDraftDirectionPlan: (String) -> Void = { _ in }
     var onDraftAllDirectionPlans: () -> Void = {}
 
+    var focusedSegmentKey: String = ""
+    var onFocusSegment: (String) -> Void = { _ in }
+    var onCopyVideo: (ShotSegmentPreview) -> Void = { _ in }
+    var onOpenTakes: (String) -> Void = { _ in }
+    var onInspectInput: () -> Void = {}
+    var onExtend: (() -> Void)? = nil
+    var onNewVersion: (() -> Void)? = nil
+    var onRebuild: (([ShotSegmentPromptOverride]) -> Void)? = nil
+    var rebuildEstimate = ShotRenderCostEstimate()
+    var outputSeconds: Double = 0
+    var historyVersion: ShotRenderArtifact? = nil
+    var onEditCurrent: () -> Void = {}
+    var savedFallback: ShotRenderPlanSegment? = nil
+    @State private var expandedInputs: Set<String> = []
+    @State private var inspectedFrame: ProjectLensHeroImage?
+    @State private var showRebuildReview = false
+
     @State private var drafts: [String: String] = [:]
     @State private var planDrafts: [String: ShotTemporalDirectionPlan] = [:]
     @State private var modeDrafts: [String: ShotSegmentPromptMode] = [:]
@@ -82,6 +99,9 @@ struct ShotRenderPromptPanel: View {
         let footageSeconds = planSegments.reduce(0.0) { total, segment in
             if case .footage(let footageSegment) = segment {
                 return total + footageSegment.clip.resolvedDurationSeconds
+            }
+            if case .preserved(let preserved) = segment {
+                return total + preserved.clip.durationSeconds
             }
             return total
         }
@@ -129,6 +149,7 @@ struct ShotRenderPromptPanel: View {
             switch segment {
             case .generated(let item): displayIndex = item.displayIndex
             case .footage(let footageSegment): displayIndex = footageSegment.displayIndex
+            case .preserved(let preserved): displayIndex = preserved.displayIndex
             // Never in planSegments (assembly-only fallback band).
             case .artifactFallback: displayIndex = 0
             }
@@ -143,24 +164,33 @@ struct ShotRenderPromptPanel: View {
     var body: some View {
         // The header (with the shot-level Model menu) renders ALWAYS — the
         // narration-driven state must never remove its own escape hatch.
-        // Only the segment cards + footer swap for the whole-shot notice.
+        // Saved results remain visible when narration becomes the next recipe.
         VStack(spacing: 0) {
             panelHeader
             Rectangle().fill(PlateColor.hairline).frame(height: 1)
-            if shot.renderStack.isNarrationDriven {
-                narrationDrivenNotice
+            if let version = historyVersion {
+                historyContents(version)
             } else {
                 segmentList
                 Rectangle().fill(PlateColor.hairline).frame(height: 1)
                 footer
             }
         }
+        .background(PlateColor.cream)
+        .sheet(item: $inspectedFrame) { frame in
+            VStack(alignment: .leading, spacing: 12) {
+                HStack { Text(frame.label).font(.headline); Spacer(); Button("Close") { inspectedFrame = nil } }
+                if let image = NSImage(contentsOfFile: frame.imagePath) {
+                    Image(nsImage: image).resizable().scaledToFit()
+                } else { Text("Input image unavailable") }
+                Text(frame.prompt).font(.caption).lineLimit(5)
+            }.padding(20).frame(width: 760, height: 560).background(PlateColor.cream)
+        }
         .onChange(of: planItems.map(\.id)) { _, _ in
             armedRenderKey = nil
         }
         // Crash-safe drafts, same law as the inline plan strip: debounced,
-        // upsert-only, flushed when the panel closes. Inert while the
-        // narration notice shows (no editors, drafts never change).
+        // upsert-only, flushed when the panel closes or opens a review.
         .onChange(of: drafts) { scheduleAutosave() }
         .onChange(of: planDrafts) { scheduleAutosave() }
         .onChange(of: modeDrafts) { scheduleAutosave() }
@@ -213,32 +243,62 @@ struct ShotRenderPromptPanel: View {
     }
 
     private var panelHeader: some View {
-        HStack(alignment: .center, spacing: 10) {
-            PlateLabel(text: "Segment Prompts", size: 9.5, weight: .semibold)
-            Rectangle().fill(PlateColor.hairline).frame(height: 1)
-            if !shot.renderStack.isNarrationDriven, planItems.count > 1 {
-                Button("Draft all beats (\(planItems.count))") {
-                    onDraftAllDirectionPlans()
-                }
-                .buttonStyle(PlateButtonStyle())
-                .disabled(!draftingDirectionKeys.isEmpty)
-                .help("Have the LLM draft beats for every segment, one at a time — fresh drafts are skipped; nothing renders")
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                PlateLabel(text: historyVersion == nil ? "Current Shot · Segments" : "Historical Shot", size: 10, weight: .semibold)
+                Spacer(minLength: 0)
             }
-            defaultRenderControls
+            if historyVersion == nil {
+                Text("Defaults for new material").font(.caption).foregroundStyle(PlateColor.inkFaint)
+                defaultRenderControls
+                if !shot.renderStack.isNarrationDriven, planItems.count > 1 {
+                    Button("Draft all beats (\(planItems.count))", action: onDraftAllDirectionPlans)
+                        .buttonStyle(PlateButtonStyle()).fixedSize()
+                        .disabled(!draftingDirectionKeys.isEmpty)
+                }
+            }
+        }.padding(14)
+    }
+
+    private func historyContents(_ version: ShotRenderArtifact) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Version \(version.versionNumber) · read-only saved video").font(.headline)
+                Button("Edit Current Shot", action: onEditCurrent).buttonStyle(PlateButtonStyle())
+                ForEach(Array(version.segmentClips.enumerated()), id: \.offset) { index, clip in
+                    HStack(spacing: 10) {
+                        ShotSegmentVideoThumbnail(preview: ShotSegmentPreview(clip: clip))
+                        VStack(alignment: .leading) {
+                            Text("Segment \(index + 1) · " + shotClipModelShortLabel(provider: clip.provider, model: clip.model))
+                            Text(clip.prompt).lineLimit(5)
+                        }.font(.caption)
+                    }
+                }
+                if version.segmentClips.isEmpty { Text("This render is retained as one whole-Shot video.").font(.caption) }
+            }.padding(14)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+    }
+
+    private var unplannedSavedRecords: [ShotContinuationRecord] {
+        let represented = Set(planItems.map { $0.pair.endPlacementEntryId })
+        return shot.entries.filter { !$0.isSkipped && !represented.contains($0.entryId) }
+            .compactMap { shot.continuationRecord(entryId: $0.entryId) }
+            .filter { $0.selectedTake != nil }
     }
 
     private var segmentList: some View {
+        ScrollViewReader { proxy in
         ScrollView(.vertical, showsIndicators: true) {
             VStack(alignment: .leading, spacing: 16) {
+                if let savedFallback { resultRow(savedFallback, ordinal: "Current saved output") }
                 ForEach(panelRows) { row in
                     switch row {
                     case .segment(.generated(let item)):
-                        segmentRow(item)
+                        segmentRow(item).id(item.pair.placementKey)
                     case .segment(.footage(let footageSegment)):
-                        footageRow(footageSegment)
+                        footageRow(footageSegment).id(footageSegment.placementKey)
+                    case .segment(.preserved(let preserved)):
+                        preservedRow(preserved).id(preserved.placementKey)
                     case .segment(.artifactFallback):
                         // Never in planSegments (assembly-only fallback band).
                         EmptyView()
@@ -246,17 +306,28 @@ struct ShotRenderPromptPanel: View {
                         skippedSegmentRow(placeholder)
                     }
                 }
+                ForEach(unplannedSavedRecords, id: \.entryId) { record in
+                    VStack(alignment: .leading, spacing: 6) {
+                        resultRow(ShotSegmentPresentation(record: record), ordinal: "Saved segment")
+                        Text("Generation inputs unavailable · saved video remains available.").font(.caption)
+                    }.id(ShotSegmentPresentation(record: record).id)
+                }
                 if !skipped.isEmpty {
                     PlateLabel(
-                        text: "Skipped \(skipped.count) not-ready frame\(skipped.count == 1 ? "" : "s")",
+                        text: "Unavailable inputs · " + skipped.joined(separator: ", "),
                         size: 8.5,
                         color: PlateColor.inkFaint
                     )
                 }
+                if shot.renderStack.isNarrationDriven { narrationDrivenNotice.frame(minHeight: 100) }
             }
             .padding(14)
         }
-        .frame(maxHeight: .infinity)
+        .onAppear { if !focusedSegmentKey.isEmpty { proxy.scrollTo(focusedSegmentKey, anchor: .top) } }
+        .onChange(of: focusedSegmentKey) { _, key in
+            withAnimation { proxy.scrollTo(key, anchor: .top) }
+        }
+        }.frame(maxHeight: .infinity)
     }
 
     /// A deliberately skipped segment, held in place: out of the stitch,
@@ -315,19 +386,19 @@ struct ShotRenderPromptPanel: View {
     /// The active version's clip behind this segment — the provenance the
     /// AS RENDERED delta compares against the next-render stack.
     private func activeClip(_ item: ShotSegmentPromptPlanItem) -> ShotRenderSegmentClip? {
-        shot.activeRenderVersion?.segmentClip(
-            placementStartEntryId: item.pair.startPlacementEntryId,
-            placementEndEntryId: item.pair.endPlacementEntryId,
-            forStart: item.pair.start?.imageId ?? "",
-            end: item.pair.end?.imageId ?? ""
-        )
+        shotSavedSegmentClip(shot: shot, pair: item.pair)
     }
 
     private func segmentRow(_ item: ShotSegmentPromptPlanItem) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            keyframePair(item)
+        VStack(alignment: .leading, spacing: 10) {
+            resultRow(.generated(item), ordinal: "Segment \(item.displayIndex + 1) of \(planSegments.count)")
+            DisclosureGroup("Input Frames", isExpanded: Binding(
+                get: { activeClip(item) == nil || expandedInputs.contains(item.pairKey) },
+                set: { if $0 { expandedInputs.insert(item.pairKey) } else { expandedInputs.remove(item.pairKey) } }
+            )) { keyframePair(item) }
+            Text(item.isAIExtension ? "NEXT TAKE" : "NEXT RENDER").font(PlateType.label(8, weight: .semibold)).foregroundStyle(PlateColor.inkFaint)
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
+                ShotEditorFlow(spacing: 8) {
                     PlateLabel(
                         text: "Segment \(item.displayIndex + 1) of \(planSegments.count) · ~\(item.renderStack.segmentSeconds)s",
                         size: 8.5,
@@ -339,7 +410,7 @@ struct ShotRenderPromptPanel: View {
                     }
                     Spacer(minLength: 0)
                     if item.pair.start != nil, item.pair.end != nil {
-                        Button("Copy") {
+                        Button("Copy Frame Pair") {
                             onCopySegmentCard(item, cardText(for: item))
                         }
                         .buttonStyle(PlateButtonStyle())
@@ -365,7 +436,7 @@ struct ShotRenderPromptPanel: View {
                         .buttonStyle(PlateButtonStyle())
                         .help("Skip this segment — out of the stitch, its seams heal to a hard cut. Free, and always restorable")
                     }
-                    if planSegments.count > 1 {
+                    if planSegments.count > 1 || item.isAIExtension {
                         let segmentKey = item.pair.placementKey
                         let isArmed = armedRenderKey == segmentKey
                         // THE HONEST BILL: "$0 reuse" is only true for other
@@ -374,7 +445,9 @@ struct ShotRenderPromptPanel: View {
                         // shot LTX version, whose single clip matches no
                         // pair) are regenerated and billed too — price and
                         // promise must say so, never assume reuse.
-                        let missingOthers = planItems.filter {
+                        let isTakeOperation = shot.continuationRecord(entryId: item.pair.endPlacementEntryId) != nil
+                            || shotPendingEndingEntryIds(shot).contains(item.pair.endPlacementEntryId)
+                        let missingOthers = isTakeOperation ? [] : planItems.filter {
                             $0.pair.placementKey != segmentKey && activeClip($0) == nil
                         }
                         let billedItems = [item] + missingOthers
@@ -393,10 +466,10 @@ struct ShotRenderPromptPanel: View {
                         let nextRoman = FrameCreatorModal.romanNumeral(
                             (shot.renderVersions.map(\.versionNumber).max() ?? 0) + 1
                         )
-                        Button(isArmed
+                        Button(isTakeOperation ? (shotPendingEndingEntryIds(shot).contains(item.pair.endPlacementEntryId) ? "Render Ending" : (activeClip(item) == nil ? "Retry · Review price" : "New Take")) : (isArmed
                             ? "Confirm\(extraSuffix)\(billedUSD.map { " · \(usdLabel($0))" } ?? "")"
-                            : "Render segment\(extraSuffix)\(billedUSD.map { " · \(usdLabel($0))" } ?? "")") {
-                            if isArmed {
+                            : "Render segment\(extraSuffix)\(billedUSD.map { " · \(usdLabel($0))" } ?? "")")) {
+                            if isArmed || isTakeOperation {
                                 armedRenderKey = nil
                                 saveDirectionPlansForConfirm()
                                 onRenderSegment(computedOverrides(), segmentKey)
@@ -405,11 +478,9 @@ struct ShotRenderPromptPanel: View {
                             }
                         }
                         .buttonStyle(PlateButtonStyle(isProminent: isArmed))
-                        .disabled(isRenderBlocked
-                            || !modelConfigured(item.renderStack.model)
-                            || !leadInRenderable(item)
-                            || !nativeExtendRenderable(item))
-                        .help(isRenderBlocked
+                        .disabled(isRenderBlocked || (!isTakeOperation
+                            && (!modelConfigured(item.renderStack.model) || !leadInRenderable(item) || !nativeExtendRenderable(item))))
+                        .help(isTakeOperation ? "Review or generate only this take; earlier clips and render history stay unchanged" : (isRenderBlocked
                             ? "A shot is already rendering"
                             : (!nativeExtendRenderable(item)
                                 ? "Native Extend needs this AI extension directly after at least 73 frames of footage — choose an image-to-video model"
@@ -419,7 +490,7 @@ struct ShotRenderPromptPanel: View {
                                     ? "Add the required API key in App Settings before rendering this segment"
                                     : (isArmed
                                         ? "Click again to render this segment with \(item.renderStack.shortLabel) — this spends, and the result lands as version \(nextRoman) with \(reuseTail)"
-                                        : "Arms a confirm — nothing renders until the second click. Renders this segment with \(item.renderStack.shortLabel); the result lands as version \(nextRoman) with \(reuseTail)")))))
+                                        : "Arms a confirm — nothing renders until the second click. Renders this segment with \(item.renderStack.shortLabel); the result lands as version \(nextRoman) with \(reuseTail)"))))))
                     }
                 }
                 // THE HONEST DELTA: what this segment's current clip was
@@ -434,7 +505,7 @@ struct ShotRenderPromptPanel: View {
                         weight: .semibold,
                         color: CanonColor.brass
                     )
-                    .help("The current version's clip for this segment used a different recipe than the next render will. Rendering replaces this segment; the other segments' clips travel in verbatim.")
+                    .help("Saved provenance is unchanged. These controls affect the next generation only.")
                 }
                 if let caption = bridgeCaption(item) {
                     PlateLabel(text: caption, size: 8, color: PlateColor.inkFaint)
@@ -469,47 +540,10 @@ struct ShotRenderPromptPanel: View {
 
     /// A footage segment: real material that plays verbatim — nothing to
     /// prompt. Clicking the thumb previews its saved clip when one exists.
-    @ViewBuilder
     private func footageRow(_ footageSegment: ShotFootagePlanSegment) -> some View {
         let clip = footageSegment.clip
-        let saved = shot.activeRenderVersion?.segmentClip(
-            placementStartEntryId: clip.entryId,
-            placementEndEntryId: "",
-            forStart: clip.footageKey,
-            end: ""
-        ) ?? shot.seedSegmentClips.first { $0.placementKey == footageSegment.placementKey }
-        let previewable = saved.flatMap { FileManager.default.fileExists(atPath: $0.clipPath) ? $0 : nil }
-        let isPreviewing = previewingSegmentKey == previewable?.placementKey
-        HStack(alignment: .top, spacing: 12) {
-            Button {
-                if let previewable {
-                    onPreviewSegment(previewable)
-                }
-            } label: {
-                ZStack {
-                    PlateColor.creamDeep
-                    if let image = (clip.videoStripPath.flatMap { NSImage(contentsOfFile: $0) })
-                        ?? NSImage(contentsOfFile: clip.thumbnailPath) {
-                        Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    } else {
-                        Image(systemName: "film.stack")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(PlateColor.inkFaint)
-                    }
-                }
-                .frame(width: 120, height: 68)
-                .clipped()
-                .overlay(Rectangle().stroke(isPreviewing ? PlateColor.ink : PlateColor.hairline, lineWidth: 1))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(previewable == nil)
-            .help(previewable == nil
-                ? "No saved clip for this footage yet — render to place it"
-                : "Play this footage segment in the player")
-
+        return VStack(alignment: .leading, spacing: 10) {
+            resultRow(.footage(footageSegment), ordinal: "Segment \(footageSegment.displayIndex + 1) of \(planSegments.count)")
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     PlateLabel(
@@ -536,6 +570,27 @@ struct ShotRenderPromptPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private func preservedRow(_ preserved: ShotPreservedRenderPlanSegment) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            resultRow(.preserved(preserved), ordinal: "Segment \(preserved.displayIndex + 1) of \(planSegments.count)")
+            Text("Reused verbatim · $0. Trim and arrange in the timeline.").font(.caption).foregroundStyle(PlateColor.inkFaint)
+        }
+    }
+
+    private func resultRow(_ segment: ShotRenderPlanSegment, ordinal: String) -> some View {
+        resultRow(ShotSegmentPresentation(shot: shot, segment: segment), ordinal: ordinal)
+    }
+
+    private func resultRow(_ result: ShotSegmentPresentation, ordinal: String) -> some View {
+        ShotSegmentResultView(result: result, ordinal: ordinal,
+            isFocused: focusedSegmentKey == result.id,
+            isStale: result.record.map { shotContinuationStaleEntryIds(shot).contains($0.entryId) } ?? false,
+            onSelect: { onFocusSegment(result.id) },
+            onPreview: { if let preview = result.preview { onPreviewSegment(preview) } },
+            onTakes: { if let record = result.record { autosaveDrafts(); onOpenTakes(record.entryId) } },
+            onCopy: { if let preview = result.preview { onCopyVideo(preview) } })
     }
 
     /// The bridge's honest introduction: which end stands on real footage.
@@ -623,45 +678,19 @@ struct ShotRenderPromptPanel: View {
         }
     }
 
-    @ViewBuilder
     private func keyframePair(_ item: ShotSegmentPromptPlanItem) -> some View {
-        let clip = previewableSegmentClip(shot: shot, pair: item.pair) {
-            FileManager.default.fileExists(atPath: $0)
-        }
-        let isPreviewing = previewingSegmentKey == item.pair.placementKey
-        Button {
-            if let clip {
-                onPreviewSegment(clip)
+        ShotEditorFlow(spacing: 10) {
+            if let start = item.pair.start {
+                Button { onInspectInput(); inspectedFrame = start } label: {
+                    VStack { keyframeThumbnail(start); Text("Start Frame").font(.caption) }
+                }.buttonStyle(.plain)
             }
-        } label: {
-            VStack(spacing: 6) {
-                if let start = item.pair.start {
-                    keyframeThumbnail(start)
-                    if let end = item.pair.end {
-                        Image(systemName: "arrow.down")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(PlateColor.inkFaint)
-                        keyframeThumbnail(end)
-                    } else {
-                        PlateLabel(text: "Open-ended", size: 7.5, color: PlateColor.inkFaint)
-                    }
-                } else if let end = item.pair.end {
-                    PlateLabel(text: "Lead-in", size: 7.5, color: PlateColor.inkFaint)
-                    Image(systemName: "arrow.down")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(PlateColor.inkFaint)
-                    keyframeThumbnail(end)
-                }
-            }
-            .padding(3)
-            .overlay(Rectangle().stroke(isPreviewing ? PlateColor.ink : .clear, lineWidth: 1))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(clip == nil)
-        .help(clip == nil
-            ? "No saved segment yet — render to save one"
-            : (isPreviewing ? "This segment is playing" : "Play this segment in the player"))
+            if let end = item.pair.end {
+                Button { onInspectInput(); inspectedFrame = end } label: {
+                    VStack { keyframeThumbnail(end); Text("Ending Frame").font(.caption) }
+                }.buttonStyle(.plain)
+            } else { Text("Open-ended").font(.caption).foregroundStyle(PlateColor.inkFaint) }
+        }.padding(.top, 6)
     }
 
     private func keyframeThumbnail(_ frame: ProjectLensHeroImage) -> some View {
@@ -684,7 +713,34 @@ struct ShotRenderPromptPanel: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(String(format: "CURRENT OUTPUT · %.1fs", outputSeconds)).font(.caption).foregroundStyle(PlateColor.inkFaint)
+            ShotEditorFlow {
+                if let onExtend { Button(shot.entries.isEmpty ? "Start Scene" : (shot.hasSavedPlayback ? "Extend Scene" : "Add to Scene")) { autosaveDrafts(); onExtend() } }
+                if let onNewVersion, shot.hasSavedPlayback { Button("New Version") { autosaveDrafts(); onNewVersion() } }
+            }.buttonStyle(PlateButtonStyle()).disabled(isRenderBlocked)
+            if !shot.continuationRecords.isEmpty {
+                if let onRebuild {
+                    DisclosureGroup("Regenerate continuations", isExpanded: $showRebuildReview) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Generate new linked takes from these drafts in order. Saved sources are reused; every earlier take is retained.").font(.caption)
+                            Button("Rebuild Generated Chain · " + (rebuildEstimate.headlineLabel ?? "Rate unavailable")) {
+                                saveDirectionPlansForConfirm()
+                                onRebuild(computedOverrides())
+                            }.buttonStyle(PlateButtonStyle())
+                                .disabled(isRenderBlocked || !rebuildEstimate.isComplete || !shotPendingEndingEntryIds(shot).isEmpty)
+                            if !shotPendingEndingEntryIds(shot).isEmpty { Text("Render the pending ending from its card first.").font(.caption) }
+                        }.padding(.top, 8)
+                    }
+                }
+            } else if !shotPendingEndingEntryIds(shot).isEmpty {
+                Text("Render the pending ending from its card. Saved clips stay in use.").font(.caption)
+            } else if !shot.renderStack.isNarrationDriven { ordinaryRenderFooter }
+        }.padding(14)
+    }
+
+    private var ordinaryRenderFooter: some View {
+        ShotEditorFlow(spacing: 10) {
             let stacks = Set(planItems.map(\.renderStack))
             let recipeLabel = stacks.count > 1
                 ? "MIXED RECIPES"
@@ -774,7 +830,7 @@ struct ShotRenderPromptPanel: View {
     }
 
     private var defaultRenderControls: some View {
-        HStack(spacing: 6) {
+        ShotEditorFlow(spacing: 6) {
             PlateLabel(text: "Default", size: 7.5, color: PlateColor.inkFaint)
             PlateLabel(text: "Model", size: 7, color: PlateColor.inkFaint)
             modelMenu(
@@ -806,9 +862,9 @@ struct ShotRenderPromptPanel: View {
     }
 
     private func segmentRenderControls(_ item: ShotSegmentPromptPlanItem) -> some View {
-        HStack(spacing: 7) {
+        ShotEditorFlow(spacing: 7) {
             PlateLabel(
-                text: item.hasRenderOverride ? "Override" : "Shot default",
+                text: item.hasRenderOverride ? "Override" : (activeClip(item) != nil && item.isAIExtension ? "Saved recipe" : "Shot default"),
                 size: 7.5,
                 weight: item.hasRenderOverride ? .semibold : .regular,
                 color: item.hasRenderOverride ? PlateColor.ink : PlateColor.inkFaint
@@ -817,8 +873,9 @@ struct ShotRenderPromptPanel: View {
                 stack: item.renderStack,
                 shape: segmentShape(item.pair),
                 allowsNarrationDriven: false,
-                availableModels: ShotRenderModel.shotDefaultCases
-                    + (item.canUseNativeFootageExtend ? [.ltx23NativeExtend] : []),
+                availableModels: item.isAIExtension && item.pair.end != nil
+                    ? ShotRenderModel.shotDefaultCases.filter(\.supportsShotEnding)
+                    : ShotRenderModel.shotDefaultCases + (item.canUseNativeFootageExtend ? [.ltx23NativeExtend] : []),
                 onSelect: { model in
                     setSegmentStack(item, stack: item.renderStack.replacingModel(model))
                 }
@@ -845,7 +902,7 @@ struct ShotRenderPromptPanel: View {
                 )
             }
             if item.hasRenderOverride {
-                Button("Use Defaults") {
+                Button(item.isAIExtension ? "Use saved recipe" : "Use Defaults") {
                     onSetSegmentRenderStack(item.pair, nil)
                 }
                 .buttonStyle(.plain)
@@ -1015,7 +1072,7 @@ struct ShotRenderPromptPanel: View {
     }
 
     private func setSegmentStack(_ item: ShotSegmentPromptPlanItem, stack: ShotRenderStack) {
-        onSetSegmentRenderStack(item.pair, stack == shot.renderStack ? nil : stack)
+        onSetSegmentRenderStack(item.pair, item.isAIExtension ? stack : (stack == shot.renderStack ? nil : stack))
     }
 
     /// A lead-in row renders only when its effective stack has a tail-anchored

@@ -9,23 +9,33 @@ import SwiftUI
 /// own persisted clips — never from the next-render default — under the
 /// provenance label law in `ShotRenderProvenance.swift`.
 ///
-/// Read-only except VIEW, which activates a version exactly like the footer
-/// numerals (viewing IS selecting).
+/// Historical renders are read-only previews. Current continuation TAKE
+/// selection uses the same laws as the Scene strip; generation always needs
+/// a separate priced confirmation.
 struct ShotRenderVersionsPlateView: View {
     let shot: ProjectShot
     /// The current plan's placement order; old versions' clips follow it
     /// where they match, orphans after (`shotVersionClipsInPlanOrder`).
+    var currentClips: [ShotRenderSegmentClip] = []
     let planPlacementKeys: [String]
-    var onActivateVersion: (String) -> Void
+    var onPreviewVersion: (String) -> Void
+    let isRendering: Bool
+    var continuationEntryEstimate: ([String]) -> ShotRenderCostEstimate
+    var continuationBranchImpact: (String, String) -> ShotContinuationBranchImpact?
+    var onUseContinuationTake: (ShotContinuationBranchImpact) -> Void
+    var onRepairContinuationTake: (String, String) async -> Bool
+    var onRechainContinuations: () async -> Bool
+    var onNewContinuationTake: ((String) -> Void)? = nil
     var onClose: () -> Void
 
     /// "versionId|pairKey" entries whose prompt is disclosed.
     @State private var expandedPrompts: Set<String> = []
     @State private var copiedTraceKey: String?
+    @State private var takeBrowserEntryId = ""
 
     /// Newest first: the question is usually "what did I just do".
     private var versions: [ShotRenderArtifact] {
-        shot.sortedRenderVersions.reversed()
+        shot.historicalWholeShotVersions.reversed()
     }
 
     var body: some View {
@@ -54,12 +64,28 @@ struct ShotRenderVersionsPlateView: View {
             Rectangle().fill(PlateColor.hairline).frame(height: 1)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    if !currentClips.isEmpty {
+                        PlateLabel(text: "CURRENT SEQUENCE", size: 9, weight: .bold, color: PlateColor.ink)
+                        ForEach(Array(currentClips.enumerated()), id: \.offset) { index, clip in
+                            clipRow(clip, ordinal: index + 1, version: ShotRenderArtifact(segmentClips: currentClips))
+                        }
+                        Divider()
+                    }
+                    if !shot.continuationRecords.isEmpty {
+                        HStack {
+                            PlateLabel(text: "CURRENT CONTINUATION TAKES", size: 8, weight: .bold, color: PlateColor.ink)
+                            ForEach(Array(shot.entries.filter { shot.continuationRecord(entryId: $0.entryId) != nil }.enumerated()), id: \.element.entryId) { index, entry in
+                                Button("\(index + 1)") { takeBrowserEntryId = entry.entryId }
+                                    .buttonStyle(PlateButtonStyle())
+                            }
+                        }
+                    }
                     ForEach(versions, id: \.versionId) { version in
                         versionRow(version)
                     }
                     if versions.isEmpty {
                         PlateLabel(
-                            text: "No renders yet — the first render becomes version i.",
+                            text: "No historical whole-Shot renders. Current sequence clips are listed above.",
                             size: 9,
                             color: PlateColor.inkFaint
                         )
@@ -72,6 +98,14 @@ struct ShotRenderVersionsPlateView: View {
         .frame(width: 940, height: 610)
         .background(PlateColor.cream)
         .environment(\.colorScheme, .light)
+        .sheet(
+            isPresented: Binding(
+                get: { !takeBrowserEntryId.isEmpty },
+                set: { if !$0 { takeBrowserEntryId = "" } }
+            )
+        ) {
+            continuationTakeBrowser
+        }
     }
 
     private func versionRow(_ version: ShotRenderArtifact) -> some View {
@@ -106,15 +140,10 @@ struct ShotRenderVersionsPlateView: View {
                     color: PlateColor.inkFaint
                 )
                 Spacer(minLength: 0)
-                if isActive {
-                    PlateLabel(text: "ACTIVE", size: 8, weight: .bold, color: CanonColor.brass)
-                        .help("The shot's selected render — what the player and Stage show")
-                } else if version.isReady {
-                    Button("View") {
-                        onActivateVersion(version.versionId)
-                    }
-                    .buttonStyle(PlateButtonStyle())
-                    .help("Show this version and make it the shot's selected render — same as its footer numeral")
+                if version.isReady {
+                    Button("PREVIEW") { onPreviewVersion(version.versionId) }
+                        .buttonStyle(PlateButtonStyle())
+                        .help("Preview the exact saved video; current take selections stay unchanged")
                 }
             }
             if version.status == "failed", let message = version.errorMessage.trimmed.nilIfEmpty {
@@ -152,6 +181,14 @@ struct ShotRenderVersionsPlateView: View {
             requestId: clip.requestId,
             versions: shot.sortedRenderVersions
         ).flatMap { $0 < version.versionNumber ? $0 : nil }
+        let continuationRecord = clip.continuationTakeId.trimmed.nilIfEmpty.flatMap { takeId in
+            shot.continuationRecords.first { record in
+                record.takes.contains { $0.takeId == takeId }
+            }
+        }
+        let continuationTake = clip.continuationTakeId.trimmed.nilIfEmpty.flatMap { takeId in
+            continuationRecord?.takes.first { $0.takeId == takeId }
+        }
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 PlateLabel(text: "\(ordinal)", size: 8, weight: .bold, color: PlateColor.inkFaint)
@@ -163,6 +200,20 @@ struct ShotRenderVersionsPlateView: View {
                     color: PlateColor.ink
                 )
                 PlateLabel(text: durationLabel(clip), size: 8, color: PlateColor.inkFaint)
+                if let continuationTake, let continuationRecord {
+                    Button {
+                        takeBrowserEntryId = continuationRecord.entryId
+                    } label: {
+                        PlateLabel(
+                            text: "TAKE \(continuationTake.takeNumber)",
+                            size: 7.5,
+                            weight: .bold,
+                            color: CanonColor.brass
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Immutable continuation take \(continuationTake.takeNumber). Previewing history never changes the current take selection.")
+                }
                 if clip.generateAudio {
                     PlateLabel(text: "AUDIO", size: 7.5, weight: .bold, color: PlateColor.inkFaint)
                         .help("Rendered with the model's native audio — it plays on the SOURCE lane")
@@ -223,6 +274,45 @@ struct ShotRenderVersionsPlateView: View {
             }
         }
         .padding(.leading, 26)
+    }
+
+    @ViewBuilder
+    private var continuationTakeBrowser: some View {
+        if let record = shot.continuationRecord(entryId: takeBrowserEntryId) {
+            let staleEntryIds = shotContinuationStaleEntryIds(shot)
+            ShotContinuationTakeBrowserView(
+                record: record,
+                selectedEntryIsStale: staleEntryIds.contains(record.entryId),
+                rechainEntryIds: staleEntryIds,
+                isRendering: isRendering,
+                allowsNewTake: onNewContinuationTake != nil,
+                rechainEstimate: continuationEntryEstimate,
+                branchImpact: { takeId in
+                    continuationBranchImpact(record.entryId, takeId)
+                },
+                onUse: { impact in
+                    onUseContinuationTake(impact)
+                },
+                onUseAndRechain: { impact in
+                    onUseContinuationTake(impact)
+                    takeBrowserEntryId = ""
+                    Task { _ = await onRechainContinuations() }
+                },
+                onRechain: {
+                    takeBrowserEntryId = ""
+                    Task { _ = await onRechainContinuations() }
+                },
+                onRepair: { takeId in
+                    Task { _ = await onRepairContinuationTake(record.entryId, takeId) }
+                },
+                onNewTake: { onNewContinuationTake?(record.entryId) },
+                onClose: { takeBrowserEntryId = "" }
+            )
+        } else {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .onAppear { takeBrowserEntryId = "" }
+        }
     }
 
     private func statusLabel(_ version: ShotRenderArtifact) -> some View {

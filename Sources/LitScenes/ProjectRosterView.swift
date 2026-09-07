@@ -84,11 +84,11 @@ struct ProjectRosterView: View {
         switch kind {
         case .characters:
             return library.projectCharacters.characters.map {
-                RosterEntry(id: $0.characterId, name: $0.name, descriptionPrompt: $0.descriptionPrompt, referenceMediaIds: $0.referenceMediaIds, referenceLabels: $0.referenceLabels)
+                RosterEntry(id: $0.characterId, name: $0.name, descriptionPrompt: $0.descriptionPrompt, referenceMediaIds: $0.referenceMediaIds.filter(library.isMediaAvailableForSelection), referenceLabels: $0.referenceLabels)
             }
         case .objects:
             return library.projectObjects.objects.map {
-                RosterEntry(id: $0.objectId, name: $0.name, descriptionPrompt: $0.descriptionPrompt, referenceMediaIds: $0.referenceMediaIds, referenceLabels: $0.referenceLabels)
+                RosterEntry(id: $0.objectId, name: $0.name, descriptionPrompt: $0.descriptionPrompt, referenceMediaIds: $0.referenceMediaIds.filter(library.isMediaAvailableForSelection), referenceLabels: $0.referenceLabels)
             }
         }
     }
@@ -103,7 +103,7 @@ struct ProjectRosterView: View {
     /// Reference-resolution candidates: the full image inventory, so references archived
     /// rejected-by-default (adopted generated frames) still render in slots and shelves.
     private var bucketCandidates: [MediaItemRecord] {
-        library.items.filter { $0.kind == .image }
+        library.browsableMediaItems.filter { $0.kind == .image }
     }
 
     private var generatedFrames: [ProjectLensHeroImage] {
@@ -133,11 +133,11 @@ struct ProjectRosterView: View {
         switch kind {
         case .characters:
             return library.projectCharacters.character(withId: id).map {
-                RosterEntry(id: $0.characterId, name: $0.name, descriptionPrompt: $0.descriptionPrompt, referenceMediaIds: $0.referenceMediaIds, referenceLabels: $0.referenceLabels)
+                RosterEntry(id: $0.characterId, name: $0.name, descriptionPrompt: $0.descriptionPrompt, referenceMediaIds: $0.referenceMediaIds.filter(library.isMediaAvailableForSelection), referenceLabels: $0.referenceLabels)
             }
         case .objects:
             return library.projectObjects.object(withId: id).map {
-                RosterEntry(id: $0.objectId, name: $0.name, descriptionPrompt: $0.descriptionPrompt, referenceMediaIds: $0.referenceMediaIds, referenceLabels: $0.referenceLabels)
+                RosterEntry(id: $0.objectId, name: $0.name, descriptionPrompt: $0.descriptionPrompt, referenceMediaIds: $0.referenceMediaIds.filter(library.isMediaAvailableForSelection), referenceLabels: $0.referenceLabels)
             }
         }
     }
@@ -804,16 +804,16 @@ struct ProjectRosterView: View {
                         statusMessage = library.aestheticStatus
                     }
                 } label: {
-                    Label(library.isGeneratingCharacterRender ? "Rendering…" : "Generate", systemImage: "sparkles")
+                    Label(library.activeCharacterRenderIds.contains(entry.id) ? "Rendering…" : "Generate", systemImage: "sparkles")
                 }
                 .buttonStyle(CanonPrimaryButtonStyle())
                 .disabled(
-                    library.isGeneratingCharacterRender
+                    library.activeCharacterRenderIds.contains(entry.id)
                         || generatePromptDraft.trimmed.isEmpty
                         || selectedGenerateStack == nil
                 )
                 .help("Render a new \(entry.name) reference — it lands in the pool below")
-                if library.isGeneratingCharacterRender {
+                if library.activeCharacterRenderIds.contains(entry.id) {
                     ProgressView()
                         .controlSize(.small)
                 }
