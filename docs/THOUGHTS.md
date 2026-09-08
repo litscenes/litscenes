@@ -55,3 +55,15 @@
 2026-09-08T00:00:12Z Prompt consistency is an instruction contract rather than verified image quality; explicit appearance changes outrank reference continuity, and independent panel generation remains deferred.
 
 2026-09-08T00:45:26Z The character inspector opens at Fit in a modest sheet; the requested inspection experience instead starts at actual pixel size with a larger screen-relative viewport, while Fit remains an explicit option.
+
+2026-09-08T01:34:34Z Analyze work already belongs to the library engine; its overlay prevents dismissal while running and only supports a completed pill, so minimizing can stay presentation-only by extending that existing pill to every run state.
+
+2026-09-08T02:08:27Z Suggestion avatars currently resolve roster identities independently of provider attachments; camera directions currently mix image-plane compass headings with camera motion, while mode changes can save the wrong prompt draft. Shared structured intent must own both display and execution.
+
+2026-09-08T02:42:12Z Structured character links, not avatar availability or prose punctuation, now determine suggestion image attachments; both surfaces show the same selection.
+2026-09-08T02:42:12Z Native validation showed that adaptive paper colors still resolve differently in dark appearance; reframe editors therefore use explicit fixed ink, paper and caret colors.
+2026-09-08T02:42:12Z Failed and canceled image requests need prompt and reference metadata before submission, so safe trace capture now precedes image-edit and Responses transport.
+
+2026-09-08T03:25:27Z Continuation lineage is correct, but unrestricted AVFoundation image timing returned the opening frame for an ending request; cached stills then propagated that error. New takes must verify video endpoints without rewriting historical inputs.
+
+2026-09-08T03:55:54Z Offline repeated append/render/reopen checks confirm correct predecessor identity and corrected final-frame inputs. Missing-video availability also needed to retain its video prerequisite, and local continuation traces needed links into Logs; neither repair rewrites historical media.

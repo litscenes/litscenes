@@ -946,46 +946,6 @@ struct OpenAIClient: Sendable {
         request.setValue("\(body.count)", forHTTPHeaderField: "Content-Length")
         request.httpBody = body
 
-        let result = try await TracedHTTPTransport.send(
-            request: request,
-            metadata: InferenceTraceRequestMetadata(
-                provider: "openai",
-                apiFamily: "images",
-                operation: "image_edit",
-                projectId: projectId,
-                runId: runId,
-                model: model,
-                requestBodyFormat: "multipart/form-data",
-                responseBodyFormatHint: "application/json",
-                providerRequestIDHeaderCandidates: ["x-request-id"],
-                captureRequestBody: false,
-                captureResponseBody: false
-            )
-        )
-        let data = result.data
-        let status = result.response?.statusCode ?? 0
-        let requestId = result.response?.value(forHTTPHeaderField: "x-request-id") ?? ""
-        guard (200..<300).contains(status) else {
-            throw ScreenGraphError.openAI(
-                formattedOpenAIProviderError(
-                    operation: "OpenAI image edit",
-                    status: status,
-                    data: data,
-                    requestId: requestId
-                )
-            )
-        }
-        let decoded = try JSONCoding.decoder.decode(OpenAIImageGenerationResponse.self, from: data)
-        guard let first = decoded.data.first,
-              let encoded = first.b64Json,
-              let imageData = Data(base64Encoded: encoded) else {
-            throw ScreenGraphError.openAI("OpenAI image edit response did not include image data.")
-        }
-        await InferenceTraceStore.shared.enrich(
-            traceId: result.traceId,
-            providerRequestId: requestId,
-            model: decoded.model ?? model
-        )
         let sourceTraceValues = sourceImages.enumerated().map { index, source -> [String: Any] in
             let sourceSize = imagePixelSize(from: source.data)
             return [
@@ -1014,6 +974,55 @@ struct OpenAIClient: Sendable {
                 "height": size?.height ?? 0
             ]
         }
+        let result = try await TracedHTTPTransport.send(
+            request: request,
+            metadata: InferenceTraceRequestMetadata(
+                provider: "openai",
+                apiFamily: "images",
+                operation: "image_edit",
+                projectId: projectId,
+                runId: runId,
+                traceGroupId: runId.isEmpty ? projectId : runId,
+                workflowName: traceWorkflowName.trimmed.isEmpty ? "video_chain" : traceWorkflowName.trimmed,
+                workflowStep: traceWorkflowStep.trimmed.isEmpty ? "image_edit" : traceWorkflowStep.trimmed,
+                artifactType: traceArtifactType.trimmed.isEmpty ? "image_edit" : traceArtifactType.trimmed,
+                artifactId: traceArtifactId.trimmed.isEmpty ? runId : traceArtifactId.trimmed,
+                model: model,
+                requestBodyFormat: "multipart/form-data",
+                responseBodyFormatHint: "application/json",
+                requestTextJSON: inferenceTraceJSONString([
+                    "model": model, "prompt": prompt, "size": size, "quality": quality,
+                    "output_format": outputFormat, "background": requestBackground ?? "",
+                    "source_count": sourceImages.count, "sources": sourceTraceValues, "mask": maskTraceValue ?? [:]
+                ]),
+                mediaRefsJSON: inferenceTraceJSONString(["sources": sourceTraceValues, "mask": maskTraceValue ?? [:]]),
+                providerRequestIDHeaderCandidates: ["x-request-id"],
+                captureRequestBody: false,
+                captureResponseBody: false
+            )
+        )
+        let data = result.data
+        let status = result.response?.statusCode ?? 0
+        let requestId = result.response?.value(forHTTPHeaderField: "x-request-id") ?? ""
+        guard (200..<300).contains(status) else {
+            let message = formattedOpenAIProviderError(operation: "OpenAI image edit", status: status, data: data, requestId: requestId)
+            await InferenceTraceStore.shared.enrichContext(
+                traceId: result.traceId,
+                responseTextJSON: inferenceTraceJSONString(["status_code": status, "error": message])
+            )
+            throw ScreenGraphError.openAI(message)
+        }
+        let decoded = try JSONCoding.decoder.decode(OpenAIImageGenerationResponse.self, from: data)
+        guard let first = decoded.data.first,
+              let encoded = first.b64Json,
+              let imageData = Data(base64Encoded: encoded) else {
+            throw ScreenGraphError.openAI("OpenAI image edit response did not include image data.")
+        }
+        await InferenceTraceStore.shared.enrich(
+            traceId: result.traceId,
+            providerRequestId: requestId,
+            model: decoded.model ?? model
+        )
         let outputSize = imagePixelSize(from: imageData)
         await InferenceTraceStore.shared.enrichContext(
             traceId: result.traceId,
@@ -1159,6 +1168,22 @@ struct OpenAIClient: Sendable {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.httpBody = requestData
 
+        let sourceTraceValues = sourceImages.enumerated().map { index, source -> [String: Any] in
+            let sourceSize = imagePixelSize(from: source.data)
+            return [
+                "index": index,
+                "label": source.label.isEmpty ? "source_\(index + 1)" : source.label,
+                "filename": source.fileName,
+                "role": source.role,
+                "share_percent": source.sharePercent,
+                "title": source.title,
+                "mime_type": source.mimeType,
+                "sha256": sha256Hex(source.data),
+                "bytes": source.data.count,
+                "width": sourceSize?.width ?? 0,
+                "height": sourceSize?.height ?? 0
+            ]
+        }
         let result = try await TracedHTTPTransport.send(
             request: request,
             metadata: InferenceTraceRequestMetadata(
@@ -1167,9 +1192,20 @@ struct OpenAIClient: Sendable {
                 operation: "image_generation",
                 projectId: projectId,
                 runId: runId,
+                traceGroupId: runId.isEmpty ? projectId : runId,
+                workflowName: traceWorkflowName.trimmed.isEmpty ? "video_chain" : traceWorkflowName.trimmed,
+                workflowStep: traceWorkflowStep.trimmed.isEmpty ? "image_responses" : traceWorkflowStep.trimmed,
+                artifactType: traceArtifactType.trimmed.isEmpty ? "image_responses" : traceArtifactType.trimmed,
+                artifactId: traceArtifactId.trimmed.isEmpty ? runId : traceArtifactId.trimmed,
                 model: model,
                 requestBodyFormat: "application/json",
                 responseBodyFormatHint: "application/json",
+                requestTextJSON: inferenceTraceJSONString([
+                    "model": model, "prompt": prompt, "size": size, "quality": quality,
+                    "output_format": outputFormat, "background": requestBackground ?? "",
+                    "source_count": sourceImages.count, "sources": sourceTraceValues, "instructions": instructions, "image_model": imageModel
+                ]),
+                mediaRefsJSON: inferenceTraceJSONString(["sources": sourceTraceValues]),
                 providerRequestIDHeaderCandidates: ["x-request-id"],
                 // Inline base64 data URLs and base64 output: never write bodies to traces.
                 captureRequestBody: false,
@@ -1180,14 +1216,12 @@ struct OpenAIClient: Sendable {
         let status = result.response?.statusCode ?? 0
         let requestId = result.response?.value(forHTTPHeaderField: "x-request-id") ?? ""
         guard (200..<300).contains(status) else {
-            throw ScreenGraphError.openAI(
-                formattedOpenAIProviderError(
-                    operation: "OpenAI Responses image generation",
-                    status: status,
-                    data: data,
-                    requestId: requestId
-                )
+            let message = formattedOpenAIProviderError(operation: "OpenAI Responses image generation", status: status, data: data, requestId: requestId)
+            await InferenceTraceStore.shared.enrichContext(
+                traceId: result.traceId,
+                responseTextJSON: inferenceTraceJSONString(["status_code": status, "error": message])
             )
+            throw ScreenGraphError.openAI(message)
         }
         let decoded = try JSONCoding.decoder.decode(OpenAIResponsesImageBody.self, from: data)
         if let error = decoded.error {
@@ -1215,22 +1249,6 @@ struct OpenAIClient: Sendable {
                 )
             }
         )
-        let sourceTraceValues = sourceImages.enumerated().map { index, source -> [String: Any] in
-            let sourceSize = imagePixelSize(from: source.data)
-            return [
-                "index": index,
-                "label": source.label.isEmpty ? "source_\(index + 1)" : source.label,
-                "filename": source.fileName,
-                "role": source.role,
-                "share_percent": source.sharePercent,
-                "title": source.title,
-                "mime_type": source.mimeType,
-                "sha256": sha256Hex(source.data),
-                "bytes": source.data.count,
-                "width": sourceSize?.width ?? 0,
-                "height": sourceSize?.height ?? 0
-            ]
-        }
         let outputSize = imageData.flatMap { imagePixelSize(from: $0) }
         // The response half describes either the picture we got or the reason
         // we got none. Image bytes never ride here — sources are recorded as

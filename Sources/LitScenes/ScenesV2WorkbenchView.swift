@@ -740,6 +740,7 @@ struct ScenesV2WorkbenchView: View {
             renderCaption: renderCaption,
             renderBlockReason: renderBlockReason,
             characterNamesById: characterNamesById,
+            referenceMarksByImageId: Dictionary(suggestionData(primaryIsFilled: false).cards.map { ($0.imageId, $0.cast) }, uniquingKeysWith: { first, _ in first }),
             showsCreateCharacterNotice: suggestionNotice == .createCharacter,
             suggestDisabledReason: moreSuggestionsDisabledReason,
             onOpenCharacters: onOpenCharacters,
@@ -816,39 +817,8 @@ struct ScenesV2WorkbenchView: View {
         let roster = library.projectCharacters.characters
         let namesById = characterNamesById
         let items = library.browsableMediaItems
-        let rosterByName = Dictionary(
-            roster.map { ($0.name.trimmed.lowercased(), $0) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        let sheetByName = Dictionary(
-            roster.map { ($0.name.trimmed.lowercased(), library.activeCharacterSheetItem(for: $0.characterId) != nil) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        let idByName = Dictionary(
-            roster.map { ($0.name.trimmed.lowercased(), $0.characterId) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        func castMark(_ name: String) -> ScenesV2CastMark {
-            let key = name.trimmed.lowercased()
-            let character = rosterByName[key]
-            let avatar = scenesV2CastAvatarSource(
-                referenceMediaIds: character?.referenceMediaIds ?? [],
-                activeSheetMediaId: character?.activeSheetMediaId,
-                items: items
-            )
-            return ScenesV2CastMark(
-                name: name,
-                hasSheet: sheetByName[key] ?? false,
-                avatarImagePath: avatar.path,
-                avatarIsSheet: avatar.isSheet,
-                hasSources: !(character?.referenceMediaIds ?? []).isEmpty
-            )
-        }
-        let scenes = (lens.body.areas ?? []).flatMap(\.scenes)
-        let sceneCast = Dictionary(
-            scenes.map { ($0.sceneId, $0.cast.map(\.name).filter { !$0.trimmed.isEmpty }) },
-            uniquingKeysWith: { first, _ in first }
-        )
+        let entries = library.frameCreatorMentionEntries(for: lens)
+        let idByName = Dictionary(roster.map { ($0.name.trimmed.lowercased(), $0.characterId) }, uniquingKeysWith: { first, _ in first })
         var data = SuggestionData()
         var unseenByCharacter: [String: Int] = [:]
         for (index, row) in planned.enumerated() {
@@ -857,10 +827,11 @@ struct ScenesV2WorkbenchView: View {
             let kind = scenesV2SuggestionKind(imageKind: row.imageKind, isSheetSuggestion: row.isSheetSuggestion)
             let forId = row.suggestedForCharacterId ?? (kind == .study ? row.characterId : "")
             let forName = namesById[forId] ?? ""
-            var names = sceneCast[row.sceneId] ?? []
-            if !forName.isEmpty, !names.contains(where: { $0.caseInsensitiveCompare(forName) == .orderedSame }) {
-                names.insert(forName, at: 0)
-            }
+            let marks = scenesV2PlannedReferenceMarks(
+                planned: row, lens: lens, stack: library.defaultFrameStack() ?? RenderStackRegistry.shared.fallback,
+                entries: entries, items: items
+            )
+            let names = marks.map(\.name)
             let isNew = row.isSheetSuggestion && !session.seenSuggestionIds.contains(row.imageId)
             let card = ScenesV2SuggestionCardModel(
                 imageId: row.imageId,
@@ -868,7 +839,7 @@ struct ScenesV2WorkbenchView: View {
                 beat: titles.beat,
                 eyebrow: scenesV2SuggestionEyebrow(beat: titles.beat, forCharacterName: forName, isFailed: failed, isStudy: kind == .study),
                 brief: scenesV2SuggestionBrief(sourcePrompt: row.sourcePrompt, prompt: row.prompt),
-                cast: names.map(castMark),
+                cast: marks,
                 isFailed: failed,
                 failureLine: failed ? scenesV2SuggestionFailureLine(errorMessage: row.errorMessage) : "",
                 isNew: isNew,
@@ -1177,6 +1148,7 @@ struct ScenesV2WorkbenchView: View {
             moreSuggestionsDisabledReason: moreSuggestionsDisabledReason,
             accentSwatches: scenesV2StageAccentSwatches(primaryLens?.body.colorPalette ?? []),
             tileAction: tileAction,
+            onRepairReferences: onOpenCharacters,
             onRenderSuggestion: renderSuggestion(imageId:),
             onArtDirectSuggestion: artDirectSuggestion(imageId:),
             onMoreSuggestions: suggestForAllCharacters,

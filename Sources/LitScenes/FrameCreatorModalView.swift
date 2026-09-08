@@ -172,18 +172,23 @@ func frameCreatorAttachmentPlan(
         (seed.map { [($0, FrameCreatorAttachmentStratum.seed)] } ?? [])
             + direct.map { ($0, .direct) }
             + mention.map { ($0, .mention) }
+    var seen = Set<String>()
+    let unique = ordered.filter { pair in
+        let key = pair.attachment.imagePath.trimmed.nilIfEmpty ?? pair.attachment.sourceId
+        return seen.insert(key).inserted
+    }
     let capacity = stack.frameReferenceCapacity
     let entries: [FrameCreatorAttachmentPlan.Entry]
     switch capacity {
     case .textOnly:
-        entries = ordered.map { .init(attachment: $0.attachment, stratum: $0.stratum, fate: .droppedTextOnly) }
+        entries = unique.map { .init(attachment: $0.attachment, stratum: $0.stratum, fate: .droppedTextOnly) }
     case .slots:
         // The slot count caps before the budget can (planningCap ≤ budget),
         // so over-budget never applies here.
         let cap = capacity.planningCap
-        let keptLabel = ordered.first.map { $0.attachment.label.isEmpty ? "the first reference" : $0.attachment.label }
+        let keptLabel = unique.first.map { $0.attachment.label.isEmpty ? "the first reference" : $0.attachment.label }
             ?? "the first reference"
-        entries = ordered.enumerated().map { index, pair in
+        entries = unique.enumerated().map { index, pair in
             .init(
                 attachment: pair.attachment,
                 stratum: pair.stratum,
@@ -192,8 +197,8 @@ func frameCreatorAttachmentPlan(
         }
     case .compositeSheet, .budget:
         let budget = FrameReferenceCapacity.attachmentBudget
-        let inSheet = capacity == .compositeSheet && min(ordered.count, budget) > 1
-        entries = ordered.enumerated().map { index, pair in
+        let inSheet = capacity == .compositeSheet && min(unique.count, budget) > 1
+        entries = unique.enumerated().map { index, pair in
             .init(
                 attachment: pair.attachment,
                 stratum: pair.stratum,
@@ -302,6 +307,9 @@ struct FrameCreatorModal: View {
 
     let lens: ProjectLens
     let context: FrameCreationContext
+    let plannedReferenceAttachments: [LensPromptImageAttachment]
+    let missingPlannedReferences: [String]
+    @State private var removedReferenceIds: Set<String> = []
     let workspaceSize: CGSize
 
     private var templateImage: ProjectLensHeroImage? { context.templateImage }
@@ -501,7 +509,22 @@ struct FrameCreatorModal: View {
         self.onAdoptGeneratedFrame = onAdoptGeneratedFrame
         self.onUploadReferences = onUploadReferences
         self.identityFromSheetsOnly = identityFromSheetsOnly
-        var seededReferences: [MediaItemRecord] = []
+        if case .plannedFrame(let planned) = context {
+            let linked = LensPlannedFrameDefaults.entries(planned: planned, lens: lens, available: mentionEntries)
+            missingPlannedReferences = linked.filter {
+                LensPlannedFrameDefaults.mentionAttachments(for: [$0], items: mentionReferenceItems).isEmpty
+            }.map { "\($0.name): no saved readable references. Add a reference below or review this character in Characters." }
+            plannedReferenceAttachments = LensPlannedFrameDefaults.mentionAttachments(
+                for: LensPlannedFrameDefaults.entries(planned: planned, lens: lens, available: mentionEntries),
+                items: mentionReferenceItems
+            )
+        } else {
+            plannedReferenceAttachments = []
+            missingPlannedReferences = []
+        }
+        var seededReferences = plannedReferenceAttachments.compactMap { attachment in
+            mentionReferenceItems.first { $0.mediaId == attachment.sourceId }
+        }
         for item in initialReferenceItems where item.kind == .image {
             guard !seededReferences.contains(where: { $0.mediaId == item.mediaId }) else { continue }
             seededReferences.append(item)
@@ -1292,7 +1315,7 @@ struct FrameCreatorModal: View {
         // The upload path must exist even on an empty library — otherwise a
         // fresh project has no way to attach its first reference.
         if onUploadReferences != nil
-            || !referenceLibraryItems.isEmpty || !referenceItems.isEmpty
+            || !referenceLibraryItems.isEmpty || !referenceItems.isEmpty || !missingPlannedReferences.isEmpty
             || (!generatedFrameCandidates.isEmpty && onAdoptGeneratedFrame != nil) {
             let merge = primaryStack.map { stack in
                 (stack: stack, result: attachmentMerge(for: stack, resolution: mentionResolution))
@@ -1346,7 +1369,7 @@ struct FrameCreatorModal: View {
                             .foregroundStyle(PlateColor.inkFaint)
                     }
                 }
-                ForEach(referenceAdoptionFailureNotes, id: \.self) { note in
+                ForEach(missingPlannedReferences + referenceAdoptionFailureNotes, id: \.self) { note in
                     Text(note)
                         .font(PlateType.label(8.5))
                         .foregroundStyle(CanonColor.rust)
@@ -1418,6 +1441,7 @@ struct FrameCreatorModal: View {
                 .opacity(dropped ? 0.45 : 1)
             Spacer(minLength: 0)
             Button {
+                removedReferenceIds.insert(item.mediaId)
                 referenceItems.removeAll { $0.mediaId == item.mediaId }
             } label: {
                 Image(systemName: "xmark")
@@ -1584,10 +1608,12 @@ struct FrameCreatorModal: View {
             return false
         }
         guard needsAdoption, let onAdoptGeneratedFrame else {
-            referenceItems = picks.compactMap {
+            let selected: [MediaItemRecord] = picks.compactMap {
                 if case .media(let item) = $0 { return item }
                 return nil
             }
+            removedReferenceIds.formUnion(Set(referenceItems.map(\.mediaId)).subtracting(selected.map(\.mediaId)))
+            referenceItems = selected
             return
         }
         isPreparingAttachments = true
@@ -1610,6 +1636,7 @@ struct FrameCreatorModal: View {
             for item in resolved where !deduped.contains(where: { $0.mediaId == item.mediaId }) {
                 deduped.append(item)
             }
+            removedReferenceIds.formUnion(Set(referenceItems.map(\.mediaId)).subtracting(deduped.map(\.mediaId)))
             referenceItems = deduped
             referenceAdoptionFailureNotes = failures
             isPreparingAttachments = false
@@ -1621,6 +1648,9 @@ struct FrameCreatorModal: View {
         referenceItems.compactMap { item in
             let path = attachmentPath(for: item)
             guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else { return nil }
+            if let identity = plannedReferenceAttachments.first(where: { $0.sourceId == item.mediaId }) {
+                return identity
+            }
             return LensPromptImageAttachment(
                 source: .moodboardImage,
                 sourceId: item.mediaId,
@@ -1714,37 +1744,24 @@ struct FrameCreatorModal: View {
         for entry: RosterMentionResolver.Entry,
         sheetOverrides: [String: MediaItemRecord] = [:]
     ) -> (items: [(item: MediaItemRecord, label: String)], usesSheet: Bool, isCharacterSheet: Bool) {
-        if identityFromSheetsOnly, entry.kind == .character {
-            let activeSheet = mentionReferenceItems.first { $0.mediaId == entry.activeSheetMediaId }
-            let picks = RosterCharacterRenderPrompt.identityAnchorPicks(
-                referenced: [],
-                referenceLabels: [:],
-                capOne: false,
-                activeSheet: activeSheet,
-                looseReferenceFallback: false
-            )
-            return (picks.map { ($0.item, $0.label) }, !picks.isEmpty, picks.first?.item.isCharacterSheet == true)
+        let onlySheet = identityFromSheetsOnly && entry.kind == .character
+        let referenced = onlySheet ? [] : entry.referenceMediaIds.compactMap { id in
+            mentionReferenceItems.first { $0.mediaId == id }
         }
-        // A generated character sheet is the identity anchor and rides alone.
-        if !entry.activeSheetMediaId.isEmpty,
-           let sheet = mentionReferenceItems.first(where: { $0.mediaId == entry.activeSheetMediaId }),
-           sheet.kind == .image,
-           FileManager.default.fileExists(atPath: sheet.path) {
-            return ([(sheet, "character sheet")], true, true)
+        let active = entry.kind == .character
+            ? mentionReferenceItems.first { $0.mediaId == entry.activeSheetMediaId }
+            : nil
+        let picks = RosterCharacterRenderPrompt.identityAnchorPicks(
+            referenced: referenced + (sheetOverrides[entry.id].map { [$0] } ?? []),
+            referenceLabels: entry.referenceLabels,
+            capOne: false,
+            activeSheet: active,
+            looseReferenceFallback: !onlySheet
+        ).filter { pick in
+            !removedReferenceIds.contains(pick.item.mediaId)
+                || referenceItems.contains { $0.mediaId == pick.item.mediaId }
         }
-        let referenced = entry.referenceMediaIds.compactMap { mediaId -> MediaItemRecord? in
-            guard let item = mentionReferenceItems.first(where: { $0.mediaId == mediaId }) else { return nil }
-            guard item.kind == .image, FileManager.default.fileExists(atPath: item.path) else { return nil }
-            return item
-        }
-        if let sheet = referenced.first(where: { $0.isRosterCompositeSheet }) {
-            return ([(sheet, entry.referenceLabels[sheet.mediaId] ?? "reference sheet")], true, false)
-        }
-        if let sheet = sheetOverrides[entry.id], FileManager.default.fileExists(atPath: sheet.path) {
-            return ([(sheet, "reference sheet")], true, false)
-        }
-        let leading = referenced.filter { !$0.isRosterCompositeSheet }.prefix(2)
-        return (leading.map { ($0, entry.referenceLabels[$0.mediaId] ?? "") }, false, false)
+        return (picks.map { ($0.item, $0.label) }, picks.first?.isSheet == true, picks.first?.item.isCharacterSheet == true)
     }
 
     /// Attachments + honesty notes for the current mentions on a given stack.

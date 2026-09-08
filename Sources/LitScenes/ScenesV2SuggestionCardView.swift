@@ -8,7 +8,7 @@ import SwiftUI
 /// Never draggable: a plan is not placeable material. Light-forced by the
 /// workbench, so PlateColor prints cream.
 struct ScenesV2SuggestionCardView: View {
-    static let height: CGFloat = 176
+    static let height: CGFloat = 224
 
     let model: ScenesV2SuggestionCardModel
     let renderCaption: String
@@ -18,6 +18,7 @@ struct ScenesV2SuggestionCardView: View {
     let accentSwatches: [LensColorSwatch]
     var onRender: () -> Void
     var onArtDirect: () -> Void
+    var onRepairReferences: () -> Void = {}
 
     private var tint: Color { model.isFailed ? CanonColor.rust : CanonColor.brass }
 
@@ -37,13 +38,14 @@ struct ScenesV2SuggestionCardView: View {
                 .fixedSize(horizontal: false, vertical: true)
             descriptionText
             castRow
+            ScenesV2ReferenceSummary(marks: model.cast, onRepair: onRepairReferences)
             Spacer(minLength: 0)
             actionsRow
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: Self.height)
+        .frame(minHeight: Self.height)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(PlateColor.cream)
@@ -120,6 +122,7 @@ struct ScenesV2SuggestionCardView: View {
     }
 
     private func avatarHelp(_ mark: ScenesV2CastMark) -> String {
+        if !mark.referenceSummary.isEmpty { return mark.referenceSummary }
         if mark.hasSheet { return "\(mark.name) — attaches the reference sheet" }
         if mark.hasSources { return "\(mark.name) — renders from source photos (no sheet yet)" }
         return "\(mark.name) — no reference images; renders from text"

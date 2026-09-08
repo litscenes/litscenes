@@ -2114,6 +2114,7 @@ struct LensReframeSpec: Codable, Hashable, Sendable {
     static let observerZoomMode = "observer_zoom"
     static let characterPOVMode = "character_pov"
 
+    var cameraTurn: LensCameraTurn? = nil
     var mode: String = LensReframeSpec.zoomMode
     var centerX: Double = 0.5
     var centerY: Double = 0.5
@@ -2154,6 +2155,7 @@ struct LensReframeSpec: Codable, Hashable, Sendable {
         if isZoomOut {
             return "Zoom Out"
         }
+        if cameraTurn != nil { return "Turn Camera" }
         if isViewpoint {
             return characterName.isEmpty ? "Viewpoint" : "\(characterName) Viewpoint"
         }
@@ -2197,8 +2199,10 @@ struct LensReframeSpec: Codable, Hashable, Sendable {
         characterPrompt: String = "",
         fidelity: String = LensReframeFidelity.fallback.rawValue,
         rotationDegrees: Double = 0,
-        includeCameraMap: Bool = true
+        includeCameraMap: Bool = true,
+        cameraTurn: LensCameraTurn? = nil
     ) {
+        self.cameraTurn = cameraTurn
         self.mode = mode
         self.centerX = centerX
         self.centerY = centerY
@@ -2218,6 +2222,7 @@ struct LensReframeSpec: Codable, Hashable, Sendable {
     func normalized() -> LensReframeSpec {
         var value = self
         value.mode = LensReframeSpec.normalizedMode(value.mode)
+        value.cameraTurn = value.isViewpoint ? value.cameraTurn?.normalized() : nil
         value.centerX = min(1, max(0, value.centerX))
         value.centerY = min(1, max(0, value.centerY))
         value.normalizedWidth = min(1, max(0, value.normalizedWidth))
@@ -2250,7 +2255,7 @@ struct LensReframeSpec: Codable, Hashable, Sendable {
         )
         if !value.rotationDegrees.isFinite
             || abs(value.rotationDegrees) < LensReframeMetrics.reticleRotationZeroSnapDegrees
-            || value.mode == LensReframeSpec.zoomOutMode {
+            || value.mode == LensReframeSpec.zoomOutMode || value.cameraTurn != nil {
             value.rotationDegrees = 0
         }
         return value
@@ -2269,7 +2274,12 @@ struct LensReframeSpec: Codable, Hashable, Sendable {
         }
     }
 
+    static func normalizedTemplateMode(_ rawMode: String) -> String {
+        rawMode.trimmed == LensCameraTurn.templateMode ? LensCameraTurn.templateMode : normalizedMode(rawMode)
+    }
+
     enum CodingKeys: String, CodingKey {
+        case cameraTurn
         case mode
         case centerX
         case centerY
@@ -2288,6 +2298,7 @@ struct LensReframeSpec: Codable, Hashable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        cameraTurn = try? container.decodeIfPresent(LensCameraTurn.self, forKey: .cameraTurn)
         mode = try container.decodeIfPresent(String.self, forKey: .mode) ?? LensReframeSpec.zoomMode
         centerX = try container.decodeIfPresent(Double.self, forKey: .centerX) ?? 0.5
         centerY = try container.decodeIfPresent(Double.self, forKey: .centerY) ?? 0.5
@@ -2543,7 +2554,7 @@ struct ReframePromptTemplate: Codable, Hashable, Identifiable, Sendable {
     func normalized(order: Int = 0) -> ReframePromptTemplate {
         var value = self
         value.workflow = value.workflow.trimmed.isEmpty ? ReframePromptTemplate.workflowName : value.workflow.trimmed
-        value.mode = LensReframeSpec.normalizedMode(value.mode)
+        value.mode = LensReframeSpec.normalizedTemplateMode(value.mode)
         value.model = value.model.trimmed
         value.title = value.title.trimmed
         value.body = value.body.trimmed
@@ -2651,7 +2662,7 @@ struct ProjectPromptSettingsDocument: Codable, Hashable, Sendable {
     }
 
     func reframeTemplate(mode rawMode: String, model rawModel: String) -> ReframePromptTemplate {
-        let mode = LensReframeSpec.normalizedMode(rawMode)
+        let mode = LensReframeSpec.normalizedTemplateMode(rawMode)
         let model = rawModel.trimmed
         let normalized = normalized(projectId: projectId)
         if !model.isEmpty,
@@ -2669,7 +2680,7 @@ struct ProjectPromptSettingsDocument: Codable, Hashable, Sendable {
     }
 
     static func builtInTemplate(mode rawMode: String, model rawModel: String) -> ReframePromptTemplate {
-        let mode = LensReframeSpec.normalizedMode(rawMode)
+        let mode = LensReframeSpec.normalizedTemplateMode(rawMode)
         let model = rawModel.trimmed
         return builtInReframeTemplates().first {
             $0.mode == mode && $0.model == model
@@ -2680,6 +2691,13 @@ struct ProjectPromptSettingsDocument: Codable, Hashable, Sendable {
 
     static func builtInReframeTemplates() -> [ReframePromptTemplate] {
         [
+            ReframePromptTemplate(
+                templateId: "reframe:camera_turn:fallback",
+                mode: LensCameraTurn.templateMode,
+                model: "",
+                title: "Turn Camera",
+                body: "Use the supplied full scene and camera-position reference to produce a coherent new view. The camera guide states intent; it is not scene content or measured depth."
+            ),
             ReframePromptTemplate(
                 templateId: "reframe:zoom:fallback",
                 mode: LensReframeSpec.zoomMode,
@@ -2820,7 +2838,7 @@ struct ProjectPromptSettingsDocument: Codable, Hashable, Sendable {
     }
 
     private static func templateKey(mode rawMode: String, model rawModel: String) -> String {
-        "\(LensReframeSpec.normalizedMode(rawMode))|\(rawModel.trimmed)"
+        "\(LensReframeSpec.normalizedTemplateMode(rawMode))|\(rawModel.trimmed)"
     }
 
     /// Superseded built-in bodies, keyed like the live templates. Stored

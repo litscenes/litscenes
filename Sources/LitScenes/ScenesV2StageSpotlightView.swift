@@ -46,6 +46,7 @@ struct ScenesV2StageSpotlightView: View {
     var renderBlockReason: String = ""
     /// Roster names by character id, so a sheet-driven suggestion can say whose it is.
     var characterNamesById: [String: String] = [:]
+    var referenceMarksByImageId: [String: [ScenesV2CastMark]] = [:]
     /// THE WAY IN: with nothing suggested and no character able to drive
     /// suggestions, the empty plate points to CHARACTERS.
     var showsCreateCharacterNotice: Bool = false
@@ -249,7 +250,7 @@ struct ScenesV2StageSpotlightView: View {
     private var spotlight: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 12) {
-                Text(isStartFirstScene ? "READY TO BUILD YOUR FIRST SCENE" : "YOUR PLAN WANTS ITS FIRST FRAME")
+                Text(isStartFirstScene ? "READY TO BUILD YOUR FIRST SCENE" : "FEATURED SUGGESTION")
                     .font(CanonType.archive(8.5, weight: .bold))
                     .kerning(2.0)
                     .foregroundStyle(CanonColor.brass)
@@ -418,6 +419,10 @@ struct ScenesV2StageSpotlightView: View {
     private func artDirectPane(_ frame: ProjectLensHeroImage) -> some View {
         let prompt = frame.sourcePrompt.trimmed.nilIfEmpty ?? frame.prompt.trimmed
         return VStack(alignment: .leading, spacing: 10) {
+            Text("Also shown in Suggested Frames below")
+                .font(CanonType.interface(10))
+                .foregroundStyle(CanonColor.muted)
+            ScenesV2ReferenceSummary(marks: referenceMarksByImageId[frame.imageId] ?? [], onRepair: onOpenCharacters)
             if !prompt.isEmpty {
                 Text("THE BRIEF")
                     .font(CanonType.archive(6.5, weight: .semibold))

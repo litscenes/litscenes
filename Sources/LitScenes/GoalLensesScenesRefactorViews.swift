@@ -5232,7 +5232,7 @@ struct LensHeroPreviewRequest: Identifiable, Hashable {
     }
 }
 
-private struct LensHeroPreviewVersionToolbar: View {
+struct LensHeroPreviewVersionToolbar: View {
     let isActiveVersion: Bool
     let canMakeActive: Bool
     let currentImageId: String
@@ -5267,9 +5267,28 @@ private struct LensHeroPreviewVersionToolbar: View {
     var onOpenBrowseItem: ((LensHeroPreviewBrowseItem) -> Void)? = nil
     var onNavigate: ((Int) -> Void)? = nil
     var footer: AnyView = AnyView(EmptyView())
+    var pinnedAction: AnyView = AnyView(EmptyView())
     @State private var deleteArmed = false
 
     var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                toolbarContent.padding(14)
+            }
+            .frame(minHeight: 0, maxHeight: .infinity)
+            Rectangle().fill(CanonColor.hairlineDark).frame(height: 1)
+            pinnedAction.padding(14)
+        }
+        .frame(width: 280)
+        .frame(minHeight: 0, maxHeight: .infinity)
+        .background(RoundedRectangle(cornerRadius: 8).fill(CanonColor.sidebar.opacity(0.98)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(CanonColor.brass.opacity(0.42)))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.vertical, 12)
+        .padding(.trailing, 12)
+    }
+
+    private var toolbarContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             browseSection
             if onAnimate != nil || onStartScene != nil || onVariation != nil || onRestyle != nil || onRetry != nil || !takeStatus.isEmpty {
@@ -5432,7 +5451,6 @@ private struct LensHeroPreviewVersionToolbar: View {
                     .foregroundStyle(CanonColor.rust)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 0)
             footer
             if let onDelete {
                 Rectangle()
@@ -5473,13 +5491,6 @@ private struct LensHeroPreviewVersionToolbar: View {
                 .animation(.easeOut(duration: 0.14), value: deleteArmed)
             }
         }
-        .padding(14)
-        .frame(width: 218, alignment: .topLeading)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(CanonColor.sidebar.opacity(0.94)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(CanonColor.brass.opacity(0.42), lineWidth: 1))
-        .padding(.vertical, 18)
-        .padding(.trailing, 18)
     }
 
     /// The browse strip: little thumbnails of every stop the arrow keys step
@@ -5679,6 +5690,7 @@ struct LensHeroPreviewModal: View {
     /// Reticle tilt in degrees, clockwise-positive on screen; the generation is
     /// straightened so the tilted selection's top edge becomes the output's top.
     @State private var reframeRotationDegrees: Double = 0
+    @State private var cameraTurn = LensCameraTurn()
     @State private var reframeMode: String = LensReframeSpec.zoomMode
     @State private var reframeViewDirection: String = LensReframeViewDirection.north.rawValue
     @State private var reframeCastId: String = ""
@@ -5753,7 +5765,9 @@ struct LensHeroPreviewModal: View {
                             cast: request.reframeCast,
                             reframedFromSummary: request.reframeSummary,
                             rotationDegrees: reframeRotationDegrees,
-                            mode: $reframeMode,
+                            cameraTurn: $cameraTurn,
+                            composedCameraPrompt: composedCameraPrompt,
+                            mode: Binding(get: { reframeMode }, set: { value in changeReframeMode(value) }),
                             viewDirection: $reframeViewDirection,
                             includeCameraMap: $reframeIncludeCameraMap,
                             selectedCastId: $reframeCastId,
@@ -5787,22 +5801,30 @@ struct LensHeroPreviewModal: View {
                                 }
                             }
                         )
-                    )
+                    ),
+                    pinnedAction: AnyView(LensReframeGenerateAction(
+                        mode: reframeMode, hasFocus: reframeFocusCenter != nil, canReframe: canReframe,
+                        stackConfigured: isReframeStackConfigured(selectedReframeStack),
+                        blockReason: reframeSubmissionBlockReason, onGenerate: submitReframe
+                    ))
                 )
             ),
-            focusRect: reframeFocusRect,
-            focusRotationDegrees: reframeMode != LensReframeSpec.zoomOutMode ? reframeRotationDegrees : 0,
+            focusRect: reframeMode == LensReframeSpec.viewpointMode
+                ? reframeFocusCenter.map { CGRect(x: $0.x, y: $0.y, width: 0, height: 0) }
+                : reframeFocusRect,
+            isCameraPosition: reframeMode == LensReframeSpec.viewpointMode,
+            focusRotationDegrees: reframeMode == LensReframeSpec.zoomMode ? reframeRotationDegrees : 0,
             outpaintSourceRect: reframeZoomOutSourceRect,
             onImageClick: canReframe && reframeMode != LensReframeSpec.zoomOutMode
                 ? { point in setReframeFocus(point) }
                 : nil,
-            onFocusResize: canReframe && reframeMode != LensReframeSpec.zoomOutMode
+            onFocusResize: canReframe && reframeMode == LensReframeSpec.zoomMode
                 ? { rect in applyReframeResize(rect) }
                 : nil,
             onFocusMove: canReframe && reframeMode != LensReframeSpec.zoomOutMode
                 ? { point in moveReframeFocus(point) }
                 : nil,
-            onFocusRotate: canReframe && reframeMode != LensReframeSpec.zoomOutMode
+            onFocusRotate: canReframe && reframeMode == LensReframeSpec.zoomMode
                 ? { degrees in applyReframeRotate(degrees) }
                 : nil,
             onOutpaintSourceMove: canReframe && reframeMode == LensReframeSpec.zoomOutMode
@@ -5847,6 +5869,7 @@ struct LensHeroPreviewModal: View {
         .onKeyPress(.leftArrow) { navigateByKey(-1) }
         .onKeyPress(.rightArrow) { navigateByKey(1) }
         .onChange(of: request.imageId) { _, _ in
+            cameraTurn = LensCameraTurn()
             reframeFocusCenter = nil
             reframeReticleEdge = LensReframeMetrics.reticleEdgePixels
             reframeRotationDegrees = 0
@@ -5857,10 +5880,6 @@ struct LensHeroPreviewModal: View {
             reframeZoomOutSourceScale = LensReframeMetrics.zoomOutDefaultSourceScale
             reframeZoomOutCenter = CGPoint(x: 0.5, y: 0.5)
             narrationPlayer.stop()
-        }
-        .onChange(of: reframeMode) { oldMode, newMode in
-            saveReframePromptDraft(mode: oldMode)
-            restoreReframePromptDraft(mode: newMode)
         }
         .onAppear {
             browseKeysFocused = true
@@ -5991,6 +6010,9 @@ struct LensHeroPreviewModal: View {
     }
 
     private var reframeFocusSummary: String {
+        if reframeMode == LensReframeSpec.viewpointMode, let point = reframeFocusCenter {
+            return "Camera position · \(Int((point.x * 100).rounded()))% × \(Int((point.y * 100).rounded()))%"
+        }
         // Reads from the pinned reticle so the panel matches what's drawn
         // (and what the prompt/crop will use), not the raw click.
         guard let rect = reframeFocusRect else { return "" }
@@ -6086,7 +6108,21 @@ struct LensHeroPreviewModal: View {
         refreshReframePromptIfClean()
     }
 
+    private var composedCameraPrompt: String {
+        guard let spec = reframeSpecDraft(), spec.cameraTurn != nil else { return "Select a camera position in the image." }
+        return LensCameraTurn.prompt(spec: spec, parent: reframeParentPromptImage, settings: promptSettings,
+                                     model: selectedReframeStack.reframePromptModel, limit: selectedReframeStack.promptLimit)
+    }
+
+    private func changeReframeMode(_ newMode: String) {
+        guard newMode != reframeMode else { return }
+        saveReframePromptDraft(mode: reframeMode)
+        reframeMode = newMode
+        restoreReframePromptDraft(mode: newMode)
+    }
+
     private func resetReframePromptBody() {
+        guard reframeMode != LensReframeSpec.viewpointMode else { return }
         guard let spec = reframeSpecDraft() else {
             reframePromptBody = ""
             reframePromptBaseline = ""
@@ -6134,7 +6170,7 @@ struct LensHeroPreviewModal: View {
                 promptSettings: promptSettings
             )
             : reframePromptBody
-        onReframe(spec, selectedReframeStack, promptBody)
+        onReframe(spec, selectedReframeStack, spec.cameraTurn != nil ? composedCameraPrompt : promptBody)
     }
 
     private func reframeSpecDraft() -> LensReframeSpec? {
@@ -6161,8 +6197,8 @@ struct LensHeroPreviewModal: View {
             // The PINNED reticle center, not the raw click — near an edge the
             // reticle slides inside the frame, and the prompt/crop coordinates
             // must describe where the selection actually sits.
-            centerX: rect.isEmpty ? reframeFocusCenter.x : rect.midX,
-            centerY: rect.isEmpty ? reframeFocusCenter.y : rect.midY,
+            centerX: reframeMode == LensReframeSpec.viewpointMode || rect.isEmpty ? reframeFocusCenter.x : rect.midX,
+            centerY: reframeMode == LensReframeSpec.viewpointMode || rect.isEmpty ? reframeFocusCenter.y : rect.midY,
             normalizedWidth: rect.width,
             normalizedHeight: rect.height,
             viewDirection: reframeViewDirection,
@@ -6172,7 +6208,8 @@ struct LensHeroPreviewModal: View {
             characterPrompt: candidate?.compositePrompt ?? "",
             fidelity: reframeFidelity.rawValue,
             rotationDegrees: reframeRotationDegrees,
-            includeCameraMap: reframeIncludeCameraMap
+            includeCameraMap: reframeIncludeCameraMap,
+            cameraTurn: reframeMode == LensReframeSpec.viewpointMode ? cameraTurn.normalized() : nil
         ).normalized()
     }
 
@@ -6407,7 +6444,7 @@ private struct LensNarrationBar: View {
     }
 }
 
-private struct LensReframePanel: View {
+struct LensReframePanel: View {
     let hasFocus: Bool
     let focusSummary: String
     let cropPreview: NSImage?
@@ -6417,6 +6454,8 @@ private struct LensReframePanel: View {
     let reframedFromSummary: String
     /// Current reticle tilt; drives the compact 0° reset beside the summary.
     let rotationDegrees: Double
+    @Binding var cameraTurn: LensCameraTurn
+    let composedCameraPrompt: String
     @Binding var mode: String
     @Binding var viewDirection: String
     @Binding var includeCameraMap: Bool
@@ -6475,13 +6514,13 @@ private struct LensReframePanel: View {
                 HStack(spacing: 6) {
                     modeChip("Zoom In", value: LensReframeSpec.zoomMode, help: "Make a selected source area the whole new frame")
                     modeChip("Zoom Out", value: LensReframeSpec.zoomOutMode, help: "Pull the camera back to reveal a wider world around this frame")
-                    modeChip("Viewpoint", value: LensReframeSpec.viewpointMode, help: "Place the camera at the selected point and choose where it looks")
+                    modeChip("Turn Camera", value: LensReframeSpec.viewpointMode, help: "Place the camera at a selected point, then turn or tilt from that fixed position")
                 }
 
                 if mode == LensReframeSpec.zoomOutMode {
                     zoomOutControls
                 } else if !hasFocus {
-                    Text("Click the image to set a focus point.")
+                    Text(mode == LensReframeSpec.viewpointMode ? "Click the image to place the camera." : "Click the image to set a focus point.")
                         .font(CanonType.archive(9.5))
                         .foregroundStyle(CanonColor.muted)
                 } else {
@@ -6505,23 +6544,11 @@ private struct LensReframePanel: View {
                         }
                         .foregroundStyle(CanonColor.brass)
                     }
-                    promptEditor
-                    Button {
-                        onGenerate()
-                    } label: {
-                        HStack(spacing: 7) {
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 11, weight: .semibold))
-                            Text(generateButtonTitle)
-                                .font(CanonType.interface(11, weight: .semibold))
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if mode == LensReframeSpec.viewpointMode {
+                        cameraPromptEditor
+                    } else {
+                        promptEditor
                     }
-                    .buttonStyle(CanonSecondaryButtonStyle(isFullWidth: true))
-                    .disabled(generateBlocked)
-                    .help(generateHelp)
                 }
             }
         }
@@ -6534,7 +6561,7 @@ private struct LensReframePanel: View {
                 .font(CanonType.archive(9.5, weight: .medium))
                 .foregroundStyle(CanonColor.bone)
             Spacer(minLength: 0)
-            if rotationDegrees != 0 {
+            if mode == LensReframeSpec.zoomMode && rotationDegrees != 0 {
                 Button {
                     onResetRotation()
                 } label: {
@@ -6576,40 +6603,48 @@ private struct LensReframePanel: View {
             }
         }
         if mode == LensReframeSpec.viewpointMode {
-            viewpointCompass
-            if !cast.isEmpty {
-                Menu {
-                    Button("No character") {
-                        selectedCastId = ""
-                        onPromptContextChanged()
-                    }
-                    Divider()
-                    ForEach(cast) { candidate in
-                        Button(candidateLabel(candidate)) {
-                            selectedCastId = candidate.id
+            cameraAngleControls
+            DisclosureGroup("Advanced") {
+                Toggle("Include camera guide", isOn: $includeCameraMap)
+                    .toggleStyle(.checkbox)
+                    .help("Send a schematic of the camera position and turn. It does not measure scene depth.")
+                if !cast.isEmpty {
+                    Menu {
+                        Button("Neutral perspective") {
+                            selectedCastId = ""
                             onPromptContextChanged()
                         }
+                        Divider()
+                        ForEach(cast) { candidate in
+                            Button(candidateLabel(candidate)) {
+                                selectedCastId = candidate.id
+                                onPromptContextChanged()
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: selectedCastId.isEmpty ? "person.crop.circle.badge.questionmark" : "person.fill")
+                                .font(.system(size: 9, weight: .semibold))
+                            Text(selectedCastLabel)
+                                .font(CanonType.interface(10.5, weight: .medium))
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 8, weight: .semibold))
+                        }
+                        .foregroundStyle(CanonColor.bone)
+                        .padding(.horizontal, 8)
+                        .frame(height: 26)
+                        .background(RoundedRectangle(cornerRadius: 5).fill(CanonColor.paperInset.opacity(0.35)))
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(CanonColor.hairlineDark))
                     }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: selectedCastId.isEmpty ? "person.crop.circle.badge.questionmark" : "person.fill")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text(selectedCastLabel)
-                            .font(CanonType.interface(10.5, weight: .medium))
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .semibold))
-                    }
-                    .foregroundStyle(CanonColor.bone)
-                    .padding(.horizontal, 8)
-                    .frame(height: 26)
-                    .background(RoundedRectangle(cornerRadius: 5).fill(CanonColor.paperInset.opacity(0.35)))
-                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(CanonColor.hairlineDark))
+                    .menuStyle(.borderlessButton)
+                    .help("Camera height and embodiment only; this does not attach character reference images")
                 }
-                .menuStyle(.borderlessButton)
-                .help("Optional character context for the viewpoint camera")
+                Text("Perspective supplies camera-height context only, not character image references.")
+                    .font(CanonType.interface(9)).foregroundStyle(CanonColor.muted)
             }
+            .font(CanonType.interface(10))
         }
     }
 
@@ -6718,81 +6753,52 @@ private struct LensReframePanel: View {
         .help("Choose an executable model for this reframe operation")
     }
 
-    private var generateBlocked: Bool {
-        !submissionBlockReason.isEmpty
-            || !isStackConfigured(stack)
-            || (mode != LensReframeSpec.zoomOutMode && !hasFocus)
-    }
-
-    private var generateButtonTitle: String {
-        if !submissionBlockReason.isEmpty { return "Frame work in progress…" }
-        return mode == LensReframeSpec.zoomOutMode ? "Generate zoom out" : "Generate reframe"
-    }
-
-    private var generateHelp: String {
-        if !submissionBlockReason.isEmpty {
-            return submissionBlockReason
-        }
-        if !isStackConfigured(stack) {
-            return "Add the \(stack.credentialProvider.rawValue) provider key in App Settings"
-        }
-        if mode != LensReframeSpec.zoomOutMode, !hasFocus {
-            return "Click the image to choose a focus point"
-        }
-        if mode == LensReframeSpec.zoomOutMode {
-            return "Create a wider frame while preserving the source inset"
-        }
-        return "Render one new take derived from this focus"
-    }
-
     private var selectedCastLabel: String {
-        cast.first { $0.id == selectedCastId }.map(candidateLabel) ?? "No character"
+        cast.first { $0.id == selectedCastId }.map(candidateLabel) ?? "Neutral perspective"
     }
 
-    private var selectedViewDirection: LensReframeViewDirection {
-        LensReframeViewDirection.normalized(viewDirection)
+    private var cameraAngleControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            angleControl("Turn left / right", value: $cameraTurn.yawDegrees, range: -180...180, presets: [-90, -45, 0, 45, 90])
+            angleControl("Tilt down / up", value: $cameraTurn.pitchDegrees, range: -90...90, presets: [-45, 0, 45])
+            Text(cameraTurn.summary).font(CanonType.interface(11, weight: .semibold)).foregroundStyle(CanonColor.bone)
+            Text("AI interprets this camera position and direction from the source image.")
+                .font(CanonType.interface(9.5)).foregroundStyle(CanonColor.muted)
+        }
     }
 
-    private var viewpointCompass: some View {
+    private func angleControl(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, presets: [Double]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text("\(Int(value.wrappedValue))°").monospacedDigit()
+            }
+            .font(CanonType.interface(10, weight: .medium)).foregroundStyle(CanonColor.bone)
+            Slider(value: Binding(get: { value.wrappedValue }, set: { value.wrappedValue = ($0 / 5).rounded() * 5 }), in: range)
+                .accessibilityLabel(title)
+            HStack(spacing: 4) {
+                ForEach(presets, id: \.self) { angle in
+                    Button("\(Int(angle))°") { value.wrappedValue = angle }
+                        .buttonStyle(.plain)
+                        .font(CanonType.interface(10, weight: .semibold))
+                        .frame(maxWidth: .infinity, minHeight: 24)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(value.wrappedValue == angle ? CanonColor.brass : CanonColor.archiveWell))
+                        .foregroundStyle(value.wrappedValue == angle ? CanonColor.ink : CanonColor.bone)
+                }
+            }
+        }
+    }
+
+    private var cameraPromptEditor: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text("View")
-                    .font(CanonType.archive(9.5, weight: .medium))
-                    .foregroundStyle(CanonColor.muted)
-                Text(selectedViewDirection.label)
-                    .font(CanonType.archive(9.5, weight: .semibold))
-                    .foregroundStyle(CanonColor.bone)
+            Text("Additional direction").font(CanonType.interface(10, weight: .semibold)).foregroundStyle(CanonColor.muted)
+            ReframePromptEditor(text: $cameraTurn.operatorNotes).frame(height: 100)
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+            DisclosureGroup("Composed prompt") {
+                ReframePromptEditor(text: .constant(composedCameraPrompt), isEditable: false).frame(height: 180)
             }
-            VStack(spacing: 4) {
-                HStack(spacing: 4) {
-                    compassButton(.northwest)
-                    compassButton(.north)
-                    compassButton(.northeast)
-                }
-                HStack(spacing: 4) {
-                    compassButton(.west)
-                    Circle()
-                        .fill(CanonColor.brass.opacity(0.65))
-                        .frame(width: 24, height: 24)
-                        .overlay(Circle().stroke(CanonColor.hairlineDark, lineWidth: 1))
-                        .help("Selected camera origin")
-                    compassButton(.east)
-                }
-                HStack(spacing: 4) {
-                    compassButton(.southwest)
-                    compassButton(.south)
-                    compassButton(.southeast)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .center)
-
-            Toggle(isOn: $includeCameraMap) {
-                Text("Camera map")
-                    .font(CanonType.archive(9.5, weight: .medium))
-                    .foregroundStyle(CanonColor.muted)
-            }
-            .toggleStyle(.checkbox)
-            .help("Send a drawn top-down schematic of the requested camera move (A = original camera, B = this vantage point) alongside the source images.")
+            .font(CanonType.interface(10)).foregroundStyle(CanonColor.muted)
         }
     }
 
@@ -6813,37 +6819,11 @@ private struct LensReframePanel: View {
                 .foregroundStyle(CanonColor.brass)
                 .help("Replace the prompt body with the current default")
             }
-            TextEditor(text: $promptBody)
-                .font(CanonType.editorial(12.5))
-                .foregroundStyle(CanonColor.bone)
-                .frame(minHeight: 98)
-                .padding(6)
-                .background(RoundedRectangle(cornerRadius: 5).fill(CanonColor.paperInset.opacity(0.35)))
+            ReframePromptEditor(text: $promptBody)
+                .frame(height: 130)
+                .clipShape(RoundedRectangle(cornerRadius: 5))
                 .overlay(RoundedRectangle(cornerRadius: 5).stroke(CanonColor.hairlineDark))
         }
-    }
-
-    private func compassButton(_ direction: LensReframeViewDirection) -> some View {
-        let isSelected = selectedViewDirection == direction
-        return Button {
-            viewDirection = direction.rawValue
-            onPromptContextChanged()
-        } label: {
-            Image(systemName: direction.systemImage)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(isSelected ? CanonColor.paper : CanonColor.bone)
-                .frame(width: 26, height: 24)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(isSelected ? CanonColor.brass.opacity(0.92) : CanonColor.paperInset.opacity(0.35))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5)
-                        .stroke(isSelected ? CanonColor.brass : CanonColor.hairlineDark, lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
-        .help(direction.label)
     }
 
     private func candidateLabel(_ candidate: LensReframeCastCandidate) -> String {
@@ -6880,10 +6860,11 @@ private struct LensReframePanel: View {
         let isSelected = mode == value
         return Button {
             mode = value
-            onPromptContextChanged()
         } label: {
             Text(title)
                 .font(CanonType.interface(10.5, weight: .semibold))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
                 .foregroundStyle(isSelected ? CanonColor.paper : CanonColor.bone)
                 .frame(maxWidth: .infinity)
                 .frame(height: 24)

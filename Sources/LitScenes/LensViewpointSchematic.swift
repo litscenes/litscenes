@@ -62,14 +62,23 @@ func lensViewpointSchematicPlan(spec: LensReframeSpec) -> LensViewpointSchematic
         x: frameRect.minX + CGFloat(clean.centerX) * frameRect.width,
         y: frameRect.minY + CGFloat(clean.centerY) * frameRect.height
     )
-    let heading = lensViewpointPlanHeading(clean.resolvedViewDirection)
+    let heading: CGVector
+    if let turn = clean.cameraTurn {
+        let radians = turn.yawDegrees * .pi / 180
+        heading = CGVector(dx: sin(radians), dy: -cos(radians))
+    } else {
+        heading = lensViewpointPlanHeading(clean.resolvedViewDirection)
+    }
     let arrowLength: CGFloat = 120
-    let legend = [
+    var legend = [
         "TOP-DOWN CAMERA MAP — schematic convention, not a rendering of the scene.",
         "A = the original camera, looking into the scene; rectangle = the source frame's content.",
         "B = the requested new vantage point. Arrow = B's look direction.",
         "Depth is stated intent: higher in the source frame = farther from A."
     ]
+    if let turn = clean.cameraTurn {
+        legend[2] = "B = fixed camera position. Turn: \(Int(turn.yawDegrees))°; tilt: \(Int(turn.pitchDegrees))° (positive = right / up)."
+    }
     return LensViewpointSchematicPlan(
         canvasSize: canvas,
         frameRect: frameRect,

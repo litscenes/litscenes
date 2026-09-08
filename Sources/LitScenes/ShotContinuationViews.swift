@@ -214,6 +214,12 @@ struct ShotContinuationReviewView: View {
                     .font(CanonType.interface(9.5))
                     .foregroundStyle(CanonColor.ink.opacity(0.65))
                     .fixedSize(horizontal: false, vertical: true)
+                if let notice = availability.endpointNotice {
+                    Text(notice)
+                        .font(CanonType.interface(9.5))
+                        .foregroundStyle(CanonColor.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
@@ -222,7 +228,7 @@ struct ShotContinuationReviewView: View {
         switch availability.anchor?.sourceKind {
         case "frame": return "Ready Frame"
         case "footage": return "Placed Footage out point"
-        case "continuation_take": return "Selected continuation take"
+        case "continuation_take": return "Source continuation final frame"
         case "rendered_original": return "Rendered Original final frame"
         default: return "Saved Scene endpoint"
         }
@@ -232,7 +238,7 @@ struct ShotContinuationReviewView: View {
         if availability.anchor?.sourceKind == "frame" {
             return "This exact ready Frame is preserved with the take."
         }
-        return "This still is extracted from the visible Original tail and preserved with the take."
+        return "This still is extracted from the end of the source video and preserved with the take."
     }
 
     private func methodButton(

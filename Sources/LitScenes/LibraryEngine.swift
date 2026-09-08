@@ -5542,9 +5542,10 @@ final class LibraryEngine: ObservableObject {
         var anchor: ShotContinuationAnchor?
         var suggestedPrompt = "Smooth continuous camera and subject motion from the current final frame."
         if let record = shot.continuationRecord(entryId: tailEntry.entryId),
-           let take = record.selectedTake,
-           let clip = take.segmentClip,
-           FileManager.default.fileExists(atPath: clip.clipPath) {
+           let take = record.selectedTake {
+            guard let clip = take.segmentClip, FileManager.default.fileExists(atPath: clip.clipPath) else {
+                return ShotContinuationAvailability(lockReason: .missingTail)
+            }
             let duration = clip.durationSeconds > 0
                 ? clip.durationSeconds
                 : Double(max(clip.requestedDurationSeconds, 0))
@@ -5568,12 +5569,14 @@ final class LibraryEngine: ObservableObject {
             let renderedCoversTail = playable.map { version in
                 version.renderedEntryIds.isEmpty || version.renderedEntryIds.contains(tailEntry.entryId)
             } ?? false
-            if let playable, renderedCoversTail, playable.isReady,
-               FileManager.default.fileExists(atPath: playable.videoPath) {
+            if let playable, renderedCoversTail, playable.isReady {
                 let finalClip = playable.clipPaths.last.flatMap { path in
                     playable.segmentClips.first { $0.clipPath == path }
                 } ?? playable.segmentClips.last
                 let clipPath = finalClip?.clipPath.trimmed.nilIfEmpty ?? playable.videoPath
+                guard FileManager.default.fileExists(atPath: clipPath) else {
+                    return ShotContinuationAvailability(lockReason: .missingTail)
+                }
                 let duration = finalClip.map {
                     $0.durationSeconds > 0 ? $0.durationSeconds : Double(max($0.requestedDurationSeconds, 0))
                 } ?? Double(max(playable.totalSeconds, 0))
@@ -5700,14 +5703,7 @@ final class LibraryEngine: ObservableObject {
     /// ProjectShot byte-for-byte unchanged.
     func prepareShotContinuationAvailability(shotId: String) async -> ShotContinuationAvailability {
         var availability = shotContinuationAvailability(shotId: shotId)
-        guard availability.lockReason == nil, var anchor = availability.anchor else { return availability }
-        // Coarse availability carries a display thumbnail, not an extracted
-        // endpoint. Video-backed Originals and Footage must resolve the tail.
-        if ["rendered_original", "footage"].contains(anchor.sourceKind) {
-            anchor.framePath = ""
-            anchor.frameFingerprint = ""
-            anchor.anchorFingerprint = ""
-        }
+        guard availability.lockReason == nil, let anchor = availability.anchor else { return availability }
         do {
             availability.anchor = try await prepareExactContinuationAnchor(anchor)
         } catch {
@@ -5845,7 +5841,17 @@ final class LibraryEngine: ObservableObject {
         var availability = shotContinuationRetakeAvailability(shotId: shotId, entryId: entryId)
         guard availability.lockReason == nil, let anchor = availability.anchor else { return availability }
         do {
-            availability.anchor = try await prepareExactContinuationAnchor(anchor)
+            let prepared = try await prepareExactContinuationAnchor(anchor)
+            availability.anchor = prepared
+            if prepared.endpointEvidence != nil,
+               let record = shotTimeline.shots.first(where: { $0.shotId == shotId })?.continuationRecord(entryId: entryId),
+               let previous = record.selectedTake ?? record.sortedTakes.last {
+                let historicalFingerprint = previous.anchor.frameFingerprint.nilIfEmpty
+                    ?? continuationFileFingerprint(path: previous.anchor.framePath, readsBytes: true)
+                if !historicalFingerprint.isEmpty, historicalFingerprint != prepared.frameFingerprint {
+                    availability.endpointNotice = "This uses the verified ending of the same source video. The earlier take used a different frame; its saved input is unchanged."
+                }
+            }
         } catch {
             availability.lockReason = .missingTail
         }
@@ -5873,7 +5879,8 @@ final class LibraryEngine: ObservableObject {
         take: ShotContinuationTake
     ) -> ShotContinuationAnchor? {
         let stored = take.anchor.normalized()
-        if stored.hasFrame
+        if (!stored.sourceKind.isEmpty && stored.sourceKind != "frame")
+            || stored.hasFrame
             || (!stored.tailClipPath.isEmpty
                 && FileManager.default.fileExists(atPath: stored.tailClipPath)) {
             return stored
@@ -5981,56 +5988,37 @@ final class LibraryEngine: ObservableObject {
         _ candidate: ShotContinuationAnchor
     ) async throws -> ShotContinuationAnchor {
         var anchor = candidate.normalized()
-        if anchor.hasFrame, FileManager.default.fileExists(atPath: anchor.framePath) {
-            if anchor.frameFingerprint.isEmpty {
-                anchor.frameFingerprint = continuationFileFingerprint(path: anchor.framePath, readsBytes: true)
-                anchor.anchorFingerprint = ""
+        if anchor.sourceKind == "frame", anchor.tailClipPath.isEmpty {
+            guard anchor.hasFrame, FileManager.default.fileExists(atPath: anchor.framePath) else {
+                throw ScreenGraphError.capture("Continuation Frame is missing")
             }
-            return anchor.normalized()
-        }
-        guard !anchor.tailClipPath.isEmpty,
-              FileManager.default.fileExists(atPath: anchor.tailClipPath) else {
-            throw ScreenGraphError.capture("Continuation tail media is missing")
-        }
-        let cacheDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("litscenes_continuation_review", isDirectory: true)
-        try ensureDirectory(cacheDirectory)
-        let outputURL = cacheDirectory.appendingPathComponent(
-            "tail_\(shortHash(anchor.resolvedFingerprint, length: 18)).png"
-        )
-        if anchor.sourceKind == "footage" {
-            guard let media = items.first(where: { $0.path == anchor.tailClipPath }) else {
-                throw ScreenGraphError.capture("Continuation footage is no longer in the media library")
-            }
-            let source = sources.first { $0.sourceId == media.sourceId }
-            let sourceURL = URL(fileURLWithPath: anchor.tailClipPath)
-            let sourceSeconds = max(
-                anchor.tailClipEndSeconds - (1.0 / 24.0),
-                anchor.tailClipStartSeconds
-            )
-            _ = try await store.withSourceAccess(source) {
-                try await VideoChainMedia.extractFrameStill(
-                    videoURL: sourceURL,
-                    atSeconds: sourceSeconds,
-                    outputURL: outputURL
-                )
-            }
+            anchor.frameFingerprint = try ShotVideoEndpoint.fingerprint(URL(fileURLWithPath: anchor.framePath))
+            anchor.endpointEvidence = nil
         } else {
-            _ = try await VideoChainMedia.extractFinalFrame(
-                videoURL: URL(fileURLWithPath: anchor.tailClipPath),
-                outputURL: outputURL
-            )
+            guard !anchor.tailClipPath.isEmpty else {
+                throw ScreenGraphError.capture("Continuation tail video is missing")
+            }
+            let sourceURL = URL(fileURLWithPath: anchor.tailClipPath)
+            let prepared: ShotVideoEndpoint.Prepared
+            if anchor.sourceKind == "footage" {
+                guard let media = items.first(where: { $0.path == anchor.tailClipPath }) else {
+                    throw ScreenGraphError.capture("Continuation footage is no longer in the media library")
+                }
+                let source = sources.first { $0.sourceId == media.sourceId }
+                let start = anchor.tailClipStartSeconds
+                let end = anchor.tailClipEndSeconds
+                prepared = try await store.withSourceAccess(source) {
+                    try await ShotVideoEndpoint.prepare(videoURL: sourceURL,
+                        startSeconds: start, endSeconds: end)
+                }
+            } else {
+                prepared = try await ShotVideoEndpoint.prepare(videoURL: sourceURL)
+            }
+            anchor.framePath = prepared.frameURL.path
+            anchor.frameFingerprint = prepared.evidence.frameFingerprint
+            anchor.endpointEvidence = prepared.evidence
+            anchor.tailClipFingerprint = continuationFileFingerprint(path: anchor.tailClipPath, readsBytes: false)
         }
-        let digest = continuationFileFingerprint(path: outputURL.path, readsBytes: true)
-        guard !digest.isEmpty else {
-            throw ScreenGraphError.capture("Could not fingerprint the continuation frame")
-        }
-        anchor.framePath = outputURL.path
-        anchor.frameFingerprint = digest
-        anchor.tailClipFingerprint = continuationFileFingerprint(
-            path: anchor.tailClipPath,
-            readsBytes: false
-        )
         anchor.anchorFingerprint = ""
         return anchor.normalized()
     }
@@ -6210,10 +6198,15 @@ final class LibraryEngine: ObservableObject {
                     outputURL: work.appendingPathComponent("target_input.png"), profile: profile, fitPolicy: .fitWithBlurFill)
             }
             // Keep review provenance durable before normalization or submission.
-            take.anchor = try await prepareExactContinuationAnchor(take.anchor)
+            let verifiedAnchor = try await prepareExactContinuationAnchor(take.anchor)
+            try ShotVideoEndpoint.validateReviewed(take.anchor, prepared: verifiedAnchor)
+            take.anchor.endpointEvidence = verifiedAnchor.endpointEvidence
             let anchorURL = work.appendingPathComponent("anchor.png")
             if take.anchor.framePath != anchorURL.path {
                 try FileManager.default.copyItem(at: URL(fileURLWithPath: take.anchor.framePath), to: anchorURL)
+            }
+            guard try ShotVideoEndpoint.fingerprint(anchorURL) == take.anchor.frameFingerprint else {
+                throw ScreenGraphError.capture("The continuation frame changed while saving. Reopen the review before rendering.")
             }
             take.anchor.framePath = anchorURL.path
             take.anchor.anchorFingerprint = ""
@@ -6304,6 +6297,8 @@ final class LibraryEngine: ObservableObject {
             guard !isGenerationPaused else { throw ScreenGraphError.capture("Generation is paused — resume to continue") }
             guard currentProject?.projectId == project.projectId else { throw CancellationError() }
             guard persist() else { throw ScreenGraphError.capture("Could not save the continuation attempt; no provider request was sent") }
+            let submissionAnchor = try await prepareExactContinuationAnchor(take.anchor)
+            try ShotVideoEndpoint.validateReviewed(take.anchor, prepared: submissionAnchor)
             phase = "provider"
             let result = try await generateShotClip(provider: provider, input: input, onProviderCompleted: { result in
                 take.providerOutputPath = result.outputURL.path
@@ -7572,7 +7567,7 @@ final class LibraryEngine: ObservableObject {
         promptBody: String = "",
         onRowCreated: ((String) -> Void)? = nil
     ) async -> Bool {
-        return await WorkflowCoordinator.shared.run(project: currentProject, workflow: "frame_reframe", artifactType: "scene_plan", artifactId: lensId, lane: .image, recipeJSON: workflowRecipe(["lensId": String(describing: lensId), "parentImageId": String(describing: parentImageId), "promptBody": String(describing: promptBody)]), failure: false) { [self] in
+        return await WorkflowCoordinator.shared.run(project: currentProject, workflow: "frame_reframe", artifactType: "scene_plan", artifactId: lensId, lane: .image, recipeJSON: workflowRecipe(["lensId": String(describing: lensId), "parentImageId": String(describing: parentImageId), "promptBody": String(describing: promptBody), "cameraSpec": workflowRecipe(rawSpec)]), failure: false) { [self] in
             guard let project = currentProject else {
                 aestheticStatus = "Create or select a project first"
                 return false
@@ -7725,7 +7720,7 @@ final class LibraryEngine: ObservableObject {
             let request = LensNewTakeRenderRequest(
                 stack: stack,
                 styleMode: .describeStyleInPrompt,
-                prompt: LensReframeComposer.prompt(
+                prompt: spec.cameraTurn != nil ? LensCameraTurn.prompt(spec: spec, parent: parent, settings: projectPromptSettings, model: stack.reframePromptModel, limit: stack.promptLimit) : LensReframeComposer.prompt(
                     spec: spec,
                     parent: parent,
                     model: stack.reframePromptModel,
@@ -7737,7 +7732,8 @@ final class LibraryEngine: ObservableObject {
                 promptImageAttachments: attachments,
                 reframe: spec,
                 reframeFocusCropPath: cropURL?.path,
-                reframeCameraMapPath: cameraMapURL?.path
+                reframeCameraMapPath: cameraMapURL?.path,
+                promptEnrichmentDisabled: spec.cameraTurn != nil ? true : nil
             )
             return await startLensHeroTakeRender(
                 lensId: lensId,
@@ -26799,35 +26795,16 @@ final class LibraryEngine: ObservableObject {
         let assetDuration = max(media.durationSeconds ?? 0, 0)
         let resolvedStart = min(max(startSeconds ?? 0, 0), assetDuration)
         let resolvedEnd = min(max(endSeconds ?? assetDuration, resolvedStart), assetDuration)
-        let cacheDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("clip_anchor_stills", isDirectory: true)
-        let cacheKey = shortHash(
-            "\(mediaId)|\(String(format: "%.3f", resolvedStart))|\(String(format: "%.3f", resolvedEnd))",
-            length: 16
-        )
-        let inURL = cacheDirectory.appendingPathComponent("in_\(cacheKey).png")
-        let outURL = cacheDirectory.appendingPathComponent("out_\(cacheKey).png")
-        if FileManager.default.fileExists(atPath: inURL.path),
-           FileManager.default.fileExists(atPath: outURL.path) {
-            return (inURL, outURL)
-        }
         let source = sources.first { $0.sourceId == media.sourceId }
-        let path = media.path
-        let inSeconds = resolvedStart + 0.02
-        let outSeconds = max(resolvedEnd - (1.0 / 24.0), resolvedStart)
+        let sourceURL = URL(fileURLWithPath: media.path)
         do {
             return try await store.withSourceAccess(source) {
-                let inStill = try await VideoChainMedia.extractFrameStill(
-                    videoURL: URL(fileURLWithPath: path),
-                    atSeconds: inSeconds,
-                    outputURL: inURL
-                )
-                let outStill = try await VideoChainMedia.extractFrameStill(
-                    videoURL: URL(fileURLWithPath: path),
-                    atSeconds: outSeconds,
-                    outputURL: outURL
-                )
-                return (inStill, outStill)
+                let endpoint = try await ShotVideoEndpoint.prepare(videoURL: sourceURL,
+                    startSeconds: resolvedStart, endSeconds: resolvedEnd)
+                let inURL = endpoint.frameURL.deletingPathExtension().appendingPathExtension("in.png")
+                _ = try await VideoChainMedia.extractFrameStill(videoURL: sourceURL,
+                    atSeconds: resolvedStart, outputURL: inURL)
+                return (inURL, endpoint.frameURL)
             }
         } catch {
             return nil
@@ -31548,7 +31525,14 @@ final class LibraryEngine: ObservableObject {
                     }
                 }), let record = shot.continuationRecord(entryId: item.pair.endPlacementEntryId),
                    let template = record.selectedTake ?? record.sortedTakes.last,
-                   let anchor = savedContinuationSourceAnchor(shot: shot, record: record, take: template) {
+                   let candidate = savedContinuationSourceAnchor(shot: shot, record: record, take: template) {
+                    let anchor: ShotContinuationAnchor
+                    do {
+                        anchor = try await prepareExactContinuationAnchor(candidate)
+                    } catch {
+                        aestheticStatus = "Could not prepare the continuation endpoint: \(error.localizedDescription)"
+                        return false
+                    }
                     return await startShotContinuationRetake(shotId: shotId, entryId: record.entryId,
                         request: ShotContinuationRequest(mode: template.targetFrame != nil ? .arriveAtFrame : (item.renderStack.isNativeFootageExtend ? .nativeExtend : .outFrame),
                             stack: item.renderStack, prompt: item.effectivePrompt, preparedAnchor: anchor, targetFrame: template.targetFrame)).succeeded
@@ -31786,15 +31770,12 @@ final class LibraryEngine: ObservableObject {
                 // Footage boundary endpoints resolve to REAL stills extracted
                 // from the placed clip; every other keyframe normalizes its own
                 // imagePath as always.
-                var footageByBoundaryId: [String: (clip: ShotFootageClip, seconds: Double)] = [:]
+                var footageByBoundaryId: [String: (clip: ShotFootageClip, isEnd: Bool)] = [:]
                 for case .footage(let segment) in plan.segments {
                     let clip = segment.clip
                     let ids = clip.boundaryFrameIds
-                    footageByBoundaryId[ids.start] = (clip, clip.resolvedStartSeconds + 0.02)
-                    footageByBoundaryId[ids.end] = (
-                        clip,
-                        max(clip.resolvedEndSeconds - (1.0 / 24.0), clip.resolvedStartSeconds)
-                    )
+                    footageByBoundaryId[ids.start] = (clip, false)
+                    footageByBoundaryId[ids.end] = (clip, true)
                 }
 
                 // Normalize each distinct keyframe once.
@@ -31807,12 +31788,17 @@ final class LibraryEngine: ObservableObject {
                             "footage_boundary_\(shortHash(frame.imageId, length: 16)).png"
                         )
                         let source = sources.first { $0.sourceId == boundary.clip.sourceId }
-                        _ = try await store.withSourceAccess(source) {
-                            try await VideoChainMedia.extractFrameStill(
-                                videoURL: URL(fileURLWithPath: boundary.clip.path),
-                                atSeconds: boundary.seconds,
-                                outputURL: stillURL
-                            )
+                        try await store.withSourceAccess(source) {
+                            if boundary.isEnd {
+                                _ = try await VideoChainMedia.extractVideoEndpoint(
+                                    videoURL: URL(fileURLWithPath: boundary.clip.path), outputURL: stillURL,
+                                    startSeconds: boundary.clip.resolvedStartSeconds,
+                                    endSeconds: boundary.clip.resolvedEndSeconds)
+                            } else {
+                                _ = try await VideoChainMedia.extractFrameStill(
+                                    videoURL: URL(fileURLWithPath: boundary.clip.path),
+                                    atSeconds: boundary.clip.resolvedStartSeconds, outputURL: stillURL)
+                            }
                         }
                         sourceURL = stillURL
                     } else {
@@ -37405,6 +37391,9 @@ enum LensReframeComposer {
         promptBody: String = ""
     ) -> String {
         let spec = rawSpec.normalized()
+        if spec.cameraTurn != nil {
+            return LensCameraTurn.prompt(spec: spec, parent: parent, settings: promptSettings, model: model)
+        }
         let templateBody = promptBody.trimmed.isEmpty
             ? promptSettings.reframeTemplate(mode: spec.mode, model: model).body
             : promptBody
@@ -37418,6 +37407,9 @@ enum LensReframeComposer {
         promptSettings: ProjectPromptSettingsDocument
     ) -> String {
         let spec = rawSpec.normalized()
+        if spec.cameraTurn != nil {
+            return LensCameraTurn.prompt(spec: spec, parent: parent, settings: promptSettings, model: model)
+        }
         let template = promptSettings.reframeTemplate(mode: spec.mode, model: model)
         let body = renderTemplate(template.body, spec: spec, parent: parent)
         // Zoom fidelity rides in the SEEDED body only (visible + editable);
@@ -37482,6 +37474,7 @@ enum LensReframeComposer {
     }
 
     static func fullFrameAttachmentDescriptor(spec: LensReframeSpec) -> String {
+        if spec.cameraTurn != nil { return "Full source scene: visual authority for geography, lighting and identity.\n" + "Camera position and angles: " + LensCameraTurn.referenceSummary(spec: spec) }
         let cx = percent(spec.centerX)
         let cy = percent(spec.centerY)
         if spec.isZoomOut {
@@ -37510,6 +37503,7 @@ enum LensReframeComposer {
     }
 
     static func focusCropAttachmentDescriptor(spec: LensReframeSpec) -> String {
+        if spec.cameraTurn != nil { return "Camera-position context crop: locates the selected camera position in the full source. Its edges may be clipped at the source boundary; they do not change the camera position.\n" + "Camera position and angles: " + LensCameraTurn.referenceSummary(spec: spec) }
         let cx = percent(spec.centerX)
         let cy = percent(spec.centerY)
         if spec.isViewpoint {
@@ -37526,11 +37520,13 @@ enum LensReframeComposer {
     }
 
     static func cameraMapAttachmentDescriptor(spec: LensReframeSpec) -> String {
+        if spec.cameraTurn != nil { return "Camera guide: A is the original camera; B is the stationary selected camera position. The arrow expresses yaw relative to the original forward direction; pitch is annotated. Depth is a schematic convention, not a measurement. Take scene content from the source images.\n" + "Camera position and angles: " + LensCameraTurn.referenceSummary(spec: spec) }
         let cx = percent(spec.centerX)
         return "REFRAME camera map / top-down schematic - a DIAGRAM stating the requested camera move, not a rendering of the scene: marker A at the bottom is the original camera with its view of the source frame (the rectangle); marker B is the requested new vantage point, placed \(cx)% across the frame at a depth read from the source (higher in the source frame = farther from A); the arrow at B is the new look direction (\(spec.resolvedViewDirection.promptPhrase), restated in plan space). Use it ONLY to understand the spatial relationship between the original camera and the requested one — take all visual content from the other reference images."
     }
 
     static func compositeAttachmentDescriptor(spec: LensReframeSpec) -> String {
+        if spec.cameraTurn != nil { return "Labeled reference composite: full source scene, camera-position context crop and optional camera guide. Treat the guide as instructions only; generate one continuous scene, not a diagram or collage.\n" + "Camera position and angles: " + LensCameraTurn.referenceSummary(spec: spec) }
         let cx = percent(spec.centerX)
         let cy = percent(spec.centerY)
         if spec.isViewpoint {

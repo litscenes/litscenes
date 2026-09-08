@@ -7,6 +7,58 @@ import Foundation
 /// one-click Frame should look like the rest of the film), where the modal
 /// opens with style off.
 enum LensPlannedFrameDefaults {
+    /// Structured associations survive prompt edits and roster renames. Scene cast
+    /// names are matched only against their saved roster links or unique aliases.
+    static func entries(
+        planned: ProjectLensHeroImage,
+        lens: ProjectLens,
+        available: [RosterMentionResolver.Entry]
+    ) -> [RosterMentionResolver.Entry] {
+        var result: [RosterMentionResolver.Entry] = []
+        func append(_ entry: RosterMentionResolver.Entry?) {
+            guard let entry, !result.contains(where: { $0.id == entry.id && $0.kind == entry.kind }) else { return }
+            result.append(entry)
+        }
+        for id in [planned.suggestedForCharacterId ?? "", planned.characterId] where !id.trimmed.isEmpty {
+            append(available.first { $0.kind == .character && $0.id == id })
+        }
+        let cast = (lens.body.areas ?? []).flatMap(\.scenes).first { $0.sceneId == planned.sceneId }?.cast ?? []
+        for member in cast {
+            let links = (lens.body.castMembers ?? []).filter {
+                $0.name.trimmed.caseInsensitiveCompare(member.name.trimmed) == .orderedSame
+            }
+            let ids = Set(links.compactMap(\.characterId).filter { !$0.isEmpty })
+            if ids.count == 1, let id = ids.first {
+                append(available.first { $0.kind == .character && $0.id == id })
+            } else if ids.isEmpty {
+                let matches = available.filter { entry in
+                    entry.kind == .character && ([entry.name] + entry.aliases).contains {
+                        $0.trimmed.caseInsensitiveCompare(member.name.trimmed) == .orderedSame
+                    }
+                }
+                if matches.count == 1 { append(matches.first) }
+            }
+        }
+        let prompt = planned.sourcePrompt.trimmed.nilIfEmpty ?? planned.prompt.trimmed
+        for entry in RosterMentionResolver.resolve(prompt: prompt, entries: available).mentions { append(entry) }
+        return result
+    }
+
+    static func referencePlan(
+        planned: ProjectLensHeroImage,
+        lens: ProjectLens,
+        stack: RenderStack,
+        available: [RosterMentionResolver.Entry],
+        items: [MediaItemRecord],
+        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+    ) -> FrameCreatorAttachmentPlan {
+        frameCreatorAttachmentPlan(
+            seed: nil, direct: [],
+            mention: mentionAttachments(for: entries(planned: planned, lens: lens, available: available), items: items, fileExists: fileExists),
+            stack: stack
+        )
+    }
+
     static func request(
         planned: ProjectLensHeroImage,
         lens: ProjectLens,
@@ -20,10 +72,9 @@ enum LensPlannedFrameDefaults {
         let authored = planned.sourcePrompt.trimmed.nilIfEmpty ?? planned.prompt.trimmed
         let resolution = RosterMentionResolver.resolve(prompt: authored, entries: mentionEntries)
         let styleMode: LensRenderStyleMode = styleSlot == nil ? .none : .describeStyleInPrompt
-        let mention = mentionAttachments(for: resolution.mentions, items: mentionItems, fileExists: fileExists)
         // The shared merge law owns every provider cap (FAL slots, Stability's
         // composite, the six-image budget).
-        let combined = frameCreatorCombinedAttachments(seed: nil, direct: [], mention: mention, stack: stack).attachments
+        let combined = referencePlan(planned: planned, lens: lens, stack: stack, available: mentionEntries, items: mentionItems, fileExists: fileExists).attachments
         return LensNewTakeRenderRequest(
             stack: stack,
             styleMode: styleMode,

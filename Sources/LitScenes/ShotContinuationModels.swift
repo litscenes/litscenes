@@ -44,6 +44,7 @@ struct ShotContinuationAnchor: Codable, Hashable, Sendable {
     var tailClipEndSeconds: Double = 0
     var tailClipFingerprint: String = ""
     var anchorFingerprint: String = ""
+    var endpointEvidence: ShotVideoEndpointEvidence?
 
     var tailClipDurationSeconds: Double {
         max(tailClipEndSeconds - tailClipStartSeconds, 0)
@@ -55,7 +56,7 @@ struct ShotContinuationAnchor: Codable, Hashable, Sendable {
         case sourceKind, sourceEntryId, sourceTakeId, sourceRenderVersionId
         case sourceSegmentPlacementKey, framePath, frameFingerprint
         case tailClipPath, tailClipStartSeconds, tailClipEndSeconds
-        case tailClipFingerprint, anchorFingerprint
+        case tailClipFingerprint, anchorFingerprint, endpointEvidence
     }
 
     init(
@@ -100,6 +101,7 @@ struct ShotContinuationAnchor: Codable, Hashable, Sendable {
         tailClipEndSeconds = try container.decodeIfPresent(Double.self, forKey: .tailClipEndSeconds) ?? 0
         tailClipFingerprint = try container.decodeIfPresent(String.self, forKey: .tailClipFingerprint) ?? ""
         anchorFingerprint = try container.decodeIfPresent(String.self, forKey: .anchorFingerprint) ?? ""
+        endpointEvidence = try? container.decodeIfPresent(ShotVideoEndpointEvidence.self, forKey: .endpointEvidence)
     }
 
     var syntheticFrame: ProjectLensHeroImage {
@@ -468,6 +470,7 @@ struct ShotContinuationAvailability: Sendable {
     var outFrameAvailable: Bool = false
     var nativeStack: ShotRenderStack?
     var suggestedPrompt: String = "Smooth continuous camera and subject motion from the current final frame."
+    var endpointNotice: String?
 
     var canContinue: Bool {
         lockReason == nil

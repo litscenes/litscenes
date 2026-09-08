@@ -53,19 +53,53 @@ enum VideoChainMedia {
     }
 
     static func extractFinalFrame(videoURL: URL, outputURL: URL) async throws -> URL {
+        try await extractVideoEndpoint(videoURL: videoURL, outputURL: outputURL).url
+    }
+
+    struct EndpointFrame: Sendable {
+        var url: URL
+        var requestedSeconds: Double
+        var actualSeconds: Double
+    }
+
+    /// Source ranges are relative to the visual track, like placed Footage.
+    /// Request inside its exclusive end so variable frame timing and nonzero
+    /// track starts resolve to the last displayed sample, not a nearby keyframe.
+    static func extractVideoEndpoint(
+        videoURL: URL, outputURL: URL,
+        startSeconds: Double = 0, endSeconds: Double? = nil
+    ) async throws -> EndpointFrame {
+        try Task.checkCancellation()
         let asset = AVURLAsset(url: videoURL)
         let visualRange = try await videoTrackTimeRange(asset: asset)
-        let seconds = max(
-            visualRange.start.seconds,
-            CMTimeRangeGetEnd(visualRange).seconds - (1.0 / 24.0)
+        let duration = visualRange.duration.seconds
+        let end = min(endSeconds ?? duration, duration)
+        guard startSeconds.isFinite, end.isFinite, startSeconds >= 0, end > startSeconds else {
+            throw ScreenGraphError.capture("The continuation source range contains no visual frames.")
+        }
+        let scale = max(visualRange.start.timescale, visualRange.duration.timescale, 60_000)
+        let localEnd = CMTime(seconds: end, preferredTimescale: scale)
+        let localRequest = CMTimeMaximum(
+            CMTime(seconds: startSeconds, preferredTimescale: scale),
+            CMTimeSubtract(localEnd, CMTime(value: 1, timescale: scale))
         )
+        let requested = CMTimeAdd(visualRange.start, localRequest)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
         generator.maximumSize = CGSize(width: 1920, height: 1920)
-        let image = try await generateImage(generator: generator, at: CMTime(seconds: seconds, preferredTimescale: 600))
+        let result = try await generator.image(at: requested)
+        try Task.checkCancellation()
+        guard result.actualTime.isNumeric,
+              result.actualTime >= visualRange.start,
+              result.actualTime < CMTimeAdd(visualRange.start, localEnd) else {
+            throw ScreenGraphError.capture("Could not verify the continuation video's final frame.")
+        }
         try ensureDirectory(outputURL.deletingLastPathComponent())
-        _ = try writePNG(image, to: outputURL)
-        return outputURL
+        _ = try writePNG(result.image, to: outputURL)
+        return EndpointFrame(url: outputURL, requestedSeconds: requested.seconds,
+            actualSeconds: result.actualTime.seconds)
     }
 
     /// A frame-exact still at an arbitrary timestamp — used for footage

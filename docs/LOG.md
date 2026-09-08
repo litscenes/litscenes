@@ -51,3 +51,17 @@
 2026-09-08T00:45:26Z character-sheet-inspection — Enlarge character sheet inspection to most of the available screen, open at actual-size zoom, and use Active for the selected sheet in the UI. Preserve inspection-only behavior and existing artifacts.
 
 2026-09-08T00:51:44Z character-sheet-inspection — Completed larger screen-relative inspector with actual-size opening zoom and Active sheet selection copy. Build, 1,275 tests, actual native sheet size/pixel-scale/shortcut checks, hygiene and whitespace checks pass. No inference calls, commits, publication or pin update.
+
+2026-09-08T01:34:34Z analyze-modal-hide — Replace the disabled Analyze close control with Hide; minimize to a live status pill that reopens the existing log while analysis continues.
+
+2026-09-08T01:37:39Z analyze-modal-hide — Implemented Hide and live status-pill expansion in the canonical Desktop working tree. Swift build and all 1,275 existing tests pass. Public source hygiene, private hygiene checks for both the canonical and pinned checkouts, and whitespace checks pass. No interactive UI verification or paid inference calls. REUSE CLI is unavailable. No new tests, commits, pushes, or submodule pin changes.
+
+2026-09-08T02:08:27Z frame-references-camera-turn — Implement approved shared reference resolution and truthful suggestion UI; repair Reframe layout/contrast and add stationary Turn Camera angles, notes, prompt isolation, compatibility and trace validation.
+
+2026-09-08T02:42:12Z frame-references-camera-turn: implementation and validation complete; see `docs/20260908T020827Z_frame-references-camera-turn.log.md`. Shared source remains uncommitted in the public checkout.
+
+2026-09-08T03:25:27Z exact-video-endpoints — Implement approved correction for endpoint extraction, verified continuation inputs and retake review; preserve historical takes.
+
+2026-09-08T03:55:54Z exact-video-endpoints — Implemented exact/ranged video extraction, verified review cache, preserved retake inputs, missing-source guards and linked local trace events. Offline native append/reopen, retake/rechain/rebuild, footage, cancellation and provider-input checks pass; final package verification in progress.
+
+2026-09-08T03:57:48Z exact-video-endpoints — Complete: final offline native diagnostics pass, 1,281 existing tests pass serially, build/hygiene/whitespace/signature checks pass. Development app packaged; historical media preserved and no live project repair or paid calls performed.

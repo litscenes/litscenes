@@ -557,6 +557,7 @@ struct ScenesV2CastMark: Hashable, Sendable {
     var avatarIsSheet: Bool = false
     /// The character has source photos to render from when no sheet exists.
     var hasSources: Bool = false
+    var referenceSummary: String = ""
 
     var initial: String { String(name.trimmed.prefix(1)).uppercased() }
 }

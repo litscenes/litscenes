@@ -107,6 +107,7 @@ struct ScenesV2PoolGridSections: View {
     var accentSwatches: [LensColorSwatch] = []
     /// What a ready tile offers on hover (and in its menu) beside dragging.
     var tileAction: ScenesV2TileAction = .startScene
+    var onRepairReferences: () -> Void = {}
     var onRenderSuggestion: (String) -> Void = { _ in }
     var onArtDirectSuggestion: (String) -> Void = { _ in }
     var onMoreSuggestions: () -> Void = {}
@@ -228,7 +229,8 @@ struct ScenesV2PoolGridSections: View {
                             refusal: suggestionRefusals[card.imageId] ?? "",
                             accentSwatches: accentSwatches,
                             onRender: { onRenderSuggestion(card.imageId) },
-                            onArtDirect: { onArtDirectSuggestion(card.imageId) }
+                            onArtDirect: { onArtDirectSuggestion(card.imageId) },
+                            onRepairReferences: onRepairReferences
                         )
                     }
                 }

@@ -36,6 +36,24 @@ func safeShotContinuationError(_ error: Error, phase: String) -> String {
 func recordShotContinuationEvent(take: ShotContinuationTake, projectId: String, shotId: String,
     phase: String, status: String, message: String = "", latencyMs: Int = 0) async {
     guard let url = URL(string: "litscenes://continuation/\(safeIdentifier(take.takeId))") else { return }
+    var media: [String: Any] = [
+        "anchor_fingerprint": take.anchor.resolvedFingerprint,
+        "anchor_frame_fingerprint": take.anchor.frameFingerprint,
+        "output_fingerprint": take.outputFingerprint,
+        "target_frame_fingerprint": take.targetFrame?.fingerprint ?? "",
+        "target_frame_id": take.targetFrame?.imageId ?? "",
+        "source_kind": take.anchor.sourceKind,
+        "source_take_id": take.anchor.sourceTakeId,
+        "source_render_version_id": take.anchor.sourceRenderVersionId
+    ]
+    if let endpoint = take.anchor.endpointEvidence {
+        media["endpoint_revision"] = endpoint.revision
+        media["source_video_fingerprint"] = endpoint.sourceFingerprint
+        media["source_start_seconds"] = endpoint.sourceStartSeconds
+        media["source_end_seconds"] = endpoint.sourceEndSeconds
+        media["endpoint_requested_seconds"] = endpoint.requestedSeconds
+        media["endpoint_actual_seconds"] = endpoint.actualSeconds
+    }
     let metadata = InferenceTraceRequestMetadata(
         provider: take.renderStack.providerSelection.rawValue, apiFamily: "local_workflow",
         operation: status, projectId: projectId, runId: take.takeId,
@@ -45,11 +63,15 @@ func recordShotContinuationEvent(take: ShotContinuationTake, projectId: String, 
         model: take.renderStack.model.label,
         requestTextJSON: inferenceTraceJSONString(["operator_prompt": take.prompt, "stack": take.stack]),
         responseTextJSON: inferenceTraceJSONString(["status": status, "message": message, "request_id": take.requestId]),
-        mediaRefsJSON: inferenceTraceJSONString(["anchor_fingerprint": take.anchor.resolvedFingerprint, "output_fingerprint": take.outputFingerprint, "target_frame_fingerprint": take.targetFrame?.fingerprint ?? "", "target_frame_id": take.targetFrame?.imageId ?? ""]),
+        mediaRefsJSON: inferenceTraceJSONString(media),
         captureRequestBody: false, captureResponseBody: false
     )
     let failure: Error? = ["error", "canceled", "interrupted"].contains(status)
         ? ScreenGraphError.capture(message) : nil
-    _ = await InferenceTraceStore.shared.record(request: URLRequest(url: url), metadata: metadata,
+    let traceId = await InferenceTraceStore.shared.record(request: URLRequest(url: url), metadata: metadata,
         response: nil, responseBody: nil, latencyMs: latencyMs, error: failure)
+    if let context = WorkflowContext.current, !traceId.isEmpty {
+        await WorkflowCoordinator.shared.transition(context.jobId, phase: phase,
+            message: message, traceId: traceId)
+    }
 }

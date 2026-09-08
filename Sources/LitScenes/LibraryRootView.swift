@@ -2044,7 +2044,8 @@ private struct ProjectPromptSettingsPanel: View {
                 promptVariableRow
                 reframeModeSection(title: "Zoom In", mode: LensReframeSpec.zoomMode)
                 reframeModeSection(title: "Zoom Out", mode: LensReframeSpec.zoomOutMode)
-                reframeModeSection(title: "Viewpoint", mode: LensReframeSpec.viewpointMode)
+                reframeModeSection(title: "Legacy Viewpoint", mode: LensReframeSpec.viewpointMode)
+                reframeModeSection(title: "Turn Camera", mode: LensCameraTurn.templateMode)
             }
             .padding(.top, 10)
         } label: {
@@ -3063,8 +3064,8 @@ private struct MediaAnalysisTailOverlay: View {
 
     var body: some View {
         Group {
-            if library.mediaAnalysisRunState == .succeeded && !isExpanded {
-                completedPill
+            if !isExpanded {
+                statusPill
             } else {
                 expandedPanel
             }
@@ -3077,16 +3078,15 @@ private struct MediaAnalysisTailOverlay: View {
         .animation(.easeInOut(duration: 0.16), value: library.mediaAnalysisRunState)
     }
 
-    private var completedPill: some View {
+    private var statusPill: some View {
         HStack(spacing: 8) {
             Button {
                 isExpanded = true
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(CanonColor.olive)
+                    statusIndicator
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Analyze Media Complete")
+                        Text(statusTitle)
                             .font(CanonType.interface(12, weight: .semibold))
                             .foregroundStyle(CanonColor.bone)
                         Text(library.mediaAnalysisStatus)
@@ -3094,19 +3094,28 @@ private struct MediaAnalysisTailOverlay: View {
                             .foregroundStyle(CanonColor.muted)
                             .lineLimit(1)
                     }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.up")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(CanonColor.muted)
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Show media analysis log")
+            .help("Show media analysis log")
 
-            Button {
-                onClose()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.caption.weight(.bold))
-                    .frame(width: 28, height: 28)
+            if library.mediaAnalysisRunState != .running {
+                Button {
+                    onClose()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.bold))
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(CanonUtilityButtonStyle())
+                .help("Close")
             }
-            .buttonStyle(CanonUtilityButtonStyle())
-            .help("Close")
         }
         .padding(.leading, 13)
         .padding(.trailing, 8)
@@ -3115,7 +3124,7 @@ private struct MediaAnalysisTailOverlay: View {
         .background(CanonColor.sidebar, in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(CanonColor.olive.opacity(0.7))
+                .stroke(statusTint.opacity(0.7))
         )
         .shadow(color: .black.opacity(0.34), radius: 18, x: 0, y: 10)
         .gesture(dragGesture)
@@ -3140,16 +3149,7 @@ private struct MediaAnalysisTailOverlay: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Group {
-                if library.mediaAnalysisRunState == .running {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Image(systemName: statusIconName)
-                        .foregroundStyle(statusTint)
-                }
-            }
-            .frame(width: 18)
+            statusIndicator
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Analyze Media")
@@ -3167,33 +3167,48 @@ private struct MediaAnalysisTailOverlay: View {
                 cancelButton
             }
 
-            if library.mediaAnalysisRunState == .succeeded {
-                Button {
-                    isExpanded = false
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.caption.weight(.bold))
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(CanonUtilityButtonStyle())
-                .help("Minimize")
-            }
-
             Button {
-                onClose()
+                isExpanded = false
             } label: {
-                Image(systemName: "xmark")
-                    .font(.caption.weight(.bold))
-                    .frame(width: 28, height: 28)
+                Label("Hide", systemImage: "minus")
+                    .font(CanonType.interface(11, weight: .semibold))
+                    .padding(.horizontal, 8)
+                    .frame(height: 28)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .buttonStyle(CanonUtilityButtonStyle())
-            .disabled(library.mediaAnalysisRunState == .running)
-            .help(library.mediaAnalysisRunState == .running ? "Analysis is still running" : "Close")
+            .help(library.mediaAnalysisRunState == .running
+                ? "Hide the log; analysis continues in the background"
+                : "Minimize the analysis log")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .contentShape(Rectangle())
         .gesture(dragGesture)
+    }
+
+    private var statusIndicator: some View {
+        Group {
+            if library.mediaAnalysisRunState == .running {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: statusIconName)
+                    .foregroundStyle(statusTint)
+            }
+        }
+        .frame(width: 18)
+    }
+
+    private var statusTitle: String {
+        switch library.mediaAnalysisRunState {
+        case .running:
+            return "Analyzing Media"
+        case .succeeded:
+            return "Analyze Media Complete"
+        case .idle, .cancelled, .failed:
+            return "Analyze Media \(library.mediaAnalysisRunState.label)"
+        }
     }
 
     private var logTail: some View {
@@ -11478,6 +11493,7 @@ struct ImagePreviewModalShell<HeaderActions: View, ImageActions: View, DetailPan
     let imageOverlay: AnyView
     @Binding var zoomScale: CGFloat
     let focusRect: CGRect?
+    let isCameraPosition: Bool
     let focusRotationDegrees: Double
     let outpaintSourceRect: CGRect?
     let onImageClick: ((CGPoint) -> Void)?
@@ -11507,6 +11523,7 @@ struct ImagePreviewModalShell<HeaderActions: View, ImageActions: View, DetailPan
         imageActionHeight: CGFloat = 0,
         imageOverlay: AnyView = AnyView(EmptyView()),
         focusRect: CGRect? = nil,
+        isCameraPosition: Bool = false,
         focusRotationDegrees: Double = 0,
         outpaintSourceRect: CGRect? = nil,
         onImageClick: ((CGPoint) -> Void)? = nil,
@@ -11532,6 +11549,7 @@ struct ImagePreviewModalShell<HeaderActions: View, ImageActions: View, DetailPan
         self.imageActionHeight = imageActionHeight
         self.imageOverlay = imageOverlay
         self.focusRect = focusRect
+        self.isCameraPosition = isCameraPosition
         self.focusRotationDegrees = focusRotationDegrees
         self.outpaintSourceRect = outpaintSourceRect
         self.onImageClick = onImageClick
@@ -11729,6 +11747,7 @@ struct ImagePreviewModalShell<HeaderActions: View, ImageActions: View, DetailPan
                     minZoom: minZoom,
                     maxZoom: maxZoom,
                     focusRect: focusRect,
+                    isCameraPosition: isCameraPosition,
                     focusRotationDegrees: focusRotationDegrees,
                     outpaintSourceRect: outpaintSourceRect,
                     onImageClick: onImageClick,
@@ -12349,6 +12368,7 @@ struct ZoomableImageScrollView: NSViewRepresentable {
     let minZoom: CGFloat
     let maxZoom: CGFloat
     var focusRect: CGRect?
+    var isCameraPosition = false
     /// Visual tilt of the focus reticle, degrees, clockwise-positive on screen.
     var focusRotationDegrees: Double = 0
     var outpaintSourceRect: CGRect?
@@ -12384,6 +12404,7 @@ struct ZoomableImageScrollView: NSViewRepresentable {
         view.onFocusRotate = onFocusRotate
         view.onOutpaintSourceMove = onOutpaintSourceMove
         view.focusRotationDegrees = focusRotationDegrees
+        view.isCameraPosition = isCameraPosition
         view.focusRect = focusRect
         view.outpaintSourceRect = outpaintSourceRect
         view.configure(path: path, zoomScale: zoomScale)
@@ -12406,6 +12427,7 @@ struct ZoomableImageScrollView: NSViewRepresentable {
         view.onFocusRotate = onFocusRotate
         view.onOutpaintSourceMove = onOutpaintSourceMove
         view.focusRotationDegrees = focusRotationDegrees
+        view.isCameraPosition = isCameraPosition
         view.focusRect = focusRect
         view.outpaintSourceRect = outpaintSourceRect
         view.configure(path: path, zoomScale: zoomScale)
@@ -12535,6 +12557,7 @@ final class ImageZoomScrollView: NSScrollView {
     private let outpaintCanvasView = OutpaintGuideBackgroundView()
     private let outpaintSourceView = CursorImageView()
     private let focusReticleView = CursorTrackingView()
+    private let cameraPositionLabel = NSTextField(labelWithString: "CAMERA")
     private let focusResizeGrip = CursorTrackingView()
     private let focusRotateHandle = CursorTrackingView()
     private let focusRotateStem = HitTransparentView()
@@ -12577,6 +12600,9 @@ final class ImageZoomScrollView: NSScrollView {
     }
     var onActualSizeZoomChange: ((CGFloat) -> Void)?
     /// Normalized (0-1, top-left origin) focus square drawn in document space; nil hides it.
+    var isCameraPosition = false {
+        didSet { if oldValue != isCameraPosition { layoutFocusReticle() } }
+    }
     var focusRect: CGRect? {
         didSet {
             guard oldValue != focusRect else { return }
@@ -12776,6 +12802,10 @@ final class ImageZoomScrollView: NSScrollView {
         containerView.addSubview(outpaintCanvasView)
         containerView.addSubview(outpaintSourceView)
         containerView.addSubview(focusReticleView)
+        cameraPositionLabel.font = .systemFont(ofSize: 10, weight: .bold)
+        cameraPositionLabel.textColor = NSColor(CanonColor.brass)
+        cameraPositionLabel.isHidden = true
+        containerView.addSubview(cameraPositionLabel)
         containerView.addSubview(focusResizeGrip)
         containerView.addSubview(focusRotateStem)
         containerView.addSubview(focusRotateHandle)
@@ -12926,6 +12956,7 @@ final class ImageZoomScrollView: NSScrollView {
     }
 
     private func layoutFocusReticle() {
+        cameraPositionLabel.isHidden = !isCameraPosition || focusRect == nil
         guard let focusRect, imageView.frame.width > 0, imageView.frame.height > 0 else {
             focusReticleView.isHidden = true
             focusResizeGrip.isHidden = true
@@ -12934,10 +12965,18 @@ final class ImageZoomScrollView: NSScrollView {
             return
         }
         focusReticleView.isHidden = false
-        let reticleFrame = imageZoomFocusOverlayFrame(
+        var reticleFrame = imageZoomFocusOverlayFrame(
             normalizedRect: focusRect,
             imageFrame: imageView.frame
         )
+        if isCameraPosition {
+            reticleFrame = CGRect(x: reticleFrame.midX - 14, y: reticleFrame.midY - 14, width: 28, height: 28)
+            cameraPositionLabel.frame = CGRect(x: min(imageView.frame.maxX - 60, max(imageView.frame.minX, reticleFrame.midX - 30)),
+                                              y: min(imageView.frame.maxY - 16, reticleFrame.maxY + 4), width: 64, height: 16)
+        }
+        focusReticleView.layer?.cornerRadius = isCameraPosition ? 14 : 2
+        focusReticleView.layer?.backgroundColor = isCameraPosition ? NSColor(CanonColor.brass).withAlphaComponent(0.25).cgColor : nil
+        focusReticleView.setAccessibilityLabel(isCameraPosition ? "Camera position" : "Focus area")
         // `frame` is unreliable while a view carries a rotation: always level
         // the view, size it, then re-apply the tilt (which pivots on the center).
         focusReticleView.frameCenterRotation = 0
