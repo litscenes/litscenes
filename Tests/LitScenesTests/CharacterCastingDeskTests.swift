@@ -34,6 +34,7 @@ struct CharacterCastingDeskModelTests {
         #expect(normalized.sheetPromptOverride == "Render Auri as a tall figure.")
         #expect(normalized.sheetPromptOverrideBaseHash == "base")
         #expect(normalized.sheetStackId == "openai_base")
+        #expect(normalized.studyStackId == "openai_base")
         #expect(normalized.sheetPromptHashes == ["m1": "h1"])
 
         let encoded = try JSONCoding.encoder.encode(normalized)
@@ -43,6 +44,11 @@ struct CharacterCastingDeskModelTests {
         #expect(text.contains("\"sheet_prompt_hashes\""))
         let decoded = try JSONCoding.decoder.decode(ProjectCharacter.self, from: encoded)
         #expect(decoded == normalized)
+        var independent = normalized
+        independent.studyStackId = "fal_nano_banana_2"
+        let independentCopy = try JSONCoding.decoder.decode(ProjectCharacter.self, from: JSONCoding.encoder.encode(independent))
+        #expect(independentCopy.sheetStackId == "openai_base")
+        #expect(independentCopy.studyStackId == "fal_nano_banana_2")
 
         var blank = normalized
         blank.sheetPromptOverride = "   "
@@ -291,7 +297,7 @@ struct CharacterCastingStateTests {
         #expect(bare.note == "No appearance yet. The sheet will invent Auri from the name and story alone.")
         #expect(bare.noteTone == .softGold)
         #expect(bare.consequence == "From text alone · OpenAI Base · unpriced")
-        #expect(bare.barTitle == "RENDER SHEET" && !bare.barIsGhost && bare.disabledReason.isEmpty)
+        #expect(bare.barTitle == "GENERATE REFERENCE SHEET" && !bare.barIsGhost && bare.disabledReason.isEmpty)
 
         let one = characterCastingCopy(inputs { $0.sourceCount = 1; $0.attachedSourceCount = 1 })
         #expect(one.cardSentence == "Renders from your 1 source image and the description below, then anchors Auri in every scene.")
@@ -312,17 +318,17 @@ struct CharacterCastingStateTests {
         #expect(copy.consequence == "From the description · WAN 2.7 · unpriced")
     }
 
-    @Test("Cast copy: current is a ghost new version, stale renders again")
+    @Test("Cast copy: current and changed sheets both offer explicit regeneration")
     func castCopy() {
         let current = characterCastingCopy(inputs { $0.activeOrdinal = 2; $0.attachesSheet = true; $0.attachedSourceCount = 2 })
         #expect(current.mastheadStatus == "CAST · SHEET II")
         #expect(current.mastheadTone == .brass)
-        #expect(current.barTitle == "NEW VERSION" && current.barIsGhost)
-        #expect(current.note == "Sheet II is current." && current.noteTone == .muted)
+        #expect(current.barTitle == "REGENERATE REFERENCE SHEET" && !current.barIsGhost)
+        #expect(current.note == "Sheet II is selected for subsequent scenes." && current.noteTone == .muted)
         #expect(current.consequence == "From sheet II and 2 source images · OpenAI Base · unpriced")
 
         let stale = characterCastingCopy(inputs { $0.activeOrdinal = 2; $0.promptIsCurrent = false; $0.attachesSheet = true; $0.promptIsHandEdited = true })
-        #expect(stale.barTitle == "RENDER AGAIN" && !stale.barIsGhost)
+        #expect(stale.barTitle == "REGENERATE REFERENCE SHEET" && !stale.barIsGhost)
         #expect(stale.note == "Prompt changed since sheet II." && stale.noteTone == .softGold)
         #expect(stale.consequence == "From sheet II · OpenAI Base · unpriced · edited prompt")
     }
@@ -330,13 +336,13 @@ struct CharacterCastingStateTests {
     @Test("Failures land in words beside the action")
     func failureCopy() {
         let noSheet = characterCastingCopy(inputs { $0.lastFailure = "OpenAI refused the request." })
-        #expect(noSheet.barTitle == "RENDER SHEET")
+        #expect(noSheet.barTitle == "GENERATE REFERENCE SHEET")
         #expect(noSheet.note == "Last render failed: OpenAI refused the request.")
         #expect(noSheet.noteTone == .rust)
         #expect(noSheet.cardFailure == "The last render failed: OpenAI refused the request.")
         #expect(noSheet.mastheadStatus == "NOT YET CAST")
         let withSheet = characterCastingCopy(inputs { $0.lastFailure = "timeout"; $0.activeOrdinal = 1 })
-        #expect(withSheet.barTitle == "RENDER AGAIN")
+        #expect(withSheet.barTitle == "REGENERATE REFERENCE SHEET")
         #expect(withSheet.note == "Last render failed: timeout. Sheet I still anchors Auri.")
         #expect(withSheet.mastheadStatus == "CAST · SHEET I")
     }
@@ -358,7 +364,7 @@ struct CharacterCastingStateTests {
         let paused = characterCastingCopy(inputs { $0.blocker = .paused })
         #expect(paused.noteTone == .softGold && !paused.disabledReason.isEmpty)
         let busy = characterCastingCopy(inputs { $0.blocker = .busy })
-        #expect(busy.note == "Another character's render is running.")
+        #expect(busy.note == "This character’s reference sheet is generating.")
     }
 
     @Test("The next step wraps to the next uncast character, then SCENES")

@@ -104,29 +104,30 @@ struct CharacterStackMenu: View {
     /// On the cream plate the capsule takes the plate's ink and hairline.
     var onPlate: Bool = false
     var onSelect: (String) -> Void
+    var onOpenAppSettings: () -> Void = {}
 
     var body: some View {
         Menu {
             ForEach(stacks) { stack in
+                let blocker = credentialBlocker(stack)
                 Button {
                     onSelect(stack.id)
                 } label: {
-                    Text(
-                        characterStackMenuLabel(
-                            label: stack.label,
-                            isTextOnly: !stack.reframeCapable,
-                            blocked: credentialBlocker(stack) != nil
-                        ) + (stack.id == selectedStack?.id ? " ✓" : "")
-                    )
+                    Text(characterImageModelLabel(stack)
+                        + (blocker.map { " · Locked: \($0)" } ?? "")
+                        + (stack.id == selectedStack?.id ? " ✓" : ""))
                 }
+                .disabled(blocker != nil)
             }
+            Divider()
+            Button("Model settings…", action: onOpenAppSettings)
         } label: {
             HStack(spacing: 5) {
                 if let selectedStack, credentialBlocker(selectedStack) != nil {
                     Image(systemName: "lock.fill")
                         .font(.system(size: 7, weight: .semibold))
                 }
-                Text(selectedStack?.label ?? "No stack")
+                Text(selectedStack.map(characterImageModelLabel) ?? "Choose model")
                     .font(CanonType.archive(8.5, weight: .semibold))
                     .kerning(0.8)
                     .lineLimit(1)
@@ -142,6 +143,6 @@ struct CharacterStackMenu: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("The render stack for this character's sheet and studies")
+        .help("The model used by this action’s next generation")
     }
 }

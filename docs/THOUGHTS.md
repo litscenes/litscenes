@@ -47,3 +47,11 @@
 2026-09-07T21:05:09Z The fixed cream take-review background conflicts with inherited dark appearance; prompt assistance must also distinguish refining operator intent from proposing a fresh direction, and explicit text edits must atomically retire hidden timing authority.
 
 2026-09-07T21:43:26Z Prompt assistance changes the next draft, while selected media and retained timing stay independent; the existing narration-wide confirmation still owns its separate prompt save, and Logs navigation uses the owning Shot while traces retain segment identity.
+
+2026-09-07T23:22:27Z The source-row Generate action only opened an already-open editor; saved selections ignored later sources and a shared model picker hid its scope. The approved workflow names each output and preserves separate model choices.
+
+2026-09-08T00:00:12Z Character chat previously stored a multimodal raw request whose safe prompt and artifact were not readable in Traces; explicit text/media summaries now retain exact creative provenance without binary payloads.
+
+2026-09-08T00:00:12Z Prompt consistency is an instruction contract rather than verified image quality; explicit appearance changes outrank reference continuity, and independent panel generation remains deferred.
+
+2026-09-08T00:45:26Z The character inspector opens at Fit in a modest sheet; the requested inspection experience instead starts at actual pixel size with a larger screen-relative viewport, while Fit remains an explicit option.

@@ -20,20 +20,22 @@ struct CharacterActionBar: View {
             Rectangle()
                 .fill(CanonColor.hairlineDark)
                 .frame(height: 1)
-            HStack(alignment: .center, spacing: 14) {
-                stackMenu
-                StageBrassPill(
-                    title: copy.barTitle,
-                    icon: copy.barIsGhost ? "arrow.clockwise" : "sparkles",
-                    disabledReason: copy.disabledReason,
-                    style: copy.barIsGhost ? .ghost : .filled,
-                    action: onRender
-                )
-                noteColumn
-                Spacer(minLength: 8)
-                if let nextStep {
-                    nextStepButton(nextStep)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("REFERENCE SHEET")
+                    .font(CanonType.archive(8, weight: .bold))
+                    .kerning(1.2)
+                    .foregroundStyle(CanonColor.muted)
+                StyleStudioFlowLayout(spacing: 10) {
+                    stackMenu
+                    StageBrassPill(
+                        title: copy.barTitle,
+                        icon: "arrow.clockwise",
+                        disabledReason: copy.disabledReason,
+                        action: onRender
+                    )
+                    if let nextStep { nextStepButton(nextStep) }
                 }
+                noteColumn
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 11)
@@ -46,7 +48,8 @@ struct CharacterActionBar: View {
             stacks: stacks,
             selectedStack: selectedStack,
             credentialBlocker: credentialBlocker,
-            onSelect: onSelectStack
+            onSelect: onSelectStack,
+            onOpenAppSettings: onOpenAppSettings
         )
     }
 
@@ -55,7 +58,7 @@ struct CharacterActionBar: View {
             Text(copy.consequence)
                 .font(CanonType.interface(11.5))
                 .foregroundStyle(CanonColor.bone.opacity(0.8))
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
             if !copy.note.isEmpty {
                 HStack(spacing: 8) {
                     if case .rendering = stage {
@@ -74,7 +77,7 @@ struct CharacterActionBar: View {
                 }
             }
         }
-        .frame(maxWidth: 460, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func nextStepButton(_ step: CharacterNextStep) -> some View {

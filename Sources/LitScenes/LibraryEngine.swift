@@ -766,7 +766,7 @@ private enum LensHeroImageRunner {
                         prompt: userPrompt,
                         instructions: instructions,
                         sources: sources,
-                        imageModel: job.provider.model,
+                        imageModel: job.stack?.model ?? job.provider.model,
                         size: job.imageSize,
                         quality: "medium",
                         outputFormat: outputFormat,
@@ -783,7 +783,7 @@ private enum LensHeroImageRunner {
                 let result = try await openAIClient.generateImageEdit(
                     prompt: providerPrompt,
                     sources: sources,
-                    model: job.provider.model,
+                    model: job.stack?.model ?? job.provider.model,
                     size: job.imageSize,
                     quality: "medium",
                     outputFormat: outputFormat,
@@ -799,7 +799,7 @@ private enum LensHeroImageRunner {
             }
             let result = try await openAIClient.generateProofImage(
                 prompt: prompt,
-                model: job.provider.model,
+                model: job.stack?.model ?? job.provider.model,
                 size: job.imageSize,
                 quality: "medium",
                 outputFormat: outputFormat,
@@ -1927,7 +1927,21 @@ final class LibraryEngine: ObservableObject {
     /// A roster character reference render in flight (independent of lens renders —
     /// the two may run side by side; they only share the status line).
     @Published private(set) var activeCharacterRenderIds: Set<String> = []
-    var isGeneratingCharacterRender: Bool { !activeCharacterRenderIds.isEmpty }
+    @Published private(set) var pendingCharacterImageIds: Set<String> = []
+    @Published private(set) var pendingCharacterSheetIds: Set<String> = []
+    var isGeneratingCharacterRender: Bool { !activeCharacterRenderIds.isEmpty || !pendingCharacterImageIds.isEmpty }
+
+    func characterImageIsGenerating(_ characterId: String) -> Bool {
+        activeCharacterRenderIds.contains(characterId) || pendingCharacterImageIds.contains(characterId)
+    }
+
+    func characterSheetIsGenerating(_ characterId: String) -> Bool {
+        activeCharacterSheetIds.contains(characterId) || pendingCharacterSheetIds.contains(characterId)
+    }
+
+    private func characterImageJobIsBusy(_ characterId: String) -> Bool {
+        characterImageIsGenerating(characterId) || characterSheetIsGenerating(characterId)
+    }
     /// The project's terrain map document; hydrated per project, mutated only
     /// through saveTerrainMap.
     @Published private(set) var terrainMap: TerrainMapDocument = .empty(projectId: "")
@@ -1939,7 +1953,7 @@ final class LibraryEngine: ObservableObject {
     var activeCharacterRenderCharacterId: String { activeCharacterRenderIds.sorted().first ?? "" }
     /// A character sheet render is in flight — one at a time, refuse rather than queue.
     @Published private(set) var activeCharacterSheetIds: Set<String> = []
-    var isGeneratingCharacterSheet: Bool { !activeCharacterSheetIds.isEmpty }
+    var isGeneratingCharacterSheet: Bool { !activeCharacterSheetIds.isEmpty || !pendingCharacterSheetIds.isEmpty }
     var activeCharacterSheetCharacterId: String { activeCharacterSheetIds.sorted().first ?? "" }
     /// characterId → the last failure of a sheet or study render in words; cleared
     /// when that lane starts again for the character, on success, and on delete.
@@ -9088,11 +9102,14 @@ final class LibraryEngine: ObservableObject {
     /// The images a SHEET render attaches on this stack: the active sheet first
     /// (continuity), then the leading source images within the stack's capacity.
     func characterSheetRenderPicks(for character: ProjectCharacter, stack: RenderStack) -> [CharacterSheetRenderPick] {
-        let sources = character.referenceMediaIds.filter(isMediaAvailableForSelection).compactMap { mediaId in
+        let sources = usableCharacterSourceIds(for: character).compactMap { mediaId in
             items.first { $0.mediaId == mediaId }
         }
+        let activeSheet = activeCharacterSheetItem(for: character.characterId).flatMap { item in
+            FileManager.default.fileExists(atPath: item.path) ? item : nil
+        }
         return RosterCharacterRenderPrompt.sheetRenderPicks(
-            activeSheet: activeCharacterSheetItem(for: character.characterId),
+            activeSheet: activeSheet,
             sources: sources,
             referenceLabels: character.referenceLabels,
             capacity: characterSheetReferenceCapacity(for: stack)
@@ -9163,25 +9180,87 @@ final class LibraryEngine: ObservableObject {
         characterSheetPromptState(for: character, stack: stack).isCurrent
     }
 
-    /// The stack a character's sheets and studies render on: its own pick while the
-    /// registry still offers it, else the default.
+    /// A saved choice must remain executable; only an unset choice uses the default.
     func resolvedCharacterSheetStack(for character: ProjectCharacter) -> RenderStack? {
         let stacks = RenderStackRegistry.shared.stacks()
-        if let stackId = character.sheetStackId, let stack = stacks.first(where: { $0.id == stackId }) {
-            return stack
+        if let stackId = character.sheetStackId {
+            return stacks.first { $0.id == stackId }
         }
         return defaultCharacterSheetStack()
     }
 
+    func resolvedCharacterStudyStack(for character: ProjectCharacter) -> RenderStack? {
+        if let stackId = character.studyStackId {
+            return RenderStackRegistry.shared.stacks().first { $0.id == stackId }
+        }
+        return defaultCharacterSheetStack()
+    }
+
+    /// Used by the workspace and submission path; missing files never become references.
+    func usableCharacterSourceIds(for character: ProjectCharacter) -> [String] {
+        character.referenceMediaIds.filter { id in
+            isMediaAvailableForSelection(id) && items.contains {
+                $0.mediaId == id && $0.kind == .image && !$0.isRosterCompositeSheet
+                    && FileManager.default.fileExists(atPath: $0.path)
+            }
+        }
+    }
+
+    func hasUsableCharacterSheetReference(for character: ProjectCharacter) -> Bool {
+        if let sheet = activeCharacterSheetItem(for: character.characterId),
+           FileManager.default.fileExists(atPath: sheet.path) { return true }
+        return !usableCharacterSourceIds(for: character).isEmpty
+    }
+
+    func characterImageStackBlocker(for stack: RenderStack, requiresReferences: Bool, isStudy: Bool = false) -> String? {
+        if requiresReferences && !stack.reframeCapable {
+            return "This model cannot use reference images. Choose an image-editing model."
+        }
+        if requiresReferences && stack.isFAL && (!stack.canAttachStyleImage || stack.styleModel.trimmed.isEmpty) {
+            return "This model has no executable reference-image path."
+        }
+        if let blocker = renderStackCredentialBlocker(for: stack) { return blocker }
+        if isStudy && (stack.isFAL || stack.isStability),
+           videoProviderCredentialStatuses.first(where: { $0.provider == .openAI })?.isConfigured != true {
+            return "Add an OpenAI key in App Settings for image prompt preparation."
+        }
+        return nil
+    }
+
+    func characterStudyPlan(for character: ProjectCharacter, references: CharacterStudyReferences, stack: RenderStack) -> CharacterStudyPlan {
+        let activeSheetId = activeCharacterSheetItem(for: character.characterId)?.mediaId
+        let offered = references.mediaIds.filter(isMediaAvailableForSelection).compactMap { mediaId -> CharacterStudyReference? in
+            guard let item = items.first(where: { $0.mediaId == mediaId }) else { return nil }
+            return CharacterStudyReference(item: item, label: character.referenceLabels[mediaId] ?? "", isSheet: mediaId == activeSheetId)
+        }
+        return CharacterStudyPrompt.plan(
+            name: character.name, references: offered, look: references.look,
+            capacity: stack.frameReferenceCapacity.planningCap, isStability: stack.isStability
+        )
+    }
+
     @discardableResult
     func setCharacterSheetStack(characterId: String, stackId: String) -> Bool {
-        guard let stack = RenderStackRegistry.shared.stacks().first(where: { $0.id == stackId }) else {
-            aestheticStatus = "That render stack is not available"
-            return false
-        }
-        let name = projectCharacters.character(withId: characterId)?.name ?? "Character"
-        return updateCharacter(characterId: characterId, status: "\(name)'s sheets render on \(stack.label)") {
+        guard let character = projectCharacters.character(withId: characterId),
+              let stack = RenderStackRegistry.shared.stacks().first(where: { $0.id == stackId }),
+              characterImageStackBlocker(for: stack, requiresReferences: true) == nil else { return false }
+        let studyStackId = resolvedCharacterStudyStack(for: character)?.id
+        return updateCharacter(characterId: characterId, status: "\(character.name)'s reference sheets use \(characterImageModelLabel(stack))") {
+            // Freeze the independent default before changing the sheet selection.
+            if $0.studyStackId == nil { $0.studyStackId = studyStackId }
             $0.sheetStackId = stack.id
+        }
+    }
+
+    @discardableResult
+    func setCharacterStudyStack(characterId: String, stackId: String, requiresReferences: Bool) -> Bool {
+        guard let character = projectCharacters.character(withId: characterId),
+              let stack = RenderStackRegistry.shared.stacks().first(where: { $0.id == stackId }),
+              characterImageStackBlocker(for: stack, requiresReferences: requiresReferences, isStudy: true) == nil else { return false }
+        let sheetStackId = resolvedCharacterSheetStack(for: character)?.id
+        return updateCharacter(characterId: characterId, status: "\(character.name)'s character images use \(characterImageModelLabel(stack))") {
+            if $0.sheetStackId == nil { $0.sheetStackId = sheetStackId }
+            $0.studyStackId = stack.id
         }
     }
 
@@ -10165,7 +10244,7 @@ final class LibraryEngine: ObservableObject {
         if chats.projectId.isEmpty {
             chats.projectId = project.projectId
         }
-        chats.appendTurn(characterId: characterId, role: .user, text: submittedText, mediaIds: mediaIds, now: DateFormats.now())
+        let userTurn = chats.appendTurn(characterId: characterId, role: .user, text: submittedText, mediaIds: mediaIds, now: DateFormats.now())
         guard saveProjectCharacterChats(chats, for: project) else { return }
         touchCurrentProject()
 
@@ -10204,7 +10283,9 @@ final class LibraryEngine: ObservableObject {
                 recentTurnsSummary: recent,
                 userMessage: submittedText,
                 generatedAt: DateFormats.now(),
-                promptIsHandEdited: promptState?.isHandEdited ?? false
+                promptIsHandEdited: promptState?.isHandEdited ?? false,
+                characterId: characterId,
+                runId: userTurn.turnId
             )
             let result = try await client.refineCharacterSheet(context: context, visionInputs: visionInputs)
             guard currentProject?.projectId == project.projectId else { return }
@@ -10245,8 +10326,9 @@ final class LibraryEngine: ObservableObject {
                 rendersAfterChat: latest?.rendersSheetAfterChat ?? true,
                 hasOverride: latest?.hasSheetPromptOverride ?? false,
                 hasStack: renderStack != nil,
-                stackBlocker: renderStack.flatMap { renderStackCredentialBlocker(for: $0) },
-                isBusy: activeCharacterSheetIds.contains(characterId) || activeCharacterRenderIds.contains(characterId)
+                stackBlocker: renderStack.flatMap { characterImageStackBlocker(for: $0, requiresReferences: true) },
+                isBusy: characterImageJobIsBusy(characterId),
+                hasReferences: latest.map { hasUsableCharacterSheetReference(for: $0) } ?? false
             )
             characterChatStatus = decision.status
             guard case .render = decision, let renderStack else { return }
@@ -11932,11 +12014,20 @@ final class LibraryEngine: ObservableObject {
         stack: RenderStack,
         references: CharacterStudyReferences? = nil
     ) async -> Bool {
+        guard !characterImageJobIsBusy(characterId) else { return false }
+        let submittedProjectId = currentProject?.projectId
+        let submittedCharacter = projectCharacters.character(withId: characterId)
+        let submittedPlan = submittedCharacter.flatMap { character in
+            references.map { characterStudyPlan(for: character, references: $0, stack: stack) }
+        }
+        pendingCharacterImageIds.insert(characterId)
+        defer { pendingCharacterImageIds.remove(characterId) }
         return await WorkflowCoordinator.shared.run(project: currentProject, workflow: "character_study", artifactType: "character", artifactId: characterId, lane: .image, recipeJSON: workflowRecipe(["characterId": String(describing: characterId), "rawPrompt": String(describing: rawPrompt)]), failure: false) { [self] in
             guard let project = currentProject else {
                 aestheticStatus = "Create or select a project first"
                 return false
             }
+            guard project.projectId == submittedProjectId else { return false }
             guard !activeCharacterRenderIds.contains(characterId) else {
                 aestheticStatus = "A character reference render is already running"
                 return false
@@ -11949,7 +12040,7 @@ final class LibraryEngine: ObservableObject {
                 aestheticStatus = "Generation is paused — resume to continue"
                 return false
             }
-            guard let character = projectCharacters.character(withId: characterId) else {
+            guard let character = submittedCharacter, projectCharacters.character(withId: characterId) != nil else {
                 aestheticStatus = "Character not found"
                 return false
             }
@@ -11960,27 +12051,21 @@ final class LibraryEngine: ObservableObject {
                 return false
             }
 
+            if let blocker = characterImageStackBlocker(
+                for: stack, requiresReferences: !(references?.mediaIds ?? []).isEmpty, isStudy: true
+            ) {
+                aestheticStatus = blocker
+                characterRenderNotes[characterId] = CharacterRenderNote(lane: .study, message: blocker)
+                return false
+            }
             characterRenderNotes.removeValue(forKey: characterId)
             let attachments: [LensPromptImageAttachment]
-            if let references {
-                // The STUDIO chose the references (sources and/or the active sheet) and
-                // how to treat them; the study plan trims them to the stack's capacity.
-                let activeSheetId = activeCharacterSheetItem(for: characterId)?.mediaId
-                let offered = references.mediaIds.filter(isMediaAvailableForSelection).compactMap { mediaId -> CharacterStudyReference? in
-                    guard let item = items.first(where: { $0.mediaId == mediaId }) else { return nil }
-                    return CharacterStudyReference(
-                        item: item,
-                        label: character.referenceLabels[mediaId] ?? "",
-                        isSheet: mediaId == activeSheetId
-                    )
+            if let plan = submittedPlan {
+                guard plan.attachments.allSatisfy({ FileManager.default.fileExists(atPath: $0.imagePath) }) else {
+                    aestheticStatus = "A selected image is unavailable. Restore it or select references before retrying."
+                    characterRenderNotes[characterId] = CharacterRenderNote(lane: .study, message: aestheticStatus)
+                    return false
                 }
-                let plan = CharacterStudyPrompt.plan(
-                    name: character.name,
-                    references: offered,
-                    look: references.look,
-                    capacity: stack.frameReferenceCapacity.planningCap,
-                    isStability: stack.isStability
-                )
                 attachments = plan.attachments.map { attachment in
                     LensPromptImageAttachment(
                         source: .moodboardImage,
@@ -12201,11 +12286,30 @@ final class LibraryEngine: ObservableObject {
     /// anchor for every later render of that character.
     @discardableResult
     func startCharacterSheetRender(characterId: String, stack requestedStack: RenderStack? = nil) async -> Bool {
+        guard !characterImageJobIsBusy(characterId) else { return false }
+        let submittedProjectId = currentProject?.projectId
+        let submittedCharacter = projectCharacters.character(withId: characterId)
+        let submittedStack = requestedStack ?? submittedCharacter.flatMap { resolvedCharacterSheetStack(for: $0) }
+        let submittedPicks: [CharacterSheetRenderPick]
+        let submittedTemplate: String
+        let submittedFill: CharacterSheetPrompt.Fill?
+        if let character = submittedCharacter, let stack = submittedStack {
+            submittedPicks = characterSheetRenderPicks(for: character, stack: stack)
+            submittedTemplate = projectPromptSettings.characterSheetTemplate(model: stack.isFAL ? stack.reframePromptModel : stack.model).body
+            submittedFill = characterSheetFill(for: character, attachesReferences: !submittedPicks.isEmpty)
+        } else {
+            submittedPicks = []
+            submittedTemplate = ""
+            submittedFill = nil
+        }
+        pendingCharacterSheetIds.insert(characterId)
+        defer { pendingCharacterSheetIds.remove(characterId) }
         return await WorkflowCoordinator.shared.run(project: currentProject, workflow: "character_sheet", artifactType: "character", artifactId: characterId, lane: .image, recipeJSON: workflowRecipe(["characterId": String(describing: characterId)]), failure: false) { [self] in
             guard let project = currentProject else {
                 aestheticStatus = "Create or select a project first"
                 return false
             }
+            guard project.projectId == submittedProjectId else { return false }
             guard !activeCharacterSheetIds.contains(characterId), !activeCharacterRenderIds.contains(characterId) else {
                 aestheticStatus = "A character render is already running"
                 return false
@@ -12214,7 +12318,7 @@ final class LibraryEngine: ObservableObject {
                 aestheticStatus = "Generation is paused — resume to continue"
                 return false
             }
-            guard var character = projectCharacters.character(withId: characterId) else {
+            guard var character = submittedCharacter, projectCharacters.character(withId: characterId) != nil else {
                 aestheticStatus = "Character not found"
                 return false
             }
@@ -12222,8 +12326,18 @@ final class LibraryEngine: ObservableObject {
                 aestheticStatus = "\(character.name) is being cast from the story"
                 return false
             }
-            guard let stack = requestedStack ?? resolvedCharacterSheetStack(for: character) else {
+            guard let stack = submittedStack else {
                 aestheticStatus = "Add an API key in App Settings to render"
+                return false
+            }
+            guard !submittedPicks.isEmpty else {
+                aestheticStatus = "Add or create a source image before generating a reference sheet."
+                characterRenderNotes[characterId] = CharacterRenderNote(lane: .sheet, message: aestheticStatus)
+                return false
+            }
+            if let blocker = characterImageStackBlocker(for: stack, requiresReferences: true) {
+                aestheticStatus = blocker
+                characterRenderNotes[characterId] = CharacterRenderNote(lane: .sheet, message: blocker)
                 return false
             }
             // One click, two steps: a blank identity is drafted from the story first; a
@@ -12235,11 +12349,20 @@ final class LibraryEngine: ObservableObject {
                 guard currentProject?.projectId == project.projectId,
                       !activeCharacterSheetIds.contains(characterId), !activeCharacterRenderIds.contains(characterId),
                       let refreshed = projectCharacters.character(withId: characterId) else { return false }
-                character = refreshed
+                character.descriptionPrompt = refreshed.descriptionPrompt
+                character.signatureProps = refreshed.signatureProps
             }
 
-            let picks = characterSheetRenderPicks(for: character, stack: stack)
-            let prompt = renderedCharacterSheetPrompt(for: character, stack: stack)
+            let picks = submittedPicks
+            guard picks.allSatisfy({ FileManager.default.fileExists(atPath: $0.item.path) }),
+                  var fill = submittedFill else {
+                aestheticStatus = "A selected reference image is unavailable. Restore it or select references before retrying."
+                characterRenderNotes[characterId] = CharacterRenderNote(lane: .sheet, message: aestheticStatus)
+                return false
+            }
+            fill.visualDescription = character.descriptionPrompt
+            fill.signatureProps = character.signatureProps
+            let prompt = character.sheetPromptOverride ?? CharacterSheetPrompt.render(template: submittedTemplate, fill: fill)
             let promptHash = CharacterSheetPrompt.promptHash(prompt)
             let attachesSheet = picks.contains(where: \.isSheet)
             let attachments = picks.map { pick -> LensPromptImageAttachment in

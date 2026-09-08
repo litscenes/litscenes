@@ -32,6 +32,9 @@ struct CharacterSourceImagesView: View {
     var onOpenStudio: () -> Void
 
     private var sentence: String {
+        if referenceMediaIds.isEmpty {
+            return "Add photos from your media, upload files, or create a character image from the description."
+        }
         let stack = stackLabel.trimmed
         let intake = " Added photos are copied into the project and analyzed."
         if stackIsTextOnly {
@@ -87,9 +90,9 @@ struct CharacterSourceImagesView: View {
                     onDrop: onAppend
                 )
                 CharacterSourceActionTile(
-                    title: "GENERATE",
+                    title: "CREATE CHARACTER IMAGE…",
                     icon: "sparkles",
-                    help: "Generate a source image in the studio — from text, or as a variant of a source",
+                    help: "Open the character image editor — review references, prompt, model, and price before generating",
                     onTap: onOpenStudio
                 )
             }
@@ -109,7 +112,7 @@ struct CharacterSourceImagesView: View {
                         ProgressView()
                             .controlSize(.small)
                             .tint(CanonColor.brass)
-                        Text("GENERATING")
+                        Text("GENERATING IMAGE")
                             .font(CanonType.archive(7, weight: .semibold))
                             .kerning(0.8)
                             .foregroundStyle(CanonColor.brass)

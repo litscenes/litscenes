@@ -12,6 +12,10 @@ struct CharacterChatPane: View {
     @Binding var draft: String
     let attachments: [ChatComposerAttachment]
     let rendersAfterChat: Bool
+    let hasReferences: Bool
+    let sheetDisabledReason: String
+    var onCreateImage: () -> Void
+    var onRenderSheet: () -> Void
     let promptIsHandEdited: Bool
     let stackLabel: String
     let priceNote: String
@@ -68,7 +72,7 @@ struct CharacterChatPane: View {
             Text("Describe or refine \(character.name).")
                 .font(CanonType.editorial(18, weight: .semibold))
                 .foregroundStyle(CanonColor.ink)
-            Text("Say what should change and the next sheet follows. Photos you attach become source images.")
+            Text("Describe the character or ask for changes. Instructions are saved for your next generation; attached photos become source images.")
                 .font(CanonType.editorial(14))
                 .foregroundStyle(CanonColor.ink.opacity(0.72))
                 .fixedSize(horizontal: false, vertical: true)
@@ -84,9 +88,12 @@ struct CharacterChatPane: View {
         if promptIsHandEdited {
             return "Prompt is hand-edited. Messages update identity; reset the prompt to include them."
         }
+        if !hasReferences {
+            return "Messages update the character. Add or create a source image before generating a reference sheet."
+        }
         if rendersAfterChat {
             let price = priceNote.isEmpty ? "unpriced" : priceNote
-            return "Each message renders a new sheet · \(stackLabel.isEmpty ? "no stack" : stackLabel) · \(price)"
+            return "Sending changes also regenerates the reference sheet · \(stackLabel.isEmpty ? "no model" : stackLabel) · \(price)"
         }
         return "Messages update the sheet prompt. Render when ready."
     }
@@ -107,9 +114,23 @@ struct CharacterChatPane: View {
                 onPasteFileURLs: onPasteFileURLs,
                 onDropMediaIds: onDropMediaIds
             )
+            if !hasReferences {
+                Button("Create character image…", action: onCreateImage)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(CanonColor.brass)
+            } else if !rendersAfterChat && !turns.isEmpty {
+                Button(character.activeSheetMediaId == nil ? "Generate reference sheet" : "Regenerate reference sheet", action: onRenderSheet)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(CanonColor.brass)
+                    .disabled(isThinking || !sheetDisabledReason.isEmpty)
+                    .help(sheetDisabledReason.isEmpty ? "Generate the next reference sheet using the saved instructions" : sheetDisabledReason)
+                Text("\(stackLabel) · \(priceNote.isEmpty ? "unpriced" : priceNote)")
+                    .font(CanonType.interface(11))
+                    .foregroundStyle(CanonColor.muted)
+            }
             HStack(spacing: 8) {
-                Toggle(isOn: Binding(get: { rendersAfterChat }, set: onToggleAutoRender)) {
-                    Text("RENDER AFTER EACH MESSAGE")
+                Toggle(isOn: Binding(get: { rendersAfterChat }, set: { onToggleAutoRender($0) })) {
+                    Text("AUTOMATICALLY REGENERATE REFERENCE SHEET")
                         .font(CanonType.archive(8, weight: .semibold))
                         .kerning(1.2)
                         .foregroundStyle(CanonColor.ink.opacity(0.7))

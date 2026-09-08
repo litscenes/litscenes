@@ -43,3 +43,11 @@
 2026-09-07T21:05:09Z shot-prompt-assistance — Implement approved readable take review and one prompt field with Improve, Suggest, Revert and Undo, retaining existing timing and generation artifacts.
 
 2026-09-07T21:43:26Z shot-prompt-assistance: Implemented one prompt field with Improve/Suggest/Revert/Undo, atomic text/timing saves, traced text inference, and readable continuation review. Existing Swift suite, native checks, hygiene and Development packaging validated; no paid provider calls or live-project repairs.
+
+2026-09-07T23:22:27Z character-workspace-ux: Implement approved source-aware character creation, explicit sheet actions, independent models, full-resolution inspection, and continuity prompt refinements.
+
+2026-09-08T00:00:12Z character-workspace-ux — Implemented separate image/sheet actions and saved models, source-following editor, full-resolution inspection, manual new-character defaults, continuity prompts, and safe character chat traces. Final build and all 1,275 tests pass; native component and local mock trace checks pass. Source hygiene and whitespace checks are clean; REUSE CLI unavailable. No paid provider calls, commit, publication, or submodule changes.
+
+2026-09-08T00:45:26Z character-sheet-inspection — Enlarge character sheet inspection to most of the available screen, open at actual-size zoom, and use Active for the selected sheet in the UI. Preserve inspection-only behavior and existing artifacts.
+
+2026-09-08T00:51:44Z character-sheet-inspection — Completed larger screen-relative inspector with actual-size opening zoom and Active sheet selection copy. Build, 1,275 tests, actual native sheet size/pixel-scale/shortcut checks, hygiene and whitespace checks pass. No inference calls, commits, publication or pin update.

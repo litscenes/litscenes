@@ -2,18 +2,12 @@ import AppKit
 import SwiftUI
 
 /// The uncast character's plate content: a ghost frame of what the sheet will be
-/// built from, one sentence, and the render action itself — stack, pill, and the
-/// consequence in words — front and center.
+/// built from, a sentence, and the current outcome. The pinned bar owns generation.
 struct CharacterCastingCardView: View {
     let copy: CharacterCastingCopy
     let stage: CharacterCastingStage
     let leadThumbnails: [MediaItemRecord]
-    let stacks: [RenderStack]
-    let selectedStack: RenderStack?
-    let credentialBlocker: (RenderStack) -> String?
     let showsAppSettings: Bool
-    var onSelectStack: (String) -> Void
-    var onRender: () -> Void
     var onOpenAppSettings: () -> Void
     /// The sheet→SCENES lane: a running suggestion job (real spinner), then the
     /// note with its SCENES → link, or the failure in words.
@@ -46,31 +40,11 @@ struct CharacterCastingCardView: View {
                         .foregroundStyle(CanonColor.rust)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                actionRow
-                    .padding(.top, 4)
                 consequenceColumn
             }
             Spacer(minLength: 0)
         }
         .padding(22)
-    }
-
-    private var actionRow: some View {
-        HStack(alignment: .center, spacing: 12) {
-            CharacterStackMenu(
-                stacks: stacks,
-                selectedStack: selectedStack,
-                credentialBlocker: credentialBlocker,
-                onPlate: true,
-                onSelect: onSelectStack
-            )
-            StageBrassPill(
-                title: copy.barTitle,
-                icon: "sparkles",
-                disabledReason: copy.disabledReason,
-                action: onRender
-            )
-        }
     }
 
     private var consequenceColumn: some View {

@@ -1,0 +1,23 @@
+# Character workspace UX
+
+2026-09-07T23:22:27Z Approved plan recorded; implementation starting. Paid provider calls, commits, publication, and private submodule changes are outside this task.
+
+2026-09-08T00:00:12Z Implementation completed in the canonical public working tree.
+
+- Source-first empty state hides sheet controls until a usable source or existing sheet is available. Create character image opens and scrolls to the inline editor on every click. Generate image adds one source; the persistent Reference sheet bar explicitly generates or regenerates a version.
+- Image references follow the current source set and order until customized, with Use current sources to resume. Actual attachment badges/capacity and costs use the same planning function as execution. Manual prompt edits survive identity/reference changes and have an explicit Update prompt action.
+- Independent persisted image/sheet models preserve the prior shared selection on legacy decode. Nano Banana 2 remains the configured default; GPT Image 2 is named explicitly and the selected OpenAI stack model is passed to execution. Missing keys and unsupported reference paths display honest locks and a settings action.
+- New character constructors default to manual sheet rendering. Legacy documents retain their effective auto-render behavior; the optional toggle and post-chat CTA explain the next sheet action. Source-only generation and sheet jobs use separate status text, reserve submissions immediately, capture submitted choices, and stop before starting against a different project.
+- Full-resolution current/historical inspection adds Fit, Actual size, zoom buttons/shortcuts, pinch zoom, scroll/drag panning, and missing-file handling. Historical Inspect leaves the active version unchanged. Existing creation-canvas interactions remain scoped to their original mode.
+- Latest explicit refinements and project-neutral hair length/cut/silhouette/texture continuity precede layout instructions. Intentional appearance changes apply across panels; chat confirms saved instructions instead of claiming visual verification. Only retired built-in templates upgrade; custom templates/overrides remain. Provider prompt-limit warnings are visible and nonblocking.
+- Existing shared image traces remain intact. Character chat now persists a safe exact provider prompt, operator prompt, structured-output parameters, media IDs/hashes, stable turn/run/group identity, and character artifact identity through the shared transport; binary image request bodies are omitted.
+
+Validation:
+
+- Final swift build succeeded; swift test --no-parallel passed all 1,275 tests. The initial concurrent full run hit an unrelated ambient-audio scratch cleanup timing failure; that test passed alone and both subsequent sequential full runs passed. Existing character assertions cover the new action text, independent model round-trip, and legacy/manual defaults.
+- Required counter-fixtures cover a deliberate haircut change and a hairless ceramic character; renaming either subject leaves generic behavior unchanged. Source-follow/custom-selection and hand-edited prompt assertions pass. No motivating screenshot entity occurs in the 18 changed production Swift files; product/provider names and generic hair traits are the accepted product contract.
+- Temporary native previews exercised the real editor/action bar at 580pt and 1000pt widths and the original-image inspector. Fit, pixel-scale zoom, and document panning were checked in the native view. This was isolated component validation, not a paid end-to-end generation session.
+- The Traces app's actual getTraceDetail reader successfully read existing sheet workflow provenance from the canonical local database. The changed chat client was exercised against a loopback mock with an isolated trace database for success, HTTP 503, and cancellation. All resulting lifecycle records expose exact provider-bound prompt text, operator text, schema/model parameters, media hashes, run/group, artifact and response/error where applicable, with no raw binary request body. Prompt equality was checked against the mock's received request. No external inference calls were made.
+- Public source hygiene, private hygiene against both the pinned submodule and changed public checkout, and git diff --check are clean. REUSE CLI is unavailable; the new file is covered by the existing Sources/** license annotation.
+
+Separate panel generation/compositing remains deferred. No commit, push, publication, installed-app replacement, or private submodule pin change was made; implementation commit reference is pending explicit authorization.

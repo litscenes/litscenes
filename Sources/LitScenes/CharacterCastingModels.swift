@@ -14,7 +14,7 @@ enum CharacterRenderBlocker: Equatable, Sendable {
     case noStack
     case credential(String)
     case paused
-    /// Another character's render holds the lane.
+    /// This character already has a sheet render.
     case busy
     /// This character's own source image is generating.
     case studyRunning
@@ -144,17 +144,8 @@ func characterCastingCopy(_ inputs: CharacterCastingInputs) -> CharacterCastingC
         }
     }
 
-    var barTitle = "RENDER SHEET"
-    var barIsGhost = false
-    switch stage {
-    case .cast(_, let promptIsCurrent):
-        barTitle = promptIsCurrent ? "NEW VERSION" : "RENDER AGAIN"
-        barIsGhost = promptIsCurrent
-    case .failed(_, let ordinal):
-        barTitle = ordinal == nil ? "RENDER SHEET" : "RENDER AGAIN"
-    case .uncast, .rendering, .drafting:
-        break
-    }
+    let barTitle = inputs.activeOrdinal == nil ? "GENERATE REFERENCE SHEET" : "REGENERATE REFERENCE SHEET"
+    let barIsGhost = false
 
     var note = ""
     var tone: CharacterCastingTone = .muted
@@ -171,10 +162,10 @@ func characterCastingCopy(_ inputs: CharacterCastingInputs) -> CharacterCastingC
             note = "Generation is paused. Resume it from Activity to continue."
             tone = .softGold
         case .busy:
-            note = "Another character's render is running."
+            note = "This character’s reference sheet is generating."
             tone = .muted
         case .studyRunning:
-            note = "A source image is generating. Render the sheet when it lands."
+            note = "A character image is generating. Generate the reference sheet when it is ready."
             tone = .muted
         }
         disabledReason = note
@@ -190,7 +181,7 @@ func characterCastingCopy(_ inputs: CharacterCastingInputs) -> CharacterCastingC
             disabledReason = "Rendering now."
         case .failed(let reason, let ordinal):
             if inputs.lastFailureIsDraft {
-                note = "\(reasonSentence(reason)) RENDER SHEET renders from what is written."
+                note = "\(reasonSentence(reason)) Generate the reference sheet from the saved description."
             } else {
                 note = "Last render failed: \(reasonSentence(reason))"
                 if let ordinal { note += " \(sheetWord(ordinal).capitalizedFirst) still anchors \(name)." }
@@ -209,7 +200,7 @@ func characterCastingCopy(_ inputs: CharacterCastingInputs) -> CharacterCastingC
                 note = "\(stackPart) renders from text only. Your \(characterSourceImagesPhrase(inputs.sourceCount)) will not be used."
                 tone = .rust
             } else if promptIsCurrent {
-                note = "\(sheetWord(ordinal).capitalizedFirst) is current."
+                note = "\(sheetWord(ordinal).capitalizedFirst) is selected for subsequent scenes."
                 tone = .muted
             } else {
                 note = "Prompt changed since \(sheetWord(ordinal))."
@@ -352,4 +343,13 @@ func frameDefaultStack(
     stacks.first { $0.isOpenAI && isCredentialed($0) }
         ?? stacks.first { isCredentialed($0) }
         ?? stacks.first
+}
+
+/// Operator-facing identity for an executable image stack; the stored stack id is unchanged.
+func characterImageModelLabel(_ stack: RenderStack) -> String {
+    if stack.kind == .openai {
+        let model = stack.model == "gpt-image-2" ? "GPT Image 2" : stack.model
+        return "\(model) · OpenAI"
+    }
+    return stack.label
 }

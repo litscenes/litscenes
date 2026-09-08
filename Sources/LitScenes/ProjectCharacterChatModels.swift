@@ -246,12 +246,16 @@ enum CharacterChatAutoRender {
         hasOverride: Bool,
         hasStack: Bool,
         stackBlocker: String?,
-        isBusy: Bool
+        isBusy: Bool,
+        hasReferences: Bool = true
     ) -> CharacterChatAutoRenderDecision {
         let subject = name.trimmed.isEmpty ? "the character" : name.trimmed
         guard changed else { return .skip(status: "Nothing about \(subject) changed") }
         if hasOverride {
             return .skip(status: "\(subject)'s identity updated — the hand-edited prompt still renders; reset or edit it to include this change")
+        }
+        guard hasReferences else {
+            return .skip(status: "Character updated — add or create a source image before generating a reference sheet")
         }
         guard rendersAfterChat, hasStack else { return .skip(status: "Sheet prompt updated — render to see it") }
         if let stackBlocker, !stackBlocker.trimmed.isEmpty {

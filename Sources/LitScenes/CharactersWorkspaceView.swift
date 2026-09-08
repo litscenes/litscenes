@@ -18,6 +18,9 @@ struct CharactersWorkspaceView: View {
     @State private var drafts = CharacterEditDrafts()
     @State private var refiningStudioIds: Set<String> = []
     @State private var isMediaPickerPresented = false
+    @State private var studioScrollRequest = 0
+    @State private var submittingStudyIds: Set<String> = []
+    @State private var submittingSheetIds: Set<String> = []
     @FocusState private var focus: CharacterEditField?
 
     /// The selected character's in-progress edits, owned here so a render, a
@@ -76,7 +79,7 @@ struct CharactersWorkspaceView: View {
         .background(CanonColor.room)
         .safeAreaInset(edge: .bottom, spacing: 0) { statusLine }
         .sheet(item: $imagePreview) { request in
-            StyleImagePreviewModal(request: request)
+            CharacterImagePreviewModal(request: request)
         }
         .sheet(isPresented: $isMediaPickerPresented) { mediaPicker }
         .alert(item: $alert, content: makeAlert)
@@ -153,6 +156,7 @@ struct CharactersWorkspaceView: View {
                 Task { await library.refreshFALPricingIfStale() }
                 reconcile()
                 loadDrafts()
+                synchronizeStudio()
             }
             .onDisappear { commitPendingEdits() }
             .onChange(of: currentProjectId) { _, _ in reconcile() }
@@ -170,6 +174,8 @@ struct CharactersWorkspaceView: View {
             .onChange(of: selectedAppearance) { _, value in
                 if focus != .appearance { drafts.appearance = value }
             }
+            .onChange(of: selectedCharacter) { _, _ in synchronizeStudio() }
+            .onChange(of: imageCandidates.map(\.mediaId)) { _, _ in synchronizeStudio() }
             .onChange(of: selectedPromptOverride) { _, value in
                 if focus != .prompt, !drafts.isPromptEditRequested { drafts.prompt = value }
             }
@@ -204,26 +210,40 @@ struct CharactersWorkspaceView: View {
         let inputs = castingInputs(for: character, stack: stack)
         let copy = characterCastingCopy(inputs)
         let stage = characterCastingStage(inputs)
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                masthead(for: character, copy: copy)
-                plate(for: character, copy: copy, stage: stage, workspaceHeight: workspaceHeight)
-                sources(for: character, stack: stack)
-                if session.studio(for: character.characterId).isOpen {
-                    studio(for: character, stack: stack)
+        let hasReferences = library.hasUsableCharacterSheetReference(for: character)
+        return ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    masthead(for: character, copy: copy)
+                    if hasReferences {
+                        plate(for: character, copy: copy, stage: stage, workspaceHeight: workspaceHeight)
+                    } else {
+                        Text("Add or create a source image to establish this character’s look.")
+                            .font(CanonType.editorial(18))
+                            .foregroundStyle(CanonColor.bone)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    sources(for: character, stack: stack)
+                    if session.studio(for: character.characterId).isOpen {
+                        studio(for: character)
+                            .id("character-image-editor")
+                    }
+                    identity(for: character)
+                    if hasReferences { promptSection(for: character, stack: stack) }
                 }
-                identity(for: character)
-                promptSection(for: character, stack: stack)
+                .padding(.horizontal, 20)
+                .padding(.top, 18)
+                .padding(.bottom, 24)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 24)
+            .onChange(of: studioScrollRequest) { _, _ in
+                DispatchQueue.main.async {
+                    withAnimation { proxy.scrollTo("character-image-editor", anchor: .top) }
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            // While uncast the casting card owns the action; the bar takes over once
-            // a sheet exists and the plate shows the image.
-            if library.activeCharacterSheetItem(for: character.characterId) != nil {
+            if hasReferences {
                 actionBar(for: character, stack: stack, inputs: inputs, copy: copy, stage: stage)
             }
         }
@@ -243,12 +263,12 @@ struct CharactersWorkspaceView: View {
         } ?? false
         inputs.activeOrdinal = sheetOrdinal(for: characterId)
         inputs.promptIsCurrent = promptState?.isCurrent ?? true
-        inputs.isRenderingSheet = library.activeCharacterSheetIds.contains(characterId)
+        inputs.isRenderingSheet = library.characterSheetIsGenerating(characterId) || submittingSheetIds.contains(characterId)
         inputs.isDrafting = library.draftingCharacterIds.contains(characterId)
         if case .draft = library.characterIdentityDraftDecision(for: character) { inputs.draftsFirst = true }
         inputs.lastFailure = (note?.lane == .sheet || note?.lane == .draft) ? (note?.message ?? "") : ""
         inputs.lastFailureIsDraft = note?.lane == .draft
-        inputs.stackLabel = stack?.label ?? ""
+        inputs.stackLabel = stack.map(characterImageModelLabel) ?? ""
         inputs.priceNote = stack.map { library.priceNote(for: $0, attachesReferences: !picks.isEmpty) } ?? ""
         inputs.stackIsTextOnly = stack.map { !$0.reframeCapable } ?? false
         inputs.attachesSheet = picks.contains(where: \.isSheet)
@@ -260,10 +280,10 @@ struct CharactersWorkspaceView: View {
 
     private func renderBlocker(for stack: RenderStack?, characterId: String) -> CharacterRenderBlocker? {
         guard let stack else { return .noStack }
-        if let blocker = library.renderStackCredentialBlocker(for: stack) { return .credential(blocker) }
+        if let blocker = library.characterImageStackBlocker(for: stack, requiresReferences: true) { return .credential(blocker) }
         if library.isGenerationPaused { return .paused }
-        if library.activeCharacterSheetIds.contains(characterId) { return .busy }
-        if library.activeCharacterRenderIds.contains(characterId) { return .studyRunning }
+        if library.characterSheetIsGenerating(characterId) || submittingSheetIds.contains(characterId) { return .busy }
+        if isGeneratingStudy(for: characterId) { return .studyRunning }
         return nil
     }
 
@@ -299,7 +319,7 @@ struct CharactersWorkspaceView: View {
             onEnlarge: { item in
                 imagePreview = StyleImagePreviewRequest(
                     url: URL(fileURLWithPath: item.path).absoluteString,
-                    label: "\(character.name) — character sheet",
+                    label: "\(character.name) — reference sheet \(library.characterSheetOrdinal(characterId: character.characterId, mediaId: item.mediaId).map(characterSheetOrdinalLabel) ?? "")",
                     detail: item.filename
                 )
             }
@@ -320,12 +340,7 @@ struct CharactersWorkspaceView: View {
             copy: copy,
             stage: stage,
             leadThumbnails: Array(leads),
-            stacks: stacks,
-            selectedStack: stack,
-            credentialBlocker: { library.renderStackCredentialBlocker(for: $0) },
             showsAppSettings: showsAppSettings,
-            onSelectStack: { _ = library.setCharacterSheetStack(characterId: character.characterId, stackId: $0) },
-            onRender: { renderSheet(for: character, stack: stack) },
             onOpenAppSettings: onOpenAppSettings,
             isSuggestingFrames: library.suggestingCharacterIds.contains(character.characterId),
             suggestionNote: library.characterRenderNotes[character.characterId],
@@ -342,10 +357,10 @@ struct CharactersWorkspaceView: View {
             referenceLabels: character.referenceLabels,
             candidates: imageCandidates,
             attachedMediaIds: picks.filter { !$0.isSheet }.map(\.item.mediaId),
-            stackLabel: stack?.label ?? "",
+            stackLabel: stack.map(characterImageModelLabel) ?? "",
             stackIsTextOnly: stack.map { !$0.reframeCapable } ?? false,
             sheetOrdinalLabel: sheetOrdinal(for: characterId).map(characterSheetOrdinalLabel),
-            generatingShotLabel: isGeneratingStudy(for: characterId) ? session.studio(for: characterId).shot.label : nil,
+            generatingShotLabel: isGeneratingStudy(for: characterId) ? "CHARACTER IMAGE" : nil,
             suggestions: library.suggestedSourceImages(for: characterId),
             analysisState: { library.characterSourceAnalysisState(for: $0) },
             onPlace: { mediaId, index in placeSource(character, mediaId: mediaId, at: index) },
@@ -416,7 +431,8 @@ struct CharactersWorkspaceView: View {
             onCopy: {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(state?.effective ?? "", forType: .string)
-            }
+            },
+            promptLimit: stack.flatMap { $0.isFAL ? $0.falPromptLimit : nil }
         )
     }
 
@@ -440,7 +456,7 @@ struct CharactersWorkspaceView: View {
             stage: stage,
             stacks: stacks,
             selectedStack: stack,
-            credentialBlocker: { library.renderStackCredentialBlocker(for: $0) },
+            credentialBlocker: { library.characterImageStackBlocker(for: $0, requiresReferences: true) },
             nextStep: characterNextStep(characters: roster, selectedId: character.characterId),
             showsAppSettings: showsAppSettings,
             onSelectStack: { _ = library.setCharacterSheetStack(characterId: character.characterId, stackId: $0) },
@@ -458,17 +474,28 @@ struct CharactersWorkspaceView: View {
     private func renderSheet(for character: ProjectCharacter, stack: RenderStack?) {
         guard let stack else { return }
         commitPendingEdits()
-        Task { _ = await library.startCharacterSheetRender(characterId: character.characterId, stack: stack) }
+        let characterId = character.characterId
+        guard !submittingSheetIds.contains(characterId), !isGeneratingStudy(for: characterId) else { return }
+        submittingSheetIds.insert(characterId)
+        Task {
+            defer { submittingSheetIds.remove(characterId) }
+            _ = await library.startCharacterSheetRender(characterId: characterId, stack: stack)
+        }
     }
 
     // MARK: Studio
 
     private func isGeneratingStudy(for characterId: String) -> Bool {
-        library.activeCharacterRenderIds.contains(characterId)
+        library.characterImageIsGenerating(characterId) || submittingStudyIds.contains(characterId)
     }
 
-    private func studio(for character: ProjectCharacter, stack: RenderStack?) -> some View {
+    private func studio(for character: ProjectCharacter) -> some View {
         let characterId = character.characterId
+        let stack = library.resolvedCharacterStudyStack(for: character)
+        let draft = session.studio(for: characterId)
+        let plan = stack.map {
+            library.characterStudyPlan(for: character, references: CharacterStudyReferences(mediaIds: draft.referenceIds, look: draft.look), stack: $0)
+        }
         let sources = character.referenceMediaIds.enumerated().compactMap { index, mediaId -> CharacterStudioSourceChip? in
             guard let item = imageCandidates.first(where: { $0.mediaId == mediaId }) else { return nil }
             return CharacterStudioSourceChip(mediaId: mediaId, item: item, ordinal: index + 1, label: character.referenceLabels[mediaId] ?? "")
@@ -483,22 +510,31 @@ struct CharactersWorkspaceView: View {
             sources: sources,
             activeSheet: library.activeCharacterSheetItem(for: characterId),
             sheetOrdinalLabel: sheetOrdinal(for: characterId).map(characterSheetOrdinalLabel) ?? "",
-            stackLabel: stack?.label ?? "",
-            priceNote: stack.map {
-                library.priceNote(for: $0, attachesReferences: !sources.isEmpty || library.activeCharacterSheetItem(for: characterId) != nil)
-            } ?? "",
-            stackCapacity: stack?.frameReferenceCapacity.planningCap ?? 0,
+            priceNote: stack.map { library.priceNote(for: $0, attachesReferences: plan?.attachesReferences ?? false) } ?? "",
+            attachedMediaIds: plan?.attachments.map(\.mediaId) ?? [],
+            stacks: stacks,
+            selectedStack: stack,
+            credentialBlocker: { library.characterImageStackBlocker(for: $0, requiresReferences: !draft.referenceIds.isEmpty, isStudy: true) },
             isGenerating: isGeneratingStudy(for: characterId),
             isRefining: refiningStudioIds.contains(characterId),
             blockedReason: studioBlockedReason(for: stack, characterId: characterId),
             failure: note?.lane == .study ? (note?.message ?? "") : "",
-            nextSourceOrdinal: character.referenceMediaIds.count + 1,
             draftsFirst: {
                 if case .draft = library.characterIdentityDraftDecision(for: character) { return true }
                 return false
             }(),
             focus: $focus,
             onChipsChanged: { reseedStudio(for: character, force: false) },
+            onUseCurrentSources: {
+                var draft = session.studio(for: characterId)
+                draft.followsCurrentSources = true
+                session.setStudio(draft, for: characterId)
+                synchronizeStudio()
+            },
+            onSelectStack: {
+                _ = library.setCharacterStudyStack(characterId: characterId, stackId: $0, requiresReferences: !draft.referenceIds.isEmpty)
+            },
+            onOpenAppSettings: onOpenAppSettings,
             onReset: { reseedStudio(for: character, force: true) },
             onRefine: { refineStudio(for: character) },
             onGenerate: { generateStudy(for: character, stack: stack) },
@@ -513,51 +549,51 @@ struct CharactersWorkspaceView: View {
     private func studioBlockedReason(for stack: RenderStack?, characterId: String) -> String {
         guard let stack else { return "Add an API key in App Settings to render." }
         if library.draftingCharacterIds.contains(characterId) { return "Casting from the story…" }
-        if let blocker = library.renderStackCredentialBlocker(for: stack) { return blocker }
+        if let blocker = library.characterImageStackBlocker(
+            for: stack, requiresReferences: !session.studio(for: characterId).referenceIds.isEmpty, isStudy: true
+        ) { return blocker }
         if library.isGenerationPaused { return "Generation is paused. Resume it from Activity to continue." }
-        if library.activeCharacterSheetIds.contains(characterId) { return "This character’s sheet is rendering." }
-        if library.activeCharacterRenderIds.contains(characterId) { return "This character’s study is generating." }
+        if library.characterSheetIsGenerating(characterId) || submittingSheetIds.contains(characterId) { return "This character’s reference sheet is generating." }
+        if isGeneratingStudy(for: characterId) { return "This character’s image is generating." }
         return ""
     }
 
-    /// Opens the studio seeded for the situation: a chosen source (More like this…)
-    /// becomes the reference; otherwise the sheet if one exists, else slot 1, else text.
+    /// Every open request reveals the editor, even when its draft is already open.
     private func openStudio(for character: ProjectCharacter, referenceId: String? = nil) {
+        commitPendingEdits()
         let characterId = character.characterId
         var draft = session.studio(for: characterId)
         draft.isOpen = true
-        var reseed = !draft.hasSeeded
         if let referenceId {
             draft.referenceIds = [referenceId]
+            draft.followsCurrentSources = false
             draft.look = .asDescribed
             draft.shot = .threeQuarter
-            reseed = true
         } else if !draft.hasSeeded {
-            draft.referenceIds = library.activeCharacterSheetItem(for: characterId).map { [$0.mediaId] }
-                ?? Array(character.referenceMediaIds.prefix(1))
-            draft.shot = draft.referenceIds.isEmpty ? .portrait : .threeQuarter
+            draft.shot = library.usableCharacterSourceIds(for: character).isEmpty ? .portrait : .threeQuarter
         }
         session.setStudio(draft, for: characterId)
-        reseedStudio(for: character, force: reseed)
+        synchronizeStudio()
+        studioScrollRequest += 1
     }
 
-    /// Chips re-seed the prompt until the operator edits it; RESET re-seeds on demand.
+    private func synchronizeStudio() {
+        guard let character = selectedCharacter else { return }
+        var draft = session.studio(for: character.characterId)
+        guard draft.isOpen || draft.hasSeeded else { return }
+        let sourceIds = library.usableCharacterSourceIds(for: character)
+        var available = Set(sourceIds)
+        if let sheet = library.activeCharacterSheetItem(for: character.characterId),
+           FileManager.default.fileExists(atPath: sheet.path) { available.insert(sheet.mediaId) }
+        draft.reconcileReferences(sourceIds: sourceIds, availableIds: available)
+        draft.recompose(name: character.name, description: character.descriptionPrompt, signatureProps: character.signatureProps)
+        if draft != session.studio(for: character.characterId) { session.setStudio(draft, for: character.characterId) }
+    }
+
     private func reseedStudio(for character: ProjectCharacter, force: Bool) {
-        let characterId = character.characterId
-        var draft = session.studio(for: characterId)
-        if draft.isEdited, !force { return }
-        let seeded = CharacterStudyPrompt.compose(
-            name: character.name,
-            description: character.descriptionPrompt,
-            signatureProps: character.signatureProps,
-            shot: draft.shot,
-            look: draft.look,
-            referenceCount: draft.referenceIds.count
-        )
-        draft.prompt = seeded
-        draft.seededPrompt = seeded
-        draft.hasSeeded = true
-        session.setStudio(draft, for: characterId)
+        var draft = session.studio(for: character.characterId)
+        draft.recompose(name: character.name, description: character.descriptionPrompt, signatureProps: character.signatureProps, force: force)
+        session.setStudio(draft, for: character.characterId)
     }
 
     private func refineStudio(for character: ProjectCharacter) {
@@ -584,22 +620,22 @@ struct CharactersWorkspaceView: View {
 
     private func generateStudy(for character: ProjectCharacter, stack: RenderStack?) {
         guard let stack else { return }
-        commitPendingEdits()
         let characterId = character.characterId
+        guard studioBlockedReason(for: stack, characterId: characterId).isEmpty else { return }
+        commitPendingEdits()
+        synchronizeStudio()
+        let submittedDraft = session.studio(for: characterId)
+        submittingStudyIds.insert(characterId)
         Task {
-            // A blank identity is drafted first; the seeded study prompt then
-            // carries the drafted appearance (a hand-edited prompt is kept).
+            defer { submittingStudyIds.remove(characterId) }
+            var draft = submittedDraft
             if case .draft = library.characterIdentityDraftDecision(for: character) {
                 guard await library.draftCharacterIdentity(characterId: characterId),
                       let refreshed = characters.first(where: { $0.characterId == characterId }) else { return }
-                reseedStudio(for: refreshed, force: false)
+                draft.recompose(name: refreshed.name, description: refreshed.descriptionPrompt, signatureProps: refreshed.signatureProps)
             }
-            let draft = session.studio(for: characterId)
             _ = await library.startCharacterReferenceRender(
-                characterId: characterId,
-                prompt: draft.prompt,
-                shot: draft.shot,
-                stack: stack,
+                characterId: characterId, prompt: draft.prompt, shot: draft.shot, stack: stack,
                 references: CharacterStudyReferences(mediaIds: draft.referenceIds, look: draft.look)
             )
         }
@@ -628,8 +664,14 @@ struct CharactersWorkspaceView: View {
             ),
             attachments: attachments,
             rendersAfterChat: character.rendersSheetAfterChat,
+            hasReferences: library.hasUsableCharacterSheetReference(for: character),
+            sheetDisabledReason: castingInputs(for: character, stack: stack).blocker.map { _ in
+                characterCastingCopy(castingInputs(for: character, stack: stack)).disabledReason
+            } ?? "",
+            onCreateImage: { openStudio(for: character) },
+            onRenderSheet: { renderSheet(for: character, stack: stack) },
             promptIsHandEdited: character.hasSheetPromptOverride,
-            stackLabel: stack?.label ?? "",
+            stackLabel: stack.map(characterImageModelLabel) ?? "",
             priceNote: stack.map {
                 library.priceNote(
                     for: $0,
@@ -676,8 +718,9 @@ struct CharactersWorkspaceView: View {
         commitPendingEdits()
         session.setDraft("", for: characterId)
         session.setAttachments([], for: characterId)
+        let stack = library.resolvedCharacterSheetStack(for: character)
         Task {
-            await library.sendCharacterChatMessage(characterId: characterId, text: text, mediaIds: mediaIds)
+            await library.sendCharacterChatMessage(characterId: characterId, text: text, mediaIds: mediaIds, stack: stack)
         }
     }
 
@@ -791,11 +834,11 @@ struct CharactersWorkspaceView: View {
             let consequence: String
             if isActive, let replacement {
                 let nextOrdinal = library.characterSheetOrdinal(characterId: characterId, mediaId: replacement.mediaId) ?? 1
-                consequence = "Sheet \(characterSheetOrdinalLabel(nextOrdinal)) will become current."
+                consequence = "Sheet \(characterSheetOrdinalLabel(nextOrdinal)) will become active."
             } else if isActive {
                 consequence = "This character will have no reference sheet."
             } else {
-                consequence = "The current sheet stays selected."
+                consequence = "The active sheet stays selected."
             }
             return Alert(
                 title: Text("Delete sheet \(characterSheetOrdinalLabel(ordinal))?"),
@@ -842,7 +885,7 @@ struct CharactersWorkspaceView: View {
                 Text("Define the people of this project")
                     .font(CanonType.display(22, weight: .semibold))
                     .foregroundStyle(PlateColor.ink)
-                Text("Characters usually arrive from the Story conversation. Name one here to start, then render its reference sheet.")
+                Text("Characters usually arrive from the Story conversation. Name one here, then add or create an image to establish their look.")
                     .font(CanonType.interface(12))
                     .foregroundStyle(PlateColor.inkFaint)
                     .multilineTextAlignment(.center)

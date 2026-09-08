@@ -85,4 +85,67 @@ struct CharacterSheetPromptTests {
         #expect(a != CharacterSheetPrompt.promptHash("Sheet prompt v2"))
         #expect(a.count == 16)
     }
+
+    @Test("Counter-fixtures preserve explicit appearance changes and remain independent of names")
+    func continuityCounterFixtures() throws {
+        let cases = [
+            ("Polar Navigator", "A navigator with a blunt chin-length haircut", "Change the haircut to a cropped undercut across every view."),
+            ("Porcelain Courier", "A faceted ceramic automaton without hair", "Keep the ceramic head hairless; change only the left shoulder marking.")
+        ]
+        for (name, appearance, directive) in cases {
+            func render(_ subject: String) -> String {
+                CharacterSheetPrompt.render(
+                    template: ProjectPromptSettingsDocument.builtInCharacterSheetBody,
+                    fill: CharacterSheetPrompt.Fill(name: subject, visualDescription: appearance, sheetDirectives: [directive], attachesReferences: true)
+                )
+            }
+            let prompt = render(name)
+            #expect(prompt.replacingOccurrences(of: name, with: "Another character") == render("Another character"))
+            #expect(prompt.components(separatedBy: directive).count == 2)
+            #expect(String(prompt.prefix(1400)).contains(directive))
+            #expect(String(prompt.prefix(1400)).contains("hair length, cut, silhouette, and texture"))
+            #expect(prompt.contains("When a hair change is explicitly requested"))
+            #expect(prompt.contains(appearance))
+            #expect(prompt.count < 3500)
+            let context = CharacterSheetRefineContext(
+                projectId: "counter-project", projectName: "Different project", characterName: name,
+                visualDescription: appearance, signatureProps: [], storyIdentityLines: "",
+                currentDirectives: [directive], renderedSheetPrompt: prompt, sourceImageLines: "",
+                hasActiveSheet: true, recentTurnsSummary: "", userMessage: "Change the jacket fastening only.", generatedAt: ""
+            )
+            let refinement = OpenAIClient.characterSheetRefinePrompt(context: context)
+            #expect(refinement.contains("unless the user explicitly changes them"))
+            #expect(refinement.contains("Do not promise that a future image will satisfy them"))
+            #expect(refinement.contains(directive))
+        }
+        let retired = CharacterSheetPromptTemplate(body: ProjectPromptSettingsDocument.legacyCharacterSheetBody)
+        #expect(ProjectPromptSettingsDocument.normalizedCharacterSheetPrompts([retired]).first?.body == ProjectPromptSettingsDocument.builtInCharacterSheetBody)
+        let custom = CharacterSheetPromptTemplate(body: "A custom layout {{character_name}}")
+        #expect(ProjectPromptSettingsDocument.normalizedCharacterSheetPrompts([custom]).first?.body == custom.body)
+
+        // Reference and prompt lifecycle exercise a different character from the report.
+        var draft = CharacterStudioDraft()
+        draft.reconcileReferences(sourceIds: ["front", "back"], availableIds: ["front", "back"])
+        draft.recompose(name: "Porcelain Courier", description: "A ceramic figure", signatureProps: [])
+        draft.reconcileReferences(sourceIds: ["detail", "back", "front"], availableIds: ["detail", "back", "front"])
+        #expect(draft.referenceIds == ["detail", "back", "front"])
+        draft.followsCurrentSources = false
+        draft.referenceIds = ["front"]
+        draft.reconcileReferences(sourceIds: ["detail", "back", "front"], availableIds: ["detail", "back", "front"])
+        #expect(draft.referenceIds == ["front"])
+        draft.prompt = "Keep my independently written framing."
+        draft.recompose(name: "Porcelain Courier", description: "A revised ceramic figure", signatureProps: [])
+        #expect(draft.prompt == "Keep my independently written framing.")
+        #expect(draft.sourcePromptChanged)
+        draft.recompose(name: "Porcelain Courier", description: "A revised ceramic figure", signatureProps: [], force: true)
+        #expect(!draft.sourcePromptChanged && !draft.isEdited)
+        #expect(draft.prompt.contains("revised ceramic figure"))
+        let withoutReferences = CharacterChatAutoRender.decision(
+            name: "Porcelain Courier", changed: true, rendersAfterChat: true, hasOverride: false,
+            hasStack: true, stackBlocker: nil, isBusy: false, hasReferences: false
+        )
+        guard case .skip(let status) = withoutReferences else { Issue.record("An image is required before the sheet can render"); return }
+        #expect(status.contains("add or create a source image"))
+    }
+
 }

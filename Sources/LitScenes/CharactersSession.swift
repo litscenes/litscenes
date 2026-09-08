@@ -18,6 +18,8 @@ struct CharacterStudioDraft: Equatable {
     var look: CharacterStudyLook = .asDescribed
     /// Chosen references: source media ids and/or the active sheet's id.
     var referenceIds: [String] = []
+    var followsCurrentSources = true
+    var sourcePromptChanged = false
     var prompt = ""
     var seededPrompt = ""
     var refineInput = ""
@@ -26,6 +28,27 @@ struct CharacterStudioDraft: Equatable {
     /// The operator changed the seeded text; chips then steer only the canvas and
     /// the attachments until RESET re-seeds.
     var isEdited: Bool { hasSeeded && prompt.trimmed != seededPrompt.trimmed }
+
+    mutating func reconcileReferences(sourceIds: [String], availableIds: Set<String>) {
+        referenceIds = followsCurrentSources
+            ? sourceIds.filter { availableIds.contains($0) }
+            : referenceIds.filter { availableIds.contains($0) }
+    }
+
+    mutating func recompose(name: String, description: String, signatureProps: [String], force: Bool = false) {
+        let composed = CharacterStudyPrompt.compose(
+            name: name, description: description, signatureProps: signatureProps,
+            shot: shot, look: look, referenceCount: referenceIds.count
+        )
+        if isEdited, !force {
+            sourcePromptChanged = composed != seededPrompt
+            return
+        }
+        prompt = composed
+        seededPrompt = composed
+        hasSeeded = true
+        sourcePromptChanged = false
+    }
 }
 
 /// CHARACTERS tab state that must survive the tab-content teardown —

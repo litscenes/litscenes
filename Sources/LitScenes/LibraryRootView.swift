@@ -12343,7 +12343,7 @@ private struct MediaEnableButtonStyle: ButtonStyle {
     }
 }
 
-private struct ZoomableImageScrollView: NSViewRepresentable {
+struct ZoomableImageScrollView: NSViewRepresentable {
     let path: String
     @Binding var zoomScale: CGFloat
     let minZoom: CGFloat
@@ -12363,6 +12363,9 @@ private struct ZoomableImageScrollView: NSViewRepresentable {
     var onFocusRotate: ((Double) -> Void)?
     /// Reports the normalized center of the locked source inset while it is dragged.
     var onOutpaintSourceMove: ((CGPoint) -> Void)?
+    /// Inspection scrolls to pan and pinches to zoom; creation canvases retain their behavior.
+    var inspectionMode = false
+    var onActualSizeZoomChange: ((CGFloat) -> Void)?
 
     func makeNSView(context: Context) -> ImageZoomScrollView {
         let view = ImageZoomScrollView()
@@ -12373,6 +12376,8 @@ private struct ZoomableImageScrollView: NSViewRepresentable {
                 zoomScale = value
             }
         }
+        view.inspectionMode = inspectionMode
+        view.onActualSizeZoomChange = onActualSizeZoomChange
         view.onImageClick = onImageClick
         view.onFocusResize = onFocusResize
         view.onFocusMove = onFocusMove
@@ -12393,6 +12398,8 @@ private struct ZoomableImageScrollView: NSViewRepresentable {
                 zoomScale = value
             }
         }
+        view.inspectionMode = inspectionMode
+        view.onActualSizeZoomChange = onActualSizeZoomChange
         view.onImageClick = onImageClick
         view.onFocusResize = onFocusResize
         view.onFocusMove = onFocusMove
@@ -12517,7 +12524,7 @@ private final class OutpaintGuideBackgroundView: NSView {
     }
 }
 
-private final class ImageZoomScrollView: NSScrollView {
+final class ImageZoomScrollView: NSScrollView {
     private struct ZoomAnchor {
         let ratio: CGPoint
         let viewportOffset: CGPoint
@@ -12548,6 +12555,7 @@ private final class ImageZoomScrollView: NSScrollView {
     private var imagePath = ""
     private var imageSize = CGSize(width: 1, height: 1)
     private var isConfiguring = false
+    private var inspectionPanGesture: NSPanGestureRecognizer?
 
     var minZoom: CGFloat = 0.5
     var maxZoom: CGFloat = 5
@@ -12563,6 +12571,11 @@ private final class ImageZoomScrollView: NSScrollView {
     /// screen); SwiftUI snaps/clamps it. nil hides the rotate handle.
     var onFocusRotate: ((Double) -> Void)?
     var onOutpaintSourceMove: ((CGPoint) -> Void)?
+    /// Inspection scrolls to pan and pinches to zoom; creation canvases retain their behavior.
+    var inspectionMode = false {
+        didSet { inspectionPanGesture?.isEnabled = inspectionMode }
+    }
+    var onActualSizeZoomChange: ((CGFloat) -> Void)?
     /// Normalized (0-1, top-left origin) focus square drawn in document space; nil hides it.
     var focusRect: CGRect? {
         didSet {
@@ -12628,6 +12641,10 @@ private final class ImageZoomScrollView: NSScrollView {
     }
 
     override func scrollWheel(with event: NSEvent) {
+        if inspectionMode {
+            super.scrollWheel(with: event)
+            return
+        }
         let delta = min(max(event.scrollingDeltaY, -12), 12)
         guard abs(delta) > 0.01 else {
             super.scrollWheel(with: event)
@@ -12639,7 +12656,25 @@ private final class ImageZoomScrollView: NSScrollView {
         setZoom(clampedZoom(zoomScale * factor), anchor: anchor, notify: true)
     }
 
+    override func magnify(with event: NSEvent) {
+        guard inspectionMode else { super.magnify(with: event); return }
+        let anchor = pointerAnchor(for: event) ?? visibleCenterAnchor()
+        setZoom(zoomScale * (1 + event.magnification), anchor: anchor, notify: true)
+    }
+
+    @objc private func handleInspectionPan(_ gesture: NSPanGestureRecognizer) {
+        guard inspectionMode else { return }
+        let delta = gesture.translation(in: contentView)
+        let origin = contentView.bounds.origin
+        scroll(to: boundedScrollOrigin(CGPoint(x: origin.x - delta.x, y: origin.y - delta.y)))
+        gesture.setTranslation(.zero, in: contentView)
+    }
+
     private func setup() {
+        let inspectionPan = NSPanGestureRecognizer(target: self, action: #selector(handleInspectionPan(_:)))
+        inspectionPan.isEnabled = inspectionMode
+        inspectionPanGesture = inspectionPan
+        imageView.addGestureRecognizer(inspectionPan)
         drawsBackground = true
         backgroundColor = NSColor(
             calibratedRed: 0x0E / 255,
@@ -12994,6 +13029,12 @@ private final class ImageZoomScrollView: NSScrollView {
         }
 
         let fitScale = min(viewport.width / imageSize.width, viewport.height / imageSize.height)
+        if inspectionMode, let onActualSizeZoomChange {
+            let pixelsWide = imageView.image?.representations.map(\.pixelsWide).max() ?? Int(imageSize.width)
+            let backingScale = window?.backingScaleFactor ?? 1
+            let actual = CGFloat(pixelsWide) / backingScale / imageSize.width / fitScale
+            DispatchQueue.main.async { onActualSizeZoomChange(actual) }
+        }
         let displaySize = CGSize(
             width: max(1, imageSize.width * fitScale * zoomScale),
             height: max(1, imageSize.height * fitScale * zoomScale)

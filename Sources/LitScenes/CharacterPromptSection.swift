@@ -14,6 +14,7 @@ struct CharacterPromptSection: View {
     var onCommit: () -> Void
     var onRequestReset: () -> Void
     var onCopy: () -> Void
+    var promptLimit: Int? = nil
 
     private var displayedPrompt: String { handEditedPrompt ?? composedPrompt }
 
@@ -24,6 +25,12 @@ struct CharacterPromptSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             headerRow
+            if let promptLimit, (isEditing ? promptDraft : displayedPrompt).count > promptLimit {
+                Text("This model shortens prompts beyond \(promptLimit) characters. Keep essential instructions near the beginning; edit the prompt to reduce it.")
+                    .font(CanonType.interface(12))
+                    .foregroundStyle(CanonColor.softGold)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if isEditing {
                 editor
             } else {
@@ -107,7 +114,7 @@ struct CharacterPromptSection: View {
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(focus.wrappedValue == .prompt ? CanonColor.brass.opacity(0.7) : CanonColor.hairlineDark))
                 .focused(focus, equals: .prompt)
             HStack(spacing: 12) {
-                Text("Renders exactly as written. Commits when you leave the field.")
+                Text("Uses your written prompt within the model’s length limit. Saves when you leave the field.")
                     .font(CanonType.interface(11.5))
                     .foregroundStyle(CanonColor.muted)
                 Spacer(minLength: 0)

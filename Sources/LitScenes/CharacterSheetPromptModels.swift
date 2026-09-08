@@ -194,7 +194,9 @@ extension ProjectPromptSettingsDocument {
 
     /// Superseded built-in sheet bodies, keyed like the live templates, so a project
     /// that saved the prompt sheet still receives repaired defaults.
-    static let retiredCharacterSheetBodies: [String: Set<String>] = [:]
+    static let retiredCharacterSheetBodies: [String: Set<String>] = [
+        characterSheetTemplateKey(model: ""): [legacyCharacterSheetBody]
+    ]
 
     /// Built-ins first, stored templates layered on top unless a stored body is a
     /// retired built-in (a stale saved default, not an operator edit).
@@ -218,9 +220,18 @@ extension ProjectPromptSettingsDocument {
         }
     }
 
+    /// Creator changes and identity continuity lead the layout so bounded providers retain them.
+    static let builtInCharacterSheetBody = legacyCharacterSheetBody
+        .replacingOccurrences(of: "\n{{sheet_directives}}\n", with: "")
+        .replacingOccurrences(of: "{{visual_description}}", with: "{{sheet_directives}}\n\n" + hairContinuityInstruction + "\n\n{{visual_description}}")
+        .replacingOccurrences(of: "8. DO NOT CHANGE — lock", with: "8. DO NOT CHANGE — except for explicitly requested changes, preserve")
+        .replacingOccurrences(of: "Do not redesign, beautify, age, stylize, simplify, or create alternate versions.", with: "Do not introduce unrequested redesigns or alternate versions.")
+
+    static let hairContinuityInstruction = "Apply the latest explicit character changes first; otherwise preserve the established identity from the references. Where hair is present, keep the same hair length, cut, silhouette, and texture across the full-body turnaround, face close-ups, expressions, and poses. When a hair change is explicitly requested, apply that change consistently to every panel and carry the resulting look into later updates."
+
     /// The default sheet body: an eight-section production continuity sheet. Output
     /// size is provider-parameterized, so the body names no aspect ratio.
-    static let builtInCharacterSheetBody = """
+    static let legacyCharacterSheetBody = """
     Create a professional AI Video Production — Character Reference Sheet for {{character_name}}{{reference_note}}. Create a polished portrait continuity sheet focused exclusively on the character.
 
     {{visual_description}}

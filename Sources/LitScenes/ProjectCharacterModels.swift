@@ -37,9 +37,11 @@ struct ProjectCharacter: Codable, Hashable, Identifiable, Sendable {
     /// means the identity moved on underneath the hand-edited text. Empty without an
     /// override.
     var sheetPromptOverrideBaseHash: String = ""
-    /// The render stack this character's sheets and studies render on; nil reads as
+    /// The render stack this character's sheets render on; nil reads as
     /// the default stack.
     var sheetStackId: String?
+    /// Independent model choice for single character images.
+    var studyStackId: String?
     /// Prompt hash per rendered sheet (mediaId → hash), so switching versions restores
     /// the currency that sheet was actually rendered with.
     var sheetPromptHashes: [String: String] = [:]
@@ -97,6 +99,7 @@ struct ProjectCharacter: Codable, Hashable, Identifiable, Sendable {
             ? ""
             : value.sheetPromptOverrideBaseHash.trimmed
         value.sheetStackId = value.sheetStackId?.trimmed.nilIfEmpty
+        value.studyStackId = value.studyStackId?.trimmed.nilIfEmpty ?? value.sheetStackId
         value.sheetPromptHashes = value.sheetPromptHashes.reduce(into: [:]) { hashes, pair in
             let mediaId = pair.key.trimmed
             let hash = pair.value.trimmed
@@ -122,6 +125,7 @@ struct ProjectCharacter: Codable, Hashable, Identifiable, Sendable {
         case sheetPromptOverride
         case sheetPromptOverrideBaseHash
         case sheetStackId
+        case studyStackId
         case sheetPromptHashes
         case updatedAt
     }
@@ -137,10 +141,11 @@ struct ProjectCharacter: Codable, Hashable, Identifiable, Sendable {
         activeSheetMediaId: String? = nil,
         sheetDirectives: [String] = [],
         activeSheetPromptHash: String = "",
-        autoRenderSheetAfterChat: Bool? = nil,
+        autoRenderSheetAfterChat: Bool? = false,
         sheetPromptOverride: String? = nil,
         sheetPromptOverrideBaseHash: String = "",
         sheetStackId: String? = nil,
+        studyStackId: String? = nil,
         sheetPromptHashes: [String: String] = [:],
         updatedAt: String = DateFormats.now()
     ) {
@@ -158,6 +163,7 @@ struct ProjectCharacter: Codable, Hashable, Identifiable, Sendable {
         self.sheetPromptOverride = sheetPromptOverride
         self.sheetPromptOverrideBaseHash = sheetPromptOverrideBaseHash
         self.sheetStackId = sheetStackId
+        self.studyStackId = studyStackId ?? sheetStackId
         self.sheetPromptHashes = sheetPromptHashes
         self.updatedAt = updatedAt
     }
@@ -178,6 +184,8 @@ struct ProjectCharacter: Codable, Hashable, Identifiable, Sendable {
         sheetPromptOverride = try container.decodeIfPresent(String.self, forKey: .sheetPromptOverride)
         sheetPromptOverrideBaseHash = try container.decodeIfPresent(String.self, forKey: .sheetPromptOverrideBaseHash) ?? ""
         sheetStackId = try container.decodeIfPresent(String.self, forKey: .sheetStackId)
+        // Older documents shared the sheet choice; migrate it without changing its value.
+        studyStackId = try container.decodeIfPresent(String.self, forKey: .studyStackId) ?? sheetStackId
         sheetPromptHashes = try container.decodeIfPresent([String: String].self, forKey: .sheetPromptHashes) ?? [:]
         updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt) ?? DateFormats.now()
         self = normalized()

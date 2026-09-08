@@ -344,6 +344,8 @@ struct CharacterSheetRefineContext {
     /// The transmitted prompt is the user's hand edit, so identity changes recorded
     /// this turn do not enter it until they reset or edit the prompt.
     var promptIsHandEdited: Bool = false
+    var characterId: String = ""
+    var runId: String = ""
 }
 
 struct OpenAICharacterIdentityDraftResult: Sendable {
@@ -1871,19 +1873,50 @@ struct OpenAIClient: Sendable {
                 "detail": input.detail
             ])
         }
-        let (text, decoded) = try await strictJSONResponse(
-            schema: schema,
-            name: "character_sheet_refine",
-            content: content,
+        let textFormat: [String: Any] = [
+            "verbosity": "low",
+            "format": ["type": "json_schema", "name": "character_sheet_refine", "strict": true, "schema": schema]
+        ]
+        let sourceRefs: [[String: Any]] = visionInputs.prefix(8).map { input in
+            let size = imagePixelSize(from: input.data)
+            return ["media_id": input.mediaId, "mime_type": input.mimeType,
+                    "sha256": sha256Hex(input.data), "bytes": input.data.count,
+                    "width": size?.width ?? 0, "height": size?.height ?? 0, "detail": input.detail]
+        }
+        let result = try await responsesRequest(
+            operationName: "character_sheet_refine",
+            body: ["model": model, "reasoning": ["effort": "low"], "text": textFormat,
+                   "input": [["role": "user", "content": content]]],
             model: model,
-            verbosity: "low",
             timeoutInterval: 180,
-            projectId: context.projectId
+            projectId: context.projectId,
+            runId: context.runId,
+            traceGroupId: context.runId,
+            traceWorkflowName: "character_sheet_refine",
+            traceWorkflowStep: "refine_identity_and_directives",
+            traceArtifactType: "character",
+            traceArtifactId: context.characterId,
+            traceRequestTextJSON: inferenceTraceJSONString([
+                "model": model, "prompt": prompt, "operator_prompt": context.userMessage,
+                "reasoning": ["effort": "low"], "text": textFormat, "store": true,
+                "sources": sourceRefs
+            ]),
+            traceMediaRefsJSON: inferenceTraceJSONString(["sources": sourceRefs]),
+            captureRequestBody: false
         )
+        let decoded = result.decoded
         let response: CharacterSheetRefineResponse
         do {
-            response = try CharacterSheetRefineResponse.decode(from: Data(text.utf8))
+            response = try CharacterSheetRefineResponse.decode(from: Data(result.rawText.utf8))
+            await InferenceTraceStore.shared.enrich(
+                traceId: result.traceId,
+                parsedOutputJSON: String(data: try JSONCoding.encoder.encode(response), encoding: .utf8)
+            )
         } catch {
+            await InferenceTraceStore.shared.enrich(
+                traceId: result.traceId,
+                parsedOutputJSON: inferenceTraceJSONString(["validation_error": error.localizedDescription])
+            )
             throw ScreenGraphError.openAI("Character sheet refinement response could not be read: \(error.localizedDescription)")
         }
         return OpenAICharacterSheetRefineResult(
@@ -2706,7 +2739,10 @@ struct OpenAIClient: Sendable {
         traceWorkflowName: String = "",
         traceWorkflowStep: String = "",
         traceArtifactType: String = "",
-        traceArtifactId: String = ""
+        traceArtifactId: String = "",
+        traceRequestTextJSON: String = "",
+        traceMediaRefsJSON: String = "",
+        captureRequestBody: Bool = true
     ) async throws -> OpenAIResponseRequestResult {
         var storedBody = body
         storedBody["store"] = true
@@ -2736,7 +2772,10 @@ struct OpenAIClient: Sendable {
                 model: model,
                 requestBodyFormat: "application/json",
                 responseBodyFormatHint: "application/json",
-                providerRequestIDHeaderCandidates: ["x-request-id"]
+                requestTextJSON: traceRequestTextJSON,
+                mediaRefsJSON: traceMediaRefsJSON,
+                providerRequestIDHeaderCandidates: ["x-request-id"],
+                captureRequestBody: captureRequestBody
             )
         )
         guard (200..<300).contains(result.statusCode) else {
@@ -3218,7 +3257,8 @@ struct OpenAIClient: Sendable {
         The user now says: "\(context.userMessage)"
 
         Rules:
-        - assistant_message: short and conversational — say what changed and, in a phrase, what the next render will show. Describe appearance only; never identify a real private person by name.
+        - assistant_message: short and conversational — confirm the instructions saved for the next render. Do not promise that a future image will satisfy them or claim visual verification before inspecting an actual result. Describe appearance only; never identify a real private person by name.
+        - Preserve established hair length, cut, silhouette, and texture unless the user explicitly changes them. Carry requested appearance changes into visual_description as well as relevant sheet_directives. Apply the resulting look consistently across turnaround, face details, expression and pose panels. Keep an unchanged trait unchanged when another feature is edited.
         - visual_description: the FULL replacement appearance line when the user changed how the character looks; "" to keep the current one.
         - signature_props: the full replacement list (at most 3) when props changed; [] to keep the current ones.
         - sheet_directives: the COMPLETE list in force after this turn — carry forward every earlier directive the user did not retract, add the new ones, drop what they reversed; at most 12, each one imperative line about how the sheet renders. No story or frame style words.

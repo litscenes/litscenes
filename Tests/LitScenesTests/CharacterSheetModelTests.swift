@@ -12,6 +12,7 @@ struct CharacterSheetModelTests {
         #expect(character.sheetDirectives.isEmpty)
         #expect(character.activeSheetPromptHash == "")
         #expect(character.rendersSheetAfterChat)
+        #expect(!ProjectCharacter(characterId: "new", name: "New character").rendersSheetAfterChat)
     }
 
     @Test("Sheet fields round-trip and normalize")

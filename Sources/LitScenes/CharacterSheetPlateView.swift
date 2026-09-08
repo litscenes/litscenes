@@ -25,6 +25,11 @@ struct CharacterSheetPlateView<Card: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            CharacterSectionHeader(title: "REFERENCE SHEET") {
+                if let activeSheet {
+                    CharacterCapsButton(title: "INSPECT", help: "Inspect the full-resolution sheet with zoom and pan") { onEnlarge(activeSheet) }
+                }
+            }
             plate
             if !sheetVersions.isEmpty {
                 versionStrip
@@ -63,7 +68,7 @@ struct CharacterSheetPlateView<Card: View>: View {
                 .scaledToFit()
                 .padding(18)
                 .onTapGesture { onEnlarge(activeSheet) }
-                .help("Click to view the sheet larger")
+                .help("Inspect the full-resolution sheet with zoom and pan")
         } else {
             card()
         }
@@ -75,8 +80,12 @@ struct CharacterSheetPlateView<Card: View>: View {
                 ForEach(sheetVersions, id: \.mediaId) { sheet in
                     VStack(spacing: 5) {
                         versionMini(sheet, ordinal: versionOrdinal(sheet.mediaId))
-                            .contextMenu { deleteVersionButton(sheet) }
+                            .contextMenu {
+                                Button("Inspect", action: { onEnlarge(sheet) })
+                                deleteVersionButton(sheet)
+                            }
                         Menu {
+                            Button("Inspect", action: { onEnlarge(sheet) })
                             deleteVersionButton(sheet)
                         } label: {
                             Image(systemName: "ellipsis")
@@ -118,7 +127,7 @@ struct CharacterSheetPlateView<Card: View>: View {
                 .background(CanonColor.mediaCard)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(isActive ? CanonColor.brass : CanonColor.hairlineDark, lineWidth: isActive ? 1.5 : 1))
-                Text(isActive ? "\(numeral) · CURRENT" : numeral)
+                Text(isActive ? "\(numeral) · ACTIVE" : numeral)
                     .font(CanonType.archive(7.5, weight: .semibold))
                     .kerning(0.8)
                     .foregroundStyle(isActive ? CanonColor.brass : CanonColor.muted)

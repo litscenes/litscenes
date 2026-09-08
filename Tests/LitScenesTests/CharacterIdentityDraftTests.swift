@@ -134,8 +134,8 @@ struct CharacterIdentityDraftTests {
         failed.lastFailure = "Identity draft failed: the model timed out"
         failed.lastFailureIsDraft = true
         let failedCopy = characterCastingCopy(failed)
-        #expect(failedCopy.note == "Identity draft failed: the model timed out. RENDER SHEET renders from what is written.")
+        #expect(failedCopy.note == "Identity draft failed: the model timed out. Generate the reference sheet from the saved description.")
         #expect(failedCopy.cardFailure == "Identity draft failed: the model timed out.")
-        #expect(failedCopy.barTitle == "RENDER SHEET")
+        #expect(failedCopy.barTitle == "GENERATE REFERENCE SHEET")
     }
 }
