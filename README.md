@@ -1,6 +1,6 @@
 # LitScenes
 
-An open-source A.I. first desktop app for macOS — for stories longer than a prompt. With Aloha from [oahu.ai](https://oahu.ai)
+An open-source A.I. first desktop app for macOS — for stories longer than a prompt. More info at [litscenes.ai](https://litscenes.ai) . Built with Aloha by [oahu.ai](https://oahu.ai)
 
 
 
