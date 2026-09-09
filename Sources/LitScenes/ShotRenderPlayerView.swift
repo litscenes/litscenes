@@ -8,6 +8,8 @@ enum ShotEditorEntryIntent: Hashable {
     case play
     case edit
     case focus(String)
+    case segment(String)
+    case preview(ShotSegmentPreview)
     case provenance
     case ending(String)
 }
@@ -20,7 +22,11 @@ struct ShotVideoRequest: Identifiable, Hashable {
     var focusedEntryId: String {
         switch intent { case .focus(let id), .ending(let id): return id; default: return "" }
     }
-    var autoplay: Bool { intent == .play }
+    var focusedSegmentKey: String {
+        switch intent { case .segment(let key): return key; case .preview(let value): return value.clip.placementKey; default: return "" }
+    }
+    var initialPreview: ShotSegmentPreview? { if case .preview(let value) = intent { return value }; return nil }
+    var autoplay: Bool { intent == .play || initialPreview != nil }
     var openProvenance: Bool { intent == .provenance }
     var openEndingReview: Bool { if case .ending = intent { return true }; return false }
     init(shotId: String, intent: ShotEditorEntryIntent) { self.shotId = shotId; self.intent = intent }
@@ -65,6 +71,8 @@ struct ShotRenderPlayerModal: View {
     /// Live FAL rates for the re-render panel's spend estimates.
     var falPricing: FALPricingSnapshot? = nil
     var isFetchingVideoPricing: Bool = false
+    var initialFocusedSegmentKey: String
+    var initialPreview: ShotSegmentPreview?
     var initialFocusedEntryId: String
     var autoplayOnOpen: Bool
     var openProvenanceOnOpen: Bool
@@ -286,6 +294,8 @@ struct ShotRenderPlayerModal: View {
         isFetchingVideoPricing: Bool = false,
         openPanelInitially: Bool = false,
         initialFocusedEntryId: String = "",
+        initialFocusedSegmentKey: String = "",
+        initialPreview: ShotSegmentPreview? = nil,
         autoplayOnOpen: Bool = true,
         openProvenanceOnOpen: Bool = false,
         onInspectSource: @escaping (String) -> Void = { _ in },
@@ -359,6 +369,8 @@ struct ShotRenderPlayerModal: View {
     ) {
         self.shot = shot
         self.initialFocusedEntryId = initialFocusedEntryId
+        self.initialFocusedSegmentKey = initialFocusedSegmentKey
+        self.initialPreview = initialPreview
         self.autoplayOnOpen = autoplayOnOpen
         self.openProvenanceOnOpen = openProvenanceOnOpen
         self.onInspectSource = onInspectSource
@@ -773,6 +785,11 @@ struct ShotRenderPlayerModal: View {
             }), !initialFocusedEntryId.isEmpty {
                 focusedSegmentKey = ShotSegmentPresentation(shot: shot, segment: segment).id
             }
+            if !initialFocusedSegmentKey.isEmpty {
+                focusedSegmentKey = initialFocusedSegmentKey
+                isPanelOpen = true
+            }
+            if let initialPreview { viewingSelection = .segment(initialPreview) }
             preparePlayer()
             tunerUndo.applyRegion = { region in audioRegionActions.restore(region) }
             tunerUndo.deleteRegion = { regionId in _ = audioRegionActions.delete(regionId) }
@@ -2699,6 +2716,12 @@ struct ShotRenderPlayerModal: View {
                     await loadClipDurations()
                 }
                 guard token == playerLoadToken else { return }
+                if !didResolveInitialFocus, !initialFocusedSegmentKey.isEmpty, initialPreview == nil {
+                    if let clip = assembly.planClips.first(where: { $0.segmentKey == initialFocusedSegmentKey }) {
+                        pendingSeekSeconds = assembly.outputSeconds(forMaterialSeconds: clip.materialStartSeconds)
+                    } else { transportStatus = "This segment has no saved timeline position yet" }
+                    didResolveInitialFocus = true
+                }
                 if !didResolveInitialFocus, !initialFocusedEntryId.isEmpty {
                     pendingSeekSeconds = shotEntryFocusSeconds(shot: shot, entryId: initialFocusedEntryId, assembly: assembly)
                     if pendingSeekSeconds == nil { transportStatus = "This source has no saved timeline position yet" }

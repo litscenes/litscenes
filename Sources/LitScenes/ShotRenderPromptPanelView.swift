@@ -9,6 +9,7 @@ import AppKit
 /// player. An untouched panel renders exactly what a one-click re-render
 /// used to.
 struct ShotRenderPromptPanel: View {
+    @ObservedObject private var workflows = WorkflowCoordinator.shared
     let shot: ProjectShot
     let planSegments: [ShotRenderPlanSegment]
     let skipped: [String]
@@ -292,6 +293,14 @@ struct ShotRenderPromptPanel: View {
             .filter { $0.selectedTake != nil }
     }
 
+    private var unplannedWork: [ShotRowVideoTile] {
+        guard historyVersion == nil else { return [] }
+        let represented = Set(planSegments.map(\.id) + unplannedSavedRecords.map { ShotSegmentPresentation(record: $0).id })
+        return shotRowVideoTiles(shot: shot, segments: planSegments,
+            work: ShotWorkPresentation(jobs: workflows.jobs, shotId: shot.shotId))
+            .filter { $0.result.progress != nil && !represented.contains($0.id) }
+    }
+
     private var segmentList: some View {
         ScrollViewReader { proxy in
         ScrollView(.vertical, showsIndicators: true) {
@@ -317,6 +326,9 @@ struct ShotRenderPromptPanel: View {
                         resultRow(ShotSegmentPresentation(record: record), ordinal: "Saved segment")
                         Text("Generation inputs unavailable · saved video remains available.").font(.caption)
                     }.id(ShotSegmentPresentation(record: record).id)
+                }
+                ForEach(unplannedWork) { tile in
+                    resultRow(tile.result, ordinal: "Segment \(tile.ordinal) of \(tile.count)").id(tile.id)
                 }
                 if !skipped.isEmpty {
                     PlateLabel(
@@ -567,11 +579,15 @@ struct ShotRenderPromptPanel: View {
     }
 
     private func resultRow(_ segment: ShotRenderPlanSegment, ordinal: String) -> some View {
-        resultRow(ShotSegmentPresentation(shot: shot, segment: segment), ordinal: ordinal)
+        let result = ShotSegmentPresentation(shot: shot, segment: segment)
+        let work = ShotWorkPresentation(jobs: workflows.jobs, shotId: shot.shotId)
+        return resultRow(result.withProgress(historyVersion == nil ? work.segment(result.id) : nil, shot: shot), ordinal: ordinal)
     }
 
-    private func resultRow(_ result: ShotSegmentPresentation, ordinal: String) -> some View {
-        ShotSegmentResultView(result: result, ordinal: ordinal,
+    private func resultRow(_ source: ShotSegmentPresentation, ordinal: String) -> some View {
+        let work = ShotWorkPresentation(jobs: workflows.jobs, shotId: shot.shotId)
+        let result = source.withProgress(historyVersion == nil ? work.segment(source.id) : nil, shot: shot)
+        return ShotSegmentResultView(result: result, ordinal: ordinal,
             isFocused: focusedSegmentKey == result.id,
             isStale: result.record.map { shotContinuationStaleEntryIds(shot).contains($0.entryId) } ?? false,
             onSelect: { onFocusSegment(result.id) },

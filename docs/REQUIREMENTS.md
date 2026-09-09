@@ -73,6 +73,14 @@ LitScenes Desktop is the public, canonical macOS application for turning persona
 - Relaunch does not automatically recreate a paid submission. Known resumable Look jobs use existing provider request identifiers; ambiguous acceptance requires checking the saved request and provider before retry. Other interrupted jobs retain their saved request and open the original artifact for review of current inputs, capabilities and pricing. Completed media can use the existing local repair paths.
 - Resetting a project's creative database is blocked while that project has unfinished operational jobs, because background completion could repopulate or corrupt reset state. This destructive-state prerequisite does not block unrelated projects.
 
+## Segment Progress and Browsing
+
+- A confirmed Shot generation appears as one video tile at its timeline position. Input Frames remain separate: Frame → video → Frame. AI continuation and standalone Footage placements already represent video and are not duplicated. Saved videos replace their loading state in place; retakes use the same tile and keep current playback available.
+- Shot rows, segment editor cards, Scene status, and Logs share durable segment progress: preparing, queued, rendering, finishing, saved, failed, canceled, interrupted, and not started. Only confirmed work appears to generate; reused clips remain saved. Finishing the Shot is local assembly, and pending additions are separate from playable duration. Interrupted work never keeps spinning after relaunch.
+- Failure identifies the affected attempt and preserves completed sibling clips. Review returns to the existing segment editor and spend review; Logs opens its recorded operation. Whole saved media without recoverable segment records remains one video, with no invented interior segments.
+- Logs shows concise artifact, outcome/error, provider/model/settings, local time, elapsed time, and available cost evidence. Expanded Inputs, Result/Failure, Activity, and Technical details expose safe prompts, source Frames where recorded, saved media, provider requests, and copyable diagnostics. Late events retain failure evidence without changing terminal timing; legacy records are projected without rewriting them. Search includes saved artifact and outcome fields. Recovery opens the owning project and offers only supported actions.
+- Frame detail arrows follow the live originating thumbnail collection and its displayed order, filters, separate visible versions, and identity groups. Source-photo adoption preserves its collection position. Shot-origin Frame navigation keeps placement order. Version browsing does not replace collection selection, and text-input arrows continue editing text.
+
 ## Validation and Compatibility
 
 - Hard failures are limited to invalid required persisted state, unavailable credentials/services, security or privacy risk, destructive operations, and impossible runtime prerequisites. Creative quality concerns remain soft warnings with repair, regenerate, review, or continue actions.
@@ -118,3 +126,5 @@ LitScenes Desktop is the public, canonical macOS application for turning persona
 - Safe prompt and reference provenance must be recorded before image submission so unsuccessful and canceled image-edit and Responses calls remain inspectable alongside successful renders.
 
 - Exact Video Endpoints — implemented and validated in the current working tree; commit hash pending explicit authorization. See `plans/20260908T032527Z-exact-video-endpoints.md` and its work log.
+
+- Consistent Shot Progress, Logs, and Frame Navigation — implemented and validated in the current working tree; commit hash pending explicit authorization. See `plans/20260909T005543Z-shot-progress-logs-frame-navigation.md` and `docs/20260909T005543Z_shot-progress-logs-frame-navigation.log.md`.

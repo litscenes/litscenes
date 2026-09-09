@@ -67,3 +67,9 @@
 2026-09-08T03:25:27Z Continuation lineage is correct, but unrestricted AVFoundation image timing returned the opening frame for an ending request; cached stills then propagated that error. New takes must verify video endpoints without rewriting historical inputs.
 
 2026-09-08T03:55:54Z Offline repeated append/render/reopen checks confirm correct predecessor identity and corrected final-frame inputs. Missing-video availability also needed to retain its video prerequisite, and local continuation traces needed links into Logs; neither repair rewrites historical media.
+
+2026-09-09T00:55:43+00:00 Continuation progress currently reads a previous ready render artifact while ordinary renders lack a result tile; display state must distinguish selected saved media from the current attempt.
+
+2026-09-09T01:57:00Z Shot progress must describe a confirmed operation independently of selected immutable media; a failed retake may coexist with a playable selected clip, while queued siblings have not started.
+2026-09-09T01:57:00Z Native inspection caught an empty whole-video fallback during a first render; fallback tiles now require a recorded video path, and the isolated render diagnostic checks exact tile count while rendering.
+2026-09-09T01:57:00Z FAL trace summaries lost plain-string error leaves; retaining safe string values fixes both plain and nested error evidence without creative-text rules. Live Logs search now matches the durable payload so newly saved outcomes remain findable.

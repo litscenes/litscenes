@@ -87,6 +87,8 @@ struct CutStripActions {
     /// Fired when a plan strip opens — refreshes FAL rates if stale.
     var onRenderPlanOpened: () -> Void = {}
     var onRequestRerender: (String) -> Void = { _ in }
+    var onOpenShotSegment: (String, String) -> Void = { _, _ in }
+    var onPreviewShotSegment: (String, ShotSegmentPreview) -> Void = { _, _ in }
     var onOpenShotEntry: (String, String) -> Void = { _, _ in }
     var onOpenShotProvenance: (String) -> Void = { _ in }
     var onOpenShotVideo: (String) -> Void = { _ in }
@@ -195,6 +197,8 @@ extension CutStripActions {
         wrapped.onSetNarrationAnchorFaceOverride = { touch($0); self.onSetNarrationAnchorFaceOverride($0, $1) }
         wrapped.onConfirmRender = { touch($0); self.onConfirmRender($0, $1, $2) }
         wrapped.onRequestRerender = { touch($0); self.onRequestRerender($0) }
+        wrapped.onOpenShotSegment = { touch($0); self.onOpenShotSegment($0, $1) }
+        wrapped.onPreviewShotSegment = { touch($0); self.onPreviewShotSegment($0, $1) }
         wrapped.onOpenShotEntry = { touch($0); self.onOpenShotEntry($0, $1) }
         wrapped.onOpenShotProvenance = { touch($0); self.onOpenShotProvenance($0) }
         wrapped.onOpenShotVideo = { touch($0); self.onOpenShotVideo($0) }
@@ -237,6 +241,11 @@ enum CutStripLayout {
 }
 
 struct CutStripView: View {
+    @ObservedObject private var workflows = WorkflowCoordinator.shared
+    private var work: ShotWorkPresentation { ShotWorkPresentation(jobs: workflows.jobs, shotId: cut.shotId) }
+    private var videoTiles: [ShotRowVideoTile] {
+        shotRowVideoTiles(shot: cut, segments: boxPlanContext().segments, work: work)
+    }
     static let cellSize = CGSize(width: 196, height: 110)
     private static let gapWidth: CGFloat = 14
     private static let railWidth: CGFloat = 116
@@ -414,7 +423,7 @@ struct CutStripView: View {
     /// material drop lands at the strip's end and opens it, so building onto
     /// a collapsed cut never needs a separate expand step first.
     private var collapsedRow: some View {
-        let isRendering = actions.activeShotRenderIds.contains(cut.shotId) || cut.renderArtifact?.status == "generating"
+        let isRendering = actions.activeShotRenderIds.contains(cut.shotId) || work.isActive
         return HStack(spacing: 10) {
             Image(systemName: "chevron.right")
                 .font(.system(size: 9, weight: .semibold))
@@ -436,7 +445,7 @@ struct CutStripView: View {
             if isRendering {
                 ProgressView()
                     .controlSize(.mini)
-                Text("RENDERING")
+                Text(work.phase.isEmpty ? "Rendering" : work.phase)
                     .font(CanonType.archive(7, weight: .semibold))
                     .kerning(0.6)
                     .foregroundStyle(CanonColor.brass)
@@ -645,14 +654,24 @@ struct CutStripView: View {
     /// scroller draws its own always-visible-on-overflow track, so a mouse
     /// can drive a long strip without a trackpad swipe.
     private var stripScroller: some View {
-        CanonHScroller {
+        let tiles = videoTiles
+        return CanonHScroller {
             HStack(alignment: .top, spacing: 0) {
                 ForEach(Array(cut.entries.enumerated()), id: \.element.entryId) { entryIndex, entry in
                     gapStrip(index: entryIndex)
-                    VStack(spacing: 5) {
-                        entryCell(entry)
-                        entrySecondaryActions(entry)
+                    ForEach(tiles.filter { $0.beforeEntryId == entry.entryId }) { tile in
+                        videoTile(tile).padding(.trailing, Self.gapWidth)
                     }
+                    VStack(spacing: 5) {
+                        entryCell(entry, tile: tiles.first { $0.replacesEntryId == entry.entryId })
+                        entrySecondaryActions(entry, tile: tiles.first { $0.replacesEntryId == entry.entryId })
+                    }
+                    ForEach(tiles.filter { $0.afterEntryId == entry.entryId }) { tile in
+                        videoTile(tile).padding(.leading, Self.gapWidth)
+                    }
+                }
+                ForEach(tiles.filter { $0.beforeEntryId.isEmpty && $0.afterEntryId.isEmpty && $0.replacesEntryId.isEmpty }) { tile in
+                    videoTile(tile).padding(.leading, Self.gapWidth)
                 }
                 gapStrip(index: cut.entries.count)
                 appendZone
@@ -682,6 +701,15 @@ struct CutStripView: View {
         .frame(height: Self.cellSize.height)
     }
 
+    private var playbackDurationLabel: String? {
+        let pending = videoTiles.filter { $0.result.progress?.stage.isPending == true && $0.result.preview == nil }
+            .reduce(0.0) { $0 + ($1.result.progress?.durationSeconds ?? 0) }
+        guard work.isActive else { return nil }
+        let saved = shotCutAssembly(shot: cut, planSegments: boxPlanContext().segments, clipDurationsByPath: [:]).outputSeconds
+        if saved > 0 { return "\(Int(saved.rounded()))s playable" + (pending > 0 ? " · +\(Int(pending.rounded()))s pending" : "") }
+        return pending > 0 ? "~\(Int(pending.rounded()))s planned" : "Preparing video"
+    }
+
     // MARK: Box header (SCENES v2)
 
     /// The `.box` layout's header bar: identity + strip-level buttons on one
@@ -704,7 +732,7 @@ struct CutStripView: View {
                 )
                 .frame(width: 260, alignment: .leading)
                 Text(
-                    shotRuntimeSummary(shot: cut, frameLookup: actions.frameLookup, mediaLookup: actions.mediaLookup)
+                    playbackDurationLabel ?? shotRuntimeSummary(shot: cut, frameLookup: actions.frameLookup, mediaLookup: actions.mediaLookup)
                         .railLabel(
                             generatedSeconds: generatedSeconds,
                             unrenderedCount: isSuffixAppendable ? suffix.missingKeys.count : 0
@@ -907,7 +935,7 @@ struct CutStripView: View {
             && suffix.reusableSegmentCount > 0
             && suffix.hasNewMaterial
         let resumeHelp = "\(suffix.reusableSegmentCount) of \(suffix.reusableSegmentCount + suffix.missingKeys.count) segments are already rendered — RESUME renders only the rest"
-        let isRenderingThis = actions.activeShotRenderIds.contains(cut.shotId) || artifact?.status == "generating"
+        let isRenderingThis = actions.activeShotRenderIds.contains(cut.shotId) || work.isActive
         let anotherIsRendering = false
         let renderCTA = cutRenderCTA(cut: cut, segmentCount: segmentCount)
         let isSeedDraft = renderCTA.isSeedDraft
@@ -968,7 +996,7 @@ struct CutStripView: View {
                     HStack(spacing: 5) {
                         ProgressView()
                             .controlSize(.mini)
-                        Text(artifact?.progressText.trimmed.nilIfEmpty ?? "RENDERING")
+                        Text(work.label.isEmpty ? "Rendering" : work.label)
                             .font(CanonType.archive(7, weight: .semibold))
                             .kerning(0.5)
                             .foregroundStyle(CanonColor.brass)
@@ -1126,7 +1154,7 @@ struct CutStripView: View {
 
     private func boxRenderToggle(_ context: BoxPlanContext) -> BoxRenderToggle? {
         let artifact = cut.renderArtifact
-        let isRenderingThis = actions.activeShotRenderIds.contains(cut.shotId) || artifact?.status == "generating"
+        let isRenderingThis = actions.activeShotRenderIds.contains(cut.shotId) || work.isActive
         if isRenderingThis { return nil }
         let hasPlayable = cut.hasSavedPlayback
         let suffix = context.suffix
@@ -1189,8 +1217,7 @@ struct CutStripView: View {
     /// disclosure at the right — filled brass while closed (the page's one
     /// fill), an open chevron ghost while the plan below carries the confirm.
     private func boxRenderBar(_ context: BoxPlanContext) -> some View {
-        let artifact = cut.renderArtifact
-        let isRenderingThis = actions.activeShotRenderIds.contains(cut.shotId) || artifact?.status == "generating"
+        let isRenderingThis = actions.activeShotRenderIds.contains(cut.shotId) || work.isActive
         let anotherIsRendering = false
         let hasPlayable = cut.hasSavedPlayback
         let provenance: (label: String, number: Int)? = cut.hasSavedPlayback
@@ -1227,9 +1254,7 @@ struct CutStripView: View {
             }
             if isRenderingThis {
                 HStack(spacing: 5) {
-                    ProgressView()
-                        .controlSize(.mini)
-                    Text(artifact?.progressText.trimmed.nilIfEmpty ?? "RENDERING")
+                    Text(work.phase.isEmpty ? "Rendering" : work.phase)
                         .font(CanonType.archive(7.5, weight: .semibold))
                         .kerning(0.6)
                         .foregroundStyle(CanonColor.brass)
@@ -1356,8 +1381,7 @@ struct CutStripView: View {
     /// — trashing then would hide the running work behind the held render
     /// lock. The engine refuses too; this keeps the control honest.
     private var isActivelyRendering: Bool {
-        actions.activeShotRenderIds.contains(cut.shotId)
-            || cut.renderArtifact?.status == "generating"
+        actions.activeShotRenderIds.contains(cut.shotId) || work.isActive
     }
 
     /// Armed two-click delete: the first click arms (rust), the second within
@@ -1403,8 +1427,58 @@ struct CutStripView: View {
         cut.entries.isEmpty ? "START SCENE" : (cut.hasSavedPlayback ? "EXTEND SCENE" : "ADD TO SCENE")
     }
 
-    private func entrySecondaryActions(_ entry: ShotFrameEntry) -> some View {
+    private func videoTile(_ tile: ShotRowVideoTile) -> some View {
+        VStack(spacing: 5) {
+            Button { actions.onOpenShotSegment(cut.shotId, tile.id) } label: {
+                ShotSegmentStatusThumbnail(result: tile.result)
+            }.buttonStyle(.plain)
+            Text("VIDEO \(tile.ordinal) · \(tile.result.title.uppercased())")
+                .font(CanonType.archive(7, weight: .semibold)).foregroundStyle(chipInk)
+            videoActions(tile)
+        }
+        .frame(width: Self.cellSize.width)
+        .popover(isPresented: Binding(get: { tile.result.record != nil && takeBrowserEntryId == tile.result.record?.entryId },
+            set: { if !$0 { takeBrowserEntryId = "" } }), arrowEdge: .bottom) {
+                if let record = tile.result.record { continuationTakeBrowser(entryId: record.entryId) }
+        }
+    }
+
+    @ViewBuilder
+    private func videoActions(_ tile: ShotRowVideoTile) -> some View {
         VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                if let preview = tile.result.preview, tile.result.isPlayable {
+                    Button(tile.result.progress?.stage.isPending == true ? "PLAY CURRENT" : "PREVIEW CLIP") {
+                        actions.onPreviewShotSegment(cut.shotId, preview)
+                    }
+                }
+                if let record = tile.result.record {
+                    Button("TAKES (\(record.takes.count))") { takeBrowserEntryId = record.entryId }
+                }
+                if let progress = tile.result.progress, [.failed, .interrupted, .canceled, .notStarted].contains(progress.stage) {
+                    Button("REVIEW") { actions.onOpenShotSegment(cut.shotId, tile.id) }
+                    Button("LOGS") {
+                        workflows.selectedLogId = workflows.jobs.sorted { $0.createdAt > $1.createdAt }.first {
+                            $0.artifactId == cut.shotId && $0.segmentProgress?.contains(where: { $0.placementKey == tile.id }) == true
+                        }?.id
+                        workflows.showingLogs = true
+                    }
+                }
+            }
+            .buttonStyle(.plain).font(CanonType.archive(7, weight: .semibold)).foregroundStyle(chipInk)
+            if let progress = tile.result.progress, !progress.errorMessage.isEmpty {
+                Text(progress.errorMessage).font(CanonType.interface(9)).foregroundStyle(CanonColor.rust)
+                    .lineLimit(2).help(progress.errorMessage)
+            }
+        }
+    }
+
+    private func entrySecondaryActions(_ entry: ShotFrameEntry, tile: ShotRowVideoTile?) -> some View {
+        VStack(spacing: 4) {
+            if let tile {
+                Text("VIDEO \(tile.ordinal) · \(tile.result.title.uppercased())")
+                    .font(CanonType.archive(7, weight: .semibold)).foregroundStyle(chipInk)
+            }
             HStack(spacing: 8) {
                 if entry.isClip {
                     Button("INSPECT FOOTAGE") { actions.onOpenClip(cut.shotId, entry.entryId) }
@@ -1414,8 +1488,8 @@ struct CutStripView: View {
                         else { actions.onArtDirectPlannedFrame(frame) }
                     }
                 }
-                if cut.continuationRecord(entryId: entry.entryId) != nil || entry.isAIExtension {
-                    Button("TAKES") { takeBrowserEntryId = entry.entryId }
+                if let tile {
+                    videoActions(tile)
                 }
             }
             .buttonStyle(.plain)
@@ -1432,13 +1506,15 @@ struct CutStripView: View {
         .frame(minHeight: 20)
     }
 
-    private func entryCell(_ entry: ShotFrameEntry) -> some View {
+    private func entryCell(_ entry: ShotFrameEntry, tile: ShotRowVideoTile?) -> some View {
         let frame = entry.isClip ? nil : actions.frameLookup[entry.frameImageId]
         let media = entry.isClip ? actions.mediaLookup[entry.clipMediaId] : nil
         let isCellTargeted = targetedCellEntryId == entry.entryId
         return ZStack(alignment: .topTrailing) {
             Group {
-                if entry.isAIExtension {
+                if let tile {
+                    ShotSegmentStatusThumbnail(result: tile.result)
+                } else if entry.isAIExtension {
                     extensionThumbnail(entry: entry, isLeadIn: isLeadInPosition(entry))
                 } else if entry.isClip {
                     clipThumbnail(media: media)
@@ -1497,7 +1573,11 @@ struct CutStripView: View {
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture { actions.onOpenShotEntry(cut.shotId, entry.entryId) }
+        .onTapGesture {
+            if let tile {
+                actions.onOpenShotSegment(cut.shotId, tile.id)
+            } else { actions.onOpenShotEntry(cut.shotId, entry.entryId) }
+        }
         .contextMenu {
             if !entry.isClip, !entry.isAIExtension, let frame, frame.status == "ready" {
                 Button("Enter Excursion") {
@@ -1939,7 +2019,13 @@ struct CutStripView: View {
     /// direct Frame/Footage appends remain reserved for NEW VERSION.
     @ViewBuilder
     private var appendZone: some View {
-        if isLocked, !isSuffixAppendable {
+        if isActivelyRendering || work.isActive {
+            VStack(spacing: 4) {
+                appendButton.disabled(true)
+                Text("AVAILABLE WHEN THIS RENDER FINISHES")
+                    .font(CanonType.archive(6.5, weight: .semibold)).foregroundStyle(quietTint)
+            }
+        } else if isLocked, !isSuffixAppendable {
             VStack(spacing: 4) {
                 appendButton
                 Text("RENDERED · AI EXTEND ONLY")

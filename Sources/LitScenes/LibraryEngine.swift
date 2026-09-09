@@ -2142,7 +2142,7 @@ final class LibraryEngine: ObservableObject {
     @Published private(set) var lastError = "" {
         didSet {
             guard !lastError.isEmpty, WorkflowContext.current != nil else { return }
-            WorkflowCoordinator.shared.flagFailure()
+            WorkflowCoordinator.shared.flagFailure(message: lastError)
             let message = lastError
             let project = currentProject
             Task { await WorkflowCoordinator.shared.note(project: project, workflow: "error", message: message, failed: true) }
@@ -6122,6 +6122,22 @@ final class LibraryEngine: ObservableObject {
               var take = record.takes.first(where: { $0.takeId == takeId }) else {
             return .failed(message: "The continuation attempt is no longer available")
         }
+        let plan = shotRenderPromptPlan(shotId: shotId)?.segments ?? []
+        let planned = plan.compactMap { shotWorkflowSegment($0, count: plan.count) }
+            .first { $0.endEntryId == entryId }
+        var progress = planned ?? WorkflowSegmentProgress(placementKey: shotPlacementSegmentKey(
+            startEntryId: record.sourceEntryId, endEntryId: entryId, legacyStartId: "", legacyEndId: ""),
+            startEntryId: record.sourceEntryId, endEntryId: entryId,
+            ordinal: max(plan.count, 1), segmentCount: max(plan.count, 1))
+        progress.takeId = takeId
+        progress.takeNumber = take.takeNumber
+        progress.title = take.targetFrame == nil ? "Continuation" : "Ending"
+        progress.provider = take.renderStack.providerSelection.rawValue
+        progress.model = take.renderStack.model.label
+        progress.durationSeconds = Double(take.renderStack.segmentSeconds)
+        await WorkflowCoordinator.shared.describeArtifact(shot.name.trimmed.nilIfEmpty ?? "Untitled Shot")
+        await WorkflowCoordinator.shared.registerSegments([progress])
+        await WorkflowCoordinator.shared.segmentStage(.preparing, key: progress.placementKey)
         let started = Date()
         var phase = "preflight"
         let stack = take.renderStack
@@ -6343,6 +6359,8 @@ final class LibraryEngine: ObservableObject {
             if currentProject?.projectId == project.projectId {
                 aestheticStatus = selectOnSuccess ? "Continuation ready — Play to review the Scene" : "Take ready — Preview or Use it from its thumbnail"
             }
+            await WorkflowCoordinator.shared.segmentStage(.saved, key: progress.placementKey)
+            await WorkflowCoordinator.shared.outcome("Take \(take.takeNumber) saved" + (selectOnSuccess ? " · In use" : " · Review Takes to use it"))
             return .ready(takeId: takeId)
         } catch {
             let canceled = Task.isCancelled || isCancellationLikeError(error)
@@ -6357,6 +6375,9 @@ final class LibraryEngine: ObservableObject {
                     traceId: take.traceId, contextLabel: shot.name, shotId: shotId, unit: "seconds",
                     unitCount: Double(stack.segmentSeconds), status: "failed_unknown_charge"), for: project)
             }
+            await WorkflowCoordinator.shared.segmentStage(canceled ? .canceled : .failed,
+                key: progress.placementKey, message: take.errorMessage)
+            await WorkflowCoordinator.shared.outcome(take.errorMessage, failed: !canceled)
             await event(canceled ? "canceled" : "error", message: take.errorMessage)
             if currentProject?.projectId == project.projectId { aestheticStatus = take.errorMessage }
             return .failed(message: take.errorMessage)
@@ -6371,6 +6392,12 @@ final class LibraryEngine: ObservableObject {
                   var record = shot.continuationRecord(entryId: entryId),
                   var take = record.takes.first(where: { $0.takeId == takeId }),
                   !cutHasInFlightVideoOperation(cutId: shotId) else { return false }
+            let progressPlan = shotRenderPromptPlan(shotId: shotId)?.segments ?? []
+            if var progress = progressPlan.compactMap({ shotWorkflowSegment($0, count: progressPlan.count) }).first(where: { $0.endEntryId == entryId }) {
+                progress.takeId = takeId; progress.takeNumber = take.takeNumber; progress.isGeneration = false
+                await WorkflowCoordinator.shared.registerSegments([progress])
+                await WorkflowCoordinator.shared.segmentStage(.finishing, key: progress.placementKey)
+            }
             activeShotRenderIds.insert(shotId)
             defer { activeShotRenderIds.remove(shotId) }
             do {
@@ -6422,6 +6449,8 @@ final class LibraryEngine: ObservableObject {
                 guard persistShotTimeline(latest.updatingShot(shotId: shotId, now: take.updatedAt) { $0.upsertingContinuationRecord(record, now: take.updatedAt) }, for: project) else {
                     throw ScreenGraphError.capture("The repaired video is saved, but the timeline could not be saved")
                 }
+                await WorkflowCoordinator.shared.segmentStage(.saved)
+                await WorkflowCoordinator.shared.outcome("Saved video repaired locally · $0")
                 logGeneration(kind: "video.completed", message: "Continuation local repair take_id=\(takeId) cost_usd=0")
                 await recordShotContinuationEvent(take: take, projectId: project.projectId, shotId: shotId,
                     phase: "local_repair", status: "completed", message: take.errorMessage)
@@ -6435,6 +6464,7 @@ final class LibraryEngine: ObservableObject {
                 record = latest.shots.first { $0.shotId == shotId }?.continuationRecord(entryId: entryId) ?? record
                 record = record.upsertingTake(take, select: false, now: take.updatedAt)
                 persistShotTimeline(latest.updatingShot(shotId: shotId, now: take.updatedAt) { $0.upsertingContinuationRecord(record, now: take.updatedAt) }, for: project)
+                await WorkflowCoordinator.shared.segmentStage(.failed, message: aestheticStatus)
                 logGeneration(kind: "video.error", message: aestheticStatus)
                 await recordShotContinuationEvent(take: take, projectId: project.projectId, shotId: shotId,
                     phase: "local_repair", status: "error", message: take.errorMessage)
@@ -6481,9 +6511,14 @@ final class LibraryEngine: ObservableObject {
                 return true
             }
             guard shotContinuationRechainEstimate(shotId: shotId).isComplete else {
-                aestheticStatus = "A complete price estimate is required before rechaining"
-                return false
+                return failShotVideoOperation("A complete price estimate is required before rechaining")
             }
+            let requestedEntries = Set(shotContinuationStaleEntryIds(initial))
+            let progressPlan = shotRenderPromptPlan(shotId: shotId)?.segments ?? []
+            await WorkflowCoordinator.shared.describeArtifact(initial.name.trimmed.nilIfEmpty ?? "Untitled Shot")
+            await WorkflowCoordinator.shared.registerSegments(progressPlan.compactMap {
+                shotWorkflowSegment($0, count: progressPlan.count)
+            }.filter { requestedEntries.contains($0.endEntryId) })
             var completedCount = 0
             while let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
                   let entryId = shotContinuationStaleEntryIds(shot).first {
@@ -6492,8 +6527,7 @@ final class LibraryEngine: ObservableObject {
                       let sourceRecord = shot.continuationRecord(entryId: record.sourceEntryId),
                       let sourceTake = sourceRecord.selectedTake,
                       let candidate = continuationAnchor(following: sourceTake, sourceEntryId: record.sourceEntryId) else {
-                    aestheticStatus = "Rechain paused — the next continuation has no ready upstream take"
-                    return false
+                    return failShotVideoOperation("Rechain paused — the next continuation has no ready upstream take")
                 }
                 let anchor: ShotContinuationAnchor
                 do {
@@ -6516,8 +6550,7 @@ final class LibraryEngine: ObservableObject {
                     selectOnSuccess: true
                 )
                 guard succeeded.succeeded else {
-                    aestheticStatus = "Rechain paused after \(completedCount) completed link\(completedCount == 1 ? "" : "s") — resume retries the next link"
-                    return false
+                    return failShotVideoOperation("Rechain paused after \(completedCount) completed link\(completedCount == 1 ? "" : "s") — resume retries the next link")
                 }
                 completedCount += 1
             }
@@ -6547,9 +6580,14 @@ final class LibraryEngine: ObservableObject {
                 )
             }
             guard shotContinuationRechainEstimate(shotId: shotId, rebuildAll: true).isComplete else {
-                aestheticStatus = "A complete price estimate is required before rebuilding the generated chain"
-                return false
+                return failShotVideoOperation("A complete price estimate is required before rebuilding the generated chain")
             }
+            let requestedEntries = Set(entryIds)
+            let progressPlan = shotRenderPromptPlan(shotId: shotId)?.segments ?? []
+            await WorkflowCoordinator.shared.describeArtifact(initial.name.trimmed.nilIfEmpty ?? "Untitled Shot")
+            await WorkflowCoordinator.shared.registerSegments(progressPlan.compactMap {
+                shotWorkflowSegment($0, count: progressPlan.count)
+            }.filter { requestedEntries.contains($0.endEntryId) })
             if let project = currentProject, pendingIds.isEmpty {
                 let now = DateFormats.now()
                 persistShotTimeline(shotTimeline.updatingShot(shotId: shotId, now: now) { shot in
@@ -6566,8 +6604,7 @@ final class LibraryEngine: ObservableObject {
                 guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
                       let record = shot.continuationRecord(entryId: entryId),
                       let template = record.selectedTake ?? record.readyTakes.last else {
-                    aestheticStatus = "Rebuild paused — a continuation has no reusable recipe"
-                    return false
+                    return failShotVideoOperation("Rebuild paused — a continuation has no reusable recipe")
                 }
                 let candidate: ShotContinuationAnchor
                 if let sourceRecord = shot.continuationRecord(entryId: record.sourceEntryId),
@@ -6581,8 +6618,7 @@ final class LibraryEngine: ObservableObject {
                 ) {
                     candidate = saved
                 } else {
-                    aestheticStatus = "Rebuild paused — the saved continuation source is missing"
-                    return false
+                    return failShotVideoOperation("Rebuild paused — the saved continuation source is missing")
                 }
                 let anchor: ShotContinuationAnchor
                 do {
@@ -6622,8 +6658,7 @@ final class LibraryEngine: ObservableObject {
                     selectOnSuccess: true
                 )
                 guard succeeded.succeeded else {
-                    aestheticStatus = "Rebuild paused — completed takes were kept; run it again to resume"
-                    return false
+                    return failShotVideoOperation("Rebuild paused — completed takes were kept; run it again to resume")
                 }
                 if let project = currentProject {
                     let now = DateFormats.now()
@@ -28026,6 +28061,7 @@ final class LibraryEngine: ObservableObject {
                     try WorkflowCoordinator.shared.checkStopRequested()
                     let client = try OpenAIClient.fromEnvironment()
                     let text = try await client.assistShotPrompt(request, projectId: project.projectId)
+                    await WorkflowCoordinator.shared.outcome(request.intent == .improve ? "Improved direction generated" : "Suggested direction generated")
                     return .ready(text)
                 } catch {
                     let message = WorkflowPrivacy.text(error.localizedDescription)
@@ -31213,12 +31249,10 @@ final class LibraryEngine: ObservableObject {
         onlySegmentKeys: Set<String>?
     ) async -> Bool {
         guard onlySegmentKeys == nil else {
-            aestheticStatus = "LTX 2.3 renders one narration-driven clip — re-render the whole shot"
-            return false
+            return failShotVideoOperation("LTX 2.3 renders one narration-driven clip — re-render the whole shot")
         }
         guard let anchor = shotNarrationAnchorEntry(shot: shot, frameLookup: frameLookup) else {
-            aestheticStatus = "LTX 2.3 needs a ready frame — add or render a frame first"
-            return false
+            return failShotVideoOperation("LTX 2.3 needs a ready frame — add or render a frame first")
         }
         let anchorEntry = anchor.entry
         let anchorFrame = anchor.frame
@@ -31226,8 +31260,7 @@ final class LibraryEngine: ObservableObject {
               narration.isReady,
               narration.provider == "elevenlabs_tts",
               FileManager.default.fileExists(atPath: narration.audioPath) else {
-            aestheticStatus = "LTX 2.3 needs a ready ElevenLabs narration — open Narration to create one"
-            return false
+            return failShotVideoOperation("LTX 2.3 needs a ready ElevenLabs narration — open Narration to create one")
         }
         // THE LIP-SYNC ANCHOR LAW: refuse before any spend when the anchor
         // cannot carry a mouth. Detector failure fails open, and the
@@ -31241,8 +31274,7 @@ final class LibraryEngine: ObservableObject {
         } else if let refusal = shotAnchorLipSyncRefusal(
             verdict: shotAnchorLipSyncVerdict(report: shotAnchorFaceReport(imagePath: anchorFrame.imagePath))
         ) {
-            aestheticStatus = refusal
-            return false
+            return failShotVideoOperation(refusal)
         }
 
         let profile = VideoOutputProfile.standard(
@@ -31256,8 +31288,7 @@ final class LibraryEngine: ObservableObject {
             credentialStore: videoCredentialStore
         )
         guard capability.canRender else {
-            aestheticStatus = "Configure FAL in App Settings before rendering LTX 2.3"
-            return false
+            return failShotVideoOperation("Configure FAL in App Settings before rendering LTX 2.3")
         }
 
         activeShotRenderIds.insert(shot.shotId)
@@ -31285,6 +31316,13 @@ final class LibraryEngine: ObservableObject {
             updatedAt: now
         )
         persistShotRenderVersion(artifact, shotId: shot.shotId, for: project)
+        let progressKey = shotPlacementSegmentKey(startEntryId: anchorEntry.entryId,
+            endEntryId: "", legacyStartId: anchorFrame.imageId, legacyEndId: "")
+        await WorkflowCoordinator.shared.registerSegments([WorkflowSegmentProgress(
+            placementKey: progressKey, startEntryId: anchorEntry.entryId, title: "Narration video",
+            versionId: versionId, provider: artifact.provider, model: artifact.model,
+            durationSeconds: narration.durationSeconds)])
+        await WorkflowCoordinator.shared.segmentStage(.preparing, key: progressKey)
         aestheticStatus = "Preparing one LTX 2.3 narration-driven clip"
         var failurePhase = "preparing_narration_driver"
         let renderStartedAt = Date()
@@ -31396,6 +31434,7 @@ final class LibraryEngine: ObservableObject {
                     pricing: falPricing
                 )
             ))
+            await WorkflowCoordinator.shared.segmentStage(.finishing)
             failurePhase = "stripping_provider_audio"
             artifact.progressText = "FINALIZING SILENT PICTURE"
             artifact.updatedAt = DateFormats.now()
@@ -31436,6 +31475,8 @@ final class LibraryEngine: ObservableObject {
             artifact.updatedAt = DateFormats.now()
             persistShotRenderVersion(artifact, shotId: shot.shotId, for: project)
             sweepStalePinnedCuts(shotId: shot.shotId, for: project)
+            await WorkflowCoordinator.shared.segmentStage(.saved)
+            await WorkflowCoordinator.shared.outcome("Narration video saved · \(artifact.totalSeconds)s")
             aestheticStatus = "LTX 2.3 narration-driven Shot ready"
             return true
         } catch {
@@ -31457,6 +31498,8 @@ final class LibraryEngine: ObservableObject {
             )
             artifact.updatedAt = DateFormats.now()
             persistShotRenderVersion(artifact, shotId: shot.shotId, for: project)
+            await WorkflowCoordinator.shared.segmentStage(Task.isCancelled ? .canceled : .failed, message: artifact.errorMessage)
+            await WorkflowCoordinator.shared.outcome(artifact.errorMessage, failed: !Task.isCancelled)
             let requestId = artifact.requestIds.last ?? "-"
             logGeneration(
                 kind: "video.error",
@@ -31481,6 +31524,12 @@ final class LibraryEngine: ObservableObject {
         }
     }
 
+    private func failShotVideoOperation(_ reason: String) -> Bool {
+        aestheticStatus = reason
+        logGeneration(kind: "video.error", message: reason)
+        return false
+    }
+
     /// Renders a shot as keyframe-interpolated video: N ready frames → N−1
     /// segments (adjacent pairs as start+end keyframes; a single frame renders
     /// one open-ended clip), stitched into one mp4. Progress persists per
@@ -31499,21 +31548,17 @@ final class LibraryEngine: ObservableObject {
     ) async -> Bool {
         return await WorkflowCoordinator.shared.run(project: currentProject, workflow: "shot_render", artifactType: "shot", artifactId: shotId, lane: .video, recipeJSON: workflowRecipe(["shotId": String(describing: shotId), "allowContinuationChainRebuild": String(describing: allowContinuationChainRebuild), "generateOnlyRequestedSegments": String(describing: generateOnlyRequestedSegments), "activateResult": String(describing: activateResult)]), failure: false) { [self] in
             guard let project = currentProject else {
-                aestheticStatus = "Create or select a project first"
-                return false
+                return failShotVideoOperation("Create or select a project first")
             }
             guard !cutHasInFlightVideoOperation(cutId: shotId) else {
-                aestheticStatus = "Another video render is already running"
-                return false
+                return failShotVideoOperation("Another video render is already running")
             }
             guard !isGenerationPaused else {
-                aestheticStatus = "Generation is paused — resume to continue"
-                return false
+                return failShotVideoOperation("Generation is paused — resume to continue")
             }
             guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
                   let lens = projectLenses.lenses.first else {
-                aestheticStatus = "Shot not found"
-                return false
+                return failShotVideoOperation("Shot not found")
             }
             if let filter = onlySegmentKeys, !filter.isEmpty {
                 let reviewPlan = shotRenderPromptPlan(shotId: shotId)
@@ -31530,8 +31575,7 @@ final class LibraryEngine: ObservableObject {
                     do {
                         anchor = try await prepareExactContinuationAnchor(candidate)
                     } catch {
-                        aestheticStatus = "Could not prepare the continuation endpoint: \(error.localizedDescription)"
-                        return false
+                        return failShotVideoOperation("Could not prepare the continuation endpoint: \(error.localizedDescription)")
                     }
                     return await startShotContinuationRetake(shotId: shotId, entryId: record.entryId,
                         request: ShotContinuationRequest(mode: template.targetFrame != nil ? .arriveAtFrame : (item.renderStack.isNativeFootageExtend ? .nativeExtend : .outFrame),
@@ -31539,19 +31583,16 @@ final class LibraryEngine: ObservableObject {
                 }
             }
             if !shotPendingEndingEntryIds(shot).isEmpty {
-                aestheticStatus = "Use Render Ending below the destination Frame to review and generate only that clip"
-                return false
+                return failShotVideoOperation("Use Render Ending below the destination Frame to review and generate only that clip")
             }
             let staleContinuationIds = shotContinuationStaleEntryIds(shot)
             if !staleContinuationIds.isEmpty, !allowContinuationChainRebuild {
-                aestheticStatus = "This Scene has \(staleContinuationIds.count) stale continuation\(staleContinuationIds.count == 1 ? "" : "s") — choose a compatible take or confirm Rechain first"
-                return false
+                return failShotVideoOperation("This Scene has \(staleContinuationIds.count) stale continuation\(staleContinuationIds.count == 1 ? "" : "s") — choose a compatible take or confirm Rechain first")
             }
             if onlySegmentKeys == nil,
                shotHasDependentContinuationChain(shot),
                !allowContinuationChainRebuild {
-                aestheticStatus = "This Scene has a generated continuation chain — use REBUILD GENERATED CHAIN so each saved endpoint is rebuilt in order"
-                return false
+                return failShotVideoOperation("This Scene has a generated continuation chain — use REBUILD GENERATED CHAIN so each saved endpoint is rebuilt in order")
             }
             let defaultStack = shot.renderStack
 
@@ -31578,8 +31619,7 @@ final class LibraryEngine: ObservableObject {
                 meaningNodes: lensContext.promptPacket().meaningNodes
             )
             guard !plan.segments.isEmpty else {
-                aestheticStatus = "This shot has no ready frames or footage to render"
-                return false
+                return failShotVideoOperation("This shot has no ready frames or footage to render")
             }
             let profile = VideoOutputProfile.standard(.landscape16x9, fitPolicy: .fitWithBlurFill)
             let planKeys: Set<String> = Set(plan.segments.compactMap { segment -> String? in
@@ -31607,8 +31647,7 @@ final class LibraryEngine: ObservableObject {
             }
             if let filter = onlySegmentKeys, !filter.isEmpty {
                 guard filter.contains(where: acceptedPlanKeys.contains) else {
-                    aestheticStatus = "That segment no longer exists — re-render the shot instead"
-                    return false
+                    return failShotVideoOperation("That segment no longer exists — re-render the shot instead")
                 }
             }
 
@@ -31646,8 +31685,7 @@ final class LibraryEngine: ObservableObject {
                 if case .generate = decision { return !item.continuationTakeId.isEmpty }
                 return false
             }) else {
-                aestheticStatus = "Review a continuation's New Take price, or use Rebuild Generated Chain for multiple links"
-                return false
+                return failShotVideoOperation("Review a continuation's New Take price, or use Rebuild Generated Chain for multiple links")
             }
             let missingPreservedSources = plan.segments.compactMap { segment -> ShotPreservedRenderPlanSegment? in
                 guard case .preserved(let preserved) = segment,
@@ -31655,14 +31693,12 @@ final class LibraryEngine: ObservableObject {
                 return preserved
             }
             guard missingPreservedSources.isEmpty else {
-                aestheticStatus = "The rendered video this continuation extends is missing — restore it before assembling or generating another link"
-                return false
+                return failShotVideoOperation("The rendered video this continuation extends is missing — restore it before assembling or generating another link")
             }
             if let filter = effectiveSegmentFilter,
                filter.isEmpty,
                decisions.contains(where: { if case .generate = $0 { return true }; return false }) {
-                aestheticStatus = "Saved clips are incomplete — review the generated chain before local assembly"
-                return false
+                return failShotVideoOperation("Saved clips are incomplete — review the generated chain before local assembly")
             }
             let stacksToGenerate = zip(plan.generatedItems, decisions).compactMap { item, decision in
                 if case .generate = decision { return item.renderStack }
@@ -31677,8 +31713,7 @@ final class LibraryEngine: ObservableObject {
             }
             guard unrenderableLeadIns.isEmpty else {
                 let labels = Set(unrenderableLeadIns.map(\.0.renderStack.model.label)).sorted().joined(separator: ", ")
-                aestheticStatus = "\(labels) can't render an AI lead-in — it needs a model that accepts a tail frame alone"
-                return false
+                return failShotVideoOperation("\(labels) can't render an AI lead-in — it needs a model that accepts a tail frame alone")
             }
             // LTX 2.3 Narration is a WHOLE-SHOT model (one narration-driven clip;
             // the dispatch above routes it only when it is the Shot DEFAULT). A
@@ -31690,8 +31725,7 @@ final class LibraryEngine: ObservableObject {
                 return item.renderStack.isNarrationDriven
             }
             guard !narrationDrivenOverrides else {
-                aestheticStatus = "LTX 2.3 Narration renders one clip for the WHOLE shot — set it as the Shot default (with a ready ElevenLabs narration), not a per-segment override"
-                return false
+                return failShotVideoOperation("LTX 2.3 Narration renders one clip for the WHOLE shot — set it as the Shot default (with a ready ElevenLabs narration), not a per-segment override")
             }
             let invalidNativeExtends = zip(plan.generatedItems, decisions).filter { item, decision in
                 guard case .generate = decision,
@@ -31699,8 +31733,7 @@ final class LibraryEngine: ObservableObject {
                 return !item.canUseNativeFootageExtend
             }
             guard invalidNativeExtends.isEmpty else {
-                aestheticStatus = "LTX Native Extend needs an AI extension directly after at least 73 frames of placed footage — choose Out-frame or repair the source range"
-                return false
+                return failShotVideoOperation("LTX Native Extend needs an AI extension directly after at least 73 frames of placed footage — choose Out-frame or repair the source range")
             }
             let modelsToGenerate: [VideoModelSelection] = zip(plan.generatedItems, decisions).compactMap { item, decision in
                 guard case .generate = decision else { return nil }
@@ -31713,8 +31746,7 @@ final class LibraryEngine: ObservableObject {
             for stack in Set(stacksToGenerate) {
                 if stack.isNativeFootageExtend {
                     guard canExecuteShotRenderModel(.ltx23NativeExtend) else {
-                        aestheticStatus = "Configure the LTX API key in App Settings before rendering Native Extend"
-                        return false
+                        return failShotVideoOperation("Configure the LTX API key in App Settings before rendering Native Extend")
                     }
                     continue
                 }
@@ -31725,10 +31757,10 @@ final class LibraryEngine: ObservableObject {
                     credentialStore: videoCredentialStore
                 )
                 guard capability.canRender else {
-                    aestheticStatus = "Configure \(stack.model.label) in App Settings before rendering this Shot"
-                    return false
+                    return failShotVideoOperation("Configure \(stack.model.label) in App Settings before rendering this Shot")
                 }
             }
+            await WorkflowCoordinator.shared.describeArtifact(shot.name.trimmed.nilIfEmpty ?? "Untitled Shot")
             let skippedNote = plan.skipped.isEmpty
                 ? ""
                 : " · skipped \(plan.skipped.count) not-ready item\(plan.skipped.count == 1 ? "" : "s")"
@@ -31757,6 +31789,13 @@ final class LibraryEngine: ObservableObject {
                 updatedAt: now
             )
             persistShotRenderVersion(artifact, shotId: shotId, for: project, activate: activateResult)
+            let workSegments = plan.segments.compactMap { segment -> WorkflowSegmentProgress? in
+                if case .generated(let item) = segment {
+                    guard case .generate = decisions[item.index] else { return nil }
+                }
+                return shotWorkflowSegment(segment, count: plan.segments.count, versionId: artifact.versionId)
+            }
+            await WorkflowCoordinator.shared.registerSegments(workSegments)
             aestheticStatus = "Rendering \(shot.name.trimmed.isEmpty ? "shot" : shot.name) with \(defaultStack.shortLabel) defaults"
 
             let workDirectory = FileManager.default.temporaryDirectory
@@ -31866,6 +31905,7 @@ final class LibraryEngine: ObservableObject {
                             artifact.updatedAt = DateFormats.now()
                             let savedURL = URL(fileURLWithPath: saved.clipPath)
                             clipURLs.append(savedURL)
+                            await WorkflowCoordinator.shared.segmentStage(.saved, key: footageSegment.placementKey)
                             durableFootageByEntryId[clip.entryId] = savedURL
                             clipTrimFrames.append(footageSegment.joinsPrevious ? 3 : 0)
                             artifact.clipPaths.append(saved.clipPath)
@@ -31874,6 +31914,7 @@ final class LibraryEngine: ObservableObject {
                             continue
                         }
 
+                        await WorkflowCoordinator.shared.segmentStage(.preparing, key: footageSegment.placementKey)
                         artifact.progressText = "PLACING FOOTAGE \(displayOrdinal) OF \(totalSegmentCount)"
                         artifact.updatedAt = DateFormats.now()
                         persistShotRenderVersion(artifact, shotId: shotId, for: project, activate: activateResult)
@@ -31927,6 +31968,7 @@ final class LibraryEngine: ObservableObject {
                             updatedAt: DateFormats.now()
                         ))
                         persistShotRenderVersion(artifact, shotId: shotId, for: project, activate: activateResult)
+                        await WorkflowCoordinator.shared.segmentStage(.saved, key: footageSegment.placementKey)
                         continue
                     }
 
@@ -31957,6 +31999,7 @@ final class LibraryEngine: ObservableObject {
                         continue
                     }
 
+                    await WorkflowCoordinator.shared.segmentStage(.preparing, key: pair.placementKey)
                     artifact.progressText = "SEGMENT \(displayOrdinal) OF \(totalSegmentCount)"
                     artifact.updatedAt = DateFormats.now()
                     persistShotRenderVersion(artifact, shotId: shotId, for: project, activate: activateResult)
@@ -32228,6 +32271,7 @@ final class LibraryEngine: ObservableObject {
                     // clip only reached disk when segment N+1 started, and a
                     // crash during final assembly lost the last paid segment.
                     persistShotRenderVersion(artifact, shotId: shotId, for: project, activate: activateResult)
+                    await WorkflowCoordinator.shared.segmentStage(.saved, key: pair.placementKey)
                 }
 
                 guard currentProject?.projectId == project.projectId else { return false }
@@ -32248,6 +32292,7 @@ final class LibraryEngine: ObservableObject {
                     )
                     return false
                 }
+                await WorkflowCoordinator.shared.finishingShot()
                 failurePhase = "final_assembly"
 
                 let hasFootageSegments = plan.segments.contains { segment in
@@ -32320,6 +32365,7 @@ final class LibraryEngine: ObservableObject {
                 if shotTimeline.shots.first(where: { $0.shotId == shotId })?.cutList.isReversed == true {
                     Task { await ensureReverseProxies(shotId: shotId) }
                 }
+                await WorkflowCoordinator.shared.outcome("Saved \(artifact.segmentClips.count) segments · \(artifact.totalSeconds)s")
                 aestheticStatus = "Shot render ready"
                 logGeneration(
                     kind: "video.completed",
@@ -32328,6 +32374,7 @@ final class LibraryEngine: ObservableObject {
                 return true
             } catch {
                 if Task.isCancelled || isCancellationLikeError(error) {
+                    await WorkflowCoordinator.shared.segmentStage(.canceled, message: "Canceled; saved clips kept")
                     // A cancelled render still persists as failed WITH its
                     // completed segment clips — RESUME renders only the rest.
                     // (A project switch skips the persist: writing through the
@@ -32348,6 +32395,8 @@ final class LibraryEngine: ObservableObject {
                 }
                 guard currentProject?.projectId == project.projectId else { return false }
                 let persistedError = shotRenderFailureSummary(error, phase: failurePhase, limit: 300)
+                await WorkflowCoordinator.shared.segmentStage(.failed, message: persistedError)
+                await WorkflowCoordinator.shared.outcome(persistedError, failed: true)
                 artifact = absorbingSubmittedShotRenderJobs(artifact, shotId: shotId)
                 artifact.status = "failed"
                 artifact.errorMessage = persistedError
@@ -36871,7 +36920,7 @@ final class LibraryEngine: ObservableObject {
     func logGeneration(kind: String, message: String) {
         let message = WorkflowPrivacy.text(message)
         let project = currentProject
-        if kind == "error" || kind.hasSuffix(".error") { WorkflowCoordinator.shared.flagFailure() }
+        if kind == "error" || kind.hasSuffix(".error") { WorkflowCoordinator.shared.flagFailure(message: message) }
         Task { await WorkflowCoordinator.shared.note(project: project, workflow: kind, message: message, failed: kind == "error" || kind.hasSuffix(".error")) }
         print("[generation] \(kind) \(message)")
         generationLogEntries.append(MediaAnalysisLogEntry(

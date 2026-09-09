@@ -1,10 +1,13 @@
 import SwiftUI
+import AppKit
 
 struct WorkflowLogsPanel: View {
     @ObservedObject var workspace: ProjectWorkspaceCoordinator
     @ObservedObject private var workflows = WorkflowCoordinator.shared
     @State private var events: [WorkflowEvent] = []
     @State private var traceDetails = ""
+    @State private var traces: [WorkflowTraceRecord] = []
+    @State private var summaries: [WorkflowLogEvidence] = []
     @State private var showVersions = false
     @State private var reviewingId: String?
 
@@ -14,7 +17,7 @@ struct WorkflowLogsPanel: View {
                 && (workflows.statusFilter.isEmpty || job.state.rawValue == workflows.statusFilter)
                 && (workflows.providerFilter.isEmpty || job.provider == workflows.providerFilter)
                 && (workflows.workflowFilter.isEmpty || job.workflow == workflows.workflowFilter)
-                && (workflows.search.isEmpty || "\(job.label) \(job.projectName) \(job.artifactId) \(job.reason) \(job.model)".localizedCaseInsensitiveContains(workflows.search))
+                && workflowMatchesSearch(job, query: workflows.search)
         }.sorted {
             if $0.state.isTerminal != $1.state.isTerminal { return !$0.state.isTerminal }
             return $0.createdAt > $1.createdAt
@@ -36,6 +39,7 @@ struct WorkflowLogsPanel: View {
             if !workflows.historyError.isEmpty {
                 Text(workflows.historyError).font(CanonType.interface(12)).foregroundStyle(CanonColor.rust).padding(12)
             }
+            ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     if filteredJobs.isEmpty {
@@ -43,7 +47,7 @@ struct WorkflowLogsPanel: View {
                             .foregroundStyle(CanonColor.ink.opacity(0.55)).padding(.vertical, 24)
                     }
                     ForEach(filteredJobs) { job in
-                        jobRow(job)
+                        jobRow(job).id(job.id)
                     }
                     Button("Load more history") { Task { await workflows.loadMore() } }
                         .buttonStyle(.plain).font(CanonType.interface(11)).padding(.vertical, 12)
@@ -62,6 +66,13 @@ struct WorkflowLogsPanel: View {
                         .font(CanonType.interface(10)).foregroundStyle(CanonColor.ink.opacity(0.4)).padding(.top, 12)
                 }.padding(16)
             }
+            .onChange(of: workflows.selectedLogId, initial: true) { _, id in
+                if let id { proxy.scrollTo(id, anchor: .top) }
+            }
+            .onChange(of: filteredJobs.map(\.id)) { _, _ in
+                if let id = workflows.selectedLogId { proxy.scrollTo(id, anchor: .top) }
+            }
+            }
         }
         .foregroundStyle(CanonColor.ink)
         .background(CanonColor.paper)
@@ -71,13 +82,19 @@ struct WorkflowLogsPanel: View {
         .task(id: [workflows.projectFilter, workflows.statusFilter, workflows.providerFilter, workflows.workflowFilter, workflows.search]) {
             await workflows.refreshHistory()
         }
+        .task(id: "\(filteredJobs.map(\.id).joined(separator: ",")):\(workflows.eventRevision)") {
+            let values = (try? await InferenceTraceStore.shared.workflowLogSummaries(jobIds: filteredJobs.map(\.id))) ?? []
+            if !Task.isCancelled { summaries = values }
+        }
         .task(id: "\(workflows.selectedLogId ?? ""):\(workflows.eventRevision)") {
-            events = []; traceDetails = ""
+            events = []; traceDetails = ""; traces = []
             guard let id = workflows.selectedLogId, let job = workflows.jobs.first(where: { $0.id == id }) else { return }
             let loaded = (try? await InferenceTraceStore.shared.workflowEvents(jobId: id)) ?? []
-            let details = (try? await InferenceTraceStore.shared.workflowTraceDetails(ids: job.traceIds)) ?? ""
+            let ids = Array(Set(job.traceIds + loaded.map(\.traceId).filter { !$0.isEmpty }))
+            let records = ((try? await InferenceTraceStore.shared.workflowTraceRecords(ids: ids)) ?? []).sorted { $0.createdAt < $1.createdAt }
+            let details = records.map(\.rawJSON).joined(separator: "\n\n")
             guard !Task.isCancelled, workflows.selectedLogId == id else { return }
-            events = loaded; traceDetails = details
+            events = loaded; traceDetails = details; traces = records
         }
     }
 
@@ -106,77 +123,181 @@ struct WorkflowLogsPanel: View {
     }
 
     private func jobRow(_ job: WorkflowJob) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                workflows.selectedLogId = workflows.selectedLogId == job.id ? nil : job.id
-            } label: {
+        let expanded = workflows.selectedLogId == job.id
+        let outcome = workflowOutcomeLabel(job, evidence: summaries.first { $0.jobId == job.id })
+        let artifact = workspace.artifactLabel(for: job)
+        return VStack(alignment: .leading, spacing: 8) {
+            Button { workflows.selectedLogId = expanded ? nil : job.id } label: {
                 HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold)).frame(width: 10).padding(.top, 4)
                     Circle().fill(color(job.state)).frame(width: 7, height: 7).padding(.top, 5)
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(job.label).font(CanonType.interface(12, weight: .semibold))
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(job.label + (artifact.isEmpty ? "" : " · " + artifact))
+                                .font(CanonType.interface(12, weight: .semibold))
                             Spacer()
                             Text(job.state.label).font(CanonType.archive(10)).foregroundStyle(color(job.state))
                         }
-                        Text("\(job.projectName) · \(job.phase)").font(CanonType.interface(11))
-                            .foregroundStyle(CanonColor.ink.opacity(0.65))
-                        if !job.reason.isEmpty {
-                            Text(WorkflowPrivacy.text(job.reason)).font(CanonType.interface(11))
-                                .foregroundStyle(CanonColor.ink.opacity(0.65)).lineLimit(workflows.selectedLogId == job.id ? nil : 2)
+                        Text(outcome).font(CanonType.interface(11)).lineLimit(expanded ? nil : 2)
+                        if !summarySettings(job).isEmpty {
+                            Text(summarySettings(job)).font(CanonType.interface(10)).foregroundStyle(CanonColor.ink.opacity(0.65))
                         }
-                        Text(job.updatedAt).font(CanonType.archive(9)).foregroundStyle(CanonColor.ink.opacity(0.4))
+                        Text("\(job.projectName) · \(workflowLocalDate(job.createdAt)) · \(workflowElapsed(job)) elapsed")
+                            .font(CanonType.archive(9)).foregroundStyle(CanonColor.ink.opacity(0.5))
                     }
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain)
-            if workflows.selectedLogId == job.id {
+            if expanded {
                 Divider()
-                if !job.provider.isEmpty { Text("\(job.provider) · \(job.model)").font(CanonType.interface(11)) }
-                if !job.providerRequestId.isEmpty {
-                    Text("Provider request: " + job.providerRequestId).font(CanonType.archive(10)).textSelection(.enabled)
+                detailActions(job, outcome: outcome)
+                logFields("Inputs", fields: uniqueFields(workflowLogFields(job.recipeJSON, output: false) + traces.flatMap(\.inputFields)))
+                if job.workflow == "shot_prompt_assistance" {
+                    Text("Generated direction is recorded here. Applying it is a separate editor action.")
+                        .font(CanonType.interface(10)).foregroundStyle(CanonColor.ink.opacity(0.6))
                 }
-                ForEach(job.spendEntries ?? []) { entry in
-                    Text(entry.estimatedUSD.map { String(format: "Estimated $%.4f", $0) } ?? "Cost unavailable")
-                        .font(CanonType.archive(10))
-                    if !entry.pricingNote.isEmpty { Text(entry.pricingNote).font(CanonType.archive(10)) }
-                }
-                HStack(spacing: 14) {
-                    if workspace.current.canCheckWorkflowJob(job) {
-                        Button("Check existing job") { workspace.current.checkWorkflowJob(job) }
+                logFields(job.state == .failed ? "Failure" : "Result", fields:
+                    [WorkflowLogField(label: job.state.label, value: outcome)] + uniqueFields(traces.flatMap(\.outputFields)))
+                artifactPreviews(job)
+                DisclosureGroup("Activity (\(events.count) events · \(traces.count) requests)") {
+                    ForEach(activityRows) { field in
+                        Text(field.value).font(CanonType.interface(10)).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
                     }
-                    if !job.projectId.isEmpty { Button("Open item") { workspace.open(job) } }
-                    if job.state == .queued || job.state == .pausedAutomatically {
-                        Button("Cancel") { Task { await workflows.cancel(job.id) } }
+                }.font(CanonType.interface(11, weight: .semibold))
+                DisclosureGroup("Technical details", isExpanded: Binding(
+                    get: { reviewingId == job.id }, set: { reviewingId = $0 ? job.id : nil })) {
+                    Text("Job: \(job.id)\nArtifact: \(job.artifactId)\nProvider request: \(job.providerRequestId.nilIfEmpty ?? "Not recorded")")
+                        .font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
+                    if !job.recipeJSON.isEmpty {
+                        DisclosureGroup("Saved request") { technicalText(job.recipeJSON) }
                     }
-                    if job.state == .running { Button("Stop after this step") { Task { await workflows.cancel(job.id) } } }
-                    if job.state == .pausedAutomatically {
-                        Button(workflows.canContinue(job) ? "Continue vendor queue" : "Review request") {
-                            if workflows.canContinue(job) { Task { await workflows.continueJob(job) } }
-                            else { reviewingId = job.id }
+                    ForEach(traces) { trace in
+                        DisclosureGroup("\(trace.operation) · HTTP \(trace.status) · \(trace.milliseconds)ms") {
+                            technicalText(trace.rawJSON)
                         }
                     }
-                }.buttonStyle(.plain).font(CanonType.interface(11, weight: .semibold)).foregroundStyle(CanonColor.brass)
-                ForEach(events) { event in
-                    Text("\(event.timestamp)  \(event.phase)\(event.message.isEmpty ? "" : " — \(WorkflowPrivacy.text(event.message))")")
-                        .font(CanonType.archive(10)).textSelection(.enabled)
-                }
-                if !job.recipeJSON.isEmpty {
-                    DisclosureGroup("Saved request", isExpanded: Binding(
-                        get: { reviewingId == job.id }, set: { reviewingId = $0 ? job.id : nil }
-                    )) {
-                        if job.requiresReview {
-                            Text("Open the item to review its current inputs and price before another paid attempt. Unknown provider acceptance must be checked first.")
-                                .font(CanonType.interface(11))
+                    DisclosureGroup("All events") {
+                        ForEach(events) { event in
+                            technicalText("\(event.timestamp) · \(event.phase) · \(event.message)")
                         }
-                        Text(WorkflowPrivacy.json(job.recipeJSON)).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
                     }
-                }
-                if !traceDetails.isEmpty {
-                    DisclosureGroup("Prompts and trace details") { Text(traceDetails).font(.system(size: 11, design: .monospaced)).textSelection(.enabled) }
-                }
+                }.font(CanonType.interface(11))
             }
         }
         .padding(12)
         .background(CanonColor.paperInset.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func summarySettings(_ job: WorkflowJob) -> String {
+        let seconds = job.segmentProgress?.filter(\.isGeneration).map(\.durationSeconds)
+            ?? (job.spendEntries ?? []).filter { $0.unit == "seconds" }.map(\.unitCount)
+        let duration = seconds.isEmpty ? "" : seconds.map { "\(Int($0.rounded()))s" }.joined(separator: " + ") + " requested"
+        return [workflowProviderLabel(job.provider), workflowModelLabel(job), duration, workflowCostLabel(job)]
+            .filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    private func detailActions(_ job: WorkflowJob, outcome: String) -> some View {
+        ShotEditorFlow(spacing: 14) {
+            Button("Copy details") {
+                let details = "\(job.label) · \(workspace.artifactLabel(for: job))\n\(outcome)\n\(summarySettings(job))\n\(workflowLocalDate(job.createdAt)) · \(workflowElapsed(job)) elapsed\n\n\(WorkflowPrivacy.json(job.recipeJSON))\n\n\(traceDetails)\n\n"
+                    + events.map { "\($0.timestamp) · \($0.phase) · \($0.message)" }.joined(separator: "\n")
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(WorkflowPrivacy.text(details), forType: .string)
+            }
+            if let owner = workspace.engine(for: job), owner.canCheckWorkflowJob(job) {
+                Button("Check existing job") { owner.checkWorkflowJob(job) }
+            }
+            if workspace.projects.contains(where: { $0.projectId == job.projectId }) {
+                Button(job.artifactType == "shot" ? "Open Shot" : "Open item") { workspace.open(job) }
+            }
+            if job.state == .queued || job.state == .pausedAutomatically {
+                Button("Cancel") { Task { await workflows.cancel(job.id) } }
+            }
+            if job.state == .running {
+                Button("Stop after this step") { Task { await workflows.cancel(job.id) } }
+            }
+            if job.state == .pausedAutomatically {
+                Button(workflows.canContinue(job) ? "Continue vendor queue" : "Review request") {
+                    if workflows.canContinue(job) { Task { await workflows.continueJob(job) } }
+                    else { reviewingId = job.id }
+                }
+            }
+        }.buttonStyle(.plain).font(CanonType.interface(11, weight: .semibold)).foregroundStyle(CanonColor.brass)
+    }
+
+    private func technicalText(_ text: String) -> some View {
+        Text(WorkflowPrivacy.text(text)).font(.system(size: 10, design: .monospaced))
+            .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func uniqueFields(_ fields: [WorkflowLogField]) -> [WorkflowLogField] {
+        var seen: Set<String> = []
+        return fields.filter { seen.insert($0.id).inserted }
+    }
+
+    @ViewBuilder
+    private func logFields(_ title: String, fields: [WorkflowLogField]) -> some View {
+        if !fields.isEmpty {
+            DisclosureGroup(title) {
+                ForEach(fields) { field in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(field.label).font(CanonType.interface(10, weight: .semibold))
+                        Text(field.value).font(CanonType.interface(11)).textSelection(.enabled)
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 4)
+                }
+            }.font(CanonType.interface(11, weight: .semibold))
+        }
+    }
+
+    private var activityRows: [WorkflowLogField] {
+        var fields: [WorkflowLogField] = []
+        var responseCount = 0
+        for event in events {
+            if event.message == "Provider response received" { responseCount += 1; continue }
+            if event.message.isEmpty && event.segment == nil { continue }
+            fields.append(WorkflowLogField(label: event.id, value:
+                "\(workflowLocalDate(event.timestamp)) · \(event.segment?.label ?? event.message)"))
+        }
+        if responseCount > 0 { fields.append(WorkflowLogField(label: "responses", value: "\(responseCount) provider responses; individual requests are in Technical details.")) }
+        return fields
+    }
+
+    @ViewBuilder
+    private func artifactPreviews(_ job: WorkflowJob) -> some View {
+        if let engine = workspace.engine(for: job),
+           let shot = engine.shotTimeline.shots.first(where: { $0.shotId == job.artifactId }) {
+            let takes = shot.continuationRecords.flatMap(\.takes).filter { take in
+                job.segmentProgress?.contains(where: { $0.takeId == take.takeId }) == true
+            }
+            let frameIds = (job.segmentProgress ?? []).flatMap { $0.inputFrameIds ?? [] }
+            let sourcePaths = frameIds.compactMap { engine.projectWideFrameLookup[$0]?.imagePath }
+                + takes.flatMap { [$0.anchor.framePath, $0.targetFrame?.imagePath ?? ""] }
+            let paths = NSOrderedSet(array: sourcePaths.filter { !$0.isEmpty }).array.compactMap { $0 as? String }
+            if !paths.isEmpty {
+                DisclosureGroup("Input Frames") {
+                    ShotEditorFlow {
+                        ForEach(paths, id: \.self) { path in
+                            if let image = StripThumbnailCache.shared.image(path: path) {
+                                Image(nsImage: image).resizable().scaledToFit().frame(width: 128, height: 72)
+                            }
+                        }
+                    }
+                }.font(CanonType.interface(11, weight: .semibold))
+            }
+            let versionIds = Set((job.segmentProgress ?? []).map(\.versionId).filter { !$0.isEmpty })
+            let clips = shot.renderVersions.filter { versionIds.contains($0.versionId) }.flatMap(\.segmentClips)
+                + takes.compactMap(\.segmentClip)
+            if !clips.isEmpty {
+                DisclosureGroup("Saved video") {
+                    ShotEditorFlow {
+                        ForEach(Array(clips.enumerated()), id: \.offset) { _, clip in
+                            ShotSegmentVideoThumbnail(preview: ShotSegmentPreview(clip: clip))
+                        }
+                    }
+                }.font(CanonType.interface(11, weight: .semibold))
+            }
+        }
     }
 
     private func color(_ state: WorkflowState) -> Color {

@@ -104,6 +104,8 @@ struct ShotPlayerSheetHost: View {
                 isFetchingVideoPricing: library.isFetchingFALPricing,
                 openPanelInitially: request.openRerenderPanel,
                 initialFocusedEntryId: focusedEntryId.isEmpty ? request.focusedEntryId : focusedEntryId,
+                initialFocusedSegmentKey: request.focusedSegmentKey,
+                initialPreview: request.initialPreview,
                 autoplayOnOpen: request.autoplay,
                 openProvenanceOnOpen: request.openProvenance,
                 onInspectSource: { entryId in
@@ -877,6 +879,12 @@ struct HeroPreviewModalHost: View {
     @ObservedObject var library: LibraryEngine
     @Binding var request: LensHeroPreviewRequest?
     @Binding var cutNavigation: HeroPreviewCutNavigation?
+    var collectionSelection: Binding<FrameBrowseSelection?> = .constant(nil)
+    private var browseSelection: FrameBrowseSelection? {
+        get { collectionSelection.wrappedValue }
+        nonmutating set { collectionSelection.wrappedValue = newValue }
+    }
+    var collectionItems: [FrameBrowseReference] = []
     /// Optional outside a workbench. Media reuses the truthful Frame detail
     /// without advertising Frame-Creator or Excursion actions it cannot host.
     var onLaunchFrameCreator: ((WorkbenchFrameCreatorLaunch) -> Void)? = nil
@@ -947,6 +955,7 @@ struct HeroPreviewModalHost: View {
                     // Close so the child's generating card is visible once it lands.
                     request = nil
                     cutNavigation = nil
+                    browseSelection = nil
                     Task {
                         _ = await library.startLensHeroReframeRender(
                             lensId: lensId,
@@ -1006,6 +1015,7 @@ struct HeroPreviewModalHost: View {
                         let imageId = current.imageId
                         request = nil
                         cutNavigation = nil
+                    browseSelection = nil
                         start(imageId)
                     }
                 },
@@ -1040,6 +1050,7 @@ struct HeroPreviewModalHost: View {
                         onAfterMutation()
                         request = nil
                         cutNavigation = nil
+                    browseSelection = nil
                     } else {
                         actionStatus = library.aestheticStatus.trimmed.nilIfEmpty
                             ?? "Could not delete this render"
@@ -1053,6 +1064,7 @@ struct HeroPreviewModalHost: View {
                         if let navigation = cutNavigation {
                             request = nil
                             cutNavigation = nil
+                    browseSelection = nil
                             onEnterExcursion?(
                                 ExcursionLaunchRequest(
                                     cutId: navigation.cutId,
@@ -1065,6 +1077,7 @@ struct HeroPreviewModalHost: View {
             ) {
                 request = nil
                 cutNavigation = nil
+                    browseSelection = nil
             }
             .transition(.opacity)
         }
@@ -1094,6 +1107,7 @@ struct HeroPreviewModalHost: View {
         let placement = cutNavigation
         request = nil
         cutNavigation = nil
+                    browseSelection = nil
         onLaunchFrameCreator?(
             WorkbenchFrameCreatorLaunch(
                 lensId: resolved.lens.lensId,
@@ -1108,6 +1122,11 @@ struct HeroPreviewModalHost: View {
     /// one stop per version group (the open image represents its own group,
     /// else the group's active version).
     private func browseItems() -> [LensHeroPreviewBrowseItem] {
+        if browseSelection != nil {
+            return collectionItems.filter { FileManager.default.fileExists(atPath: $0.imagePath) }.map {
+                LensHeroPreviewBrowseItem(id: $0.id, imageId: $0.imageId, imagePath: $0.imagePath, mediaId: $0.mediaId)
+            }
+        }
         if let navigation = cutNavigation,
            let cut = library.shotTimeline.shots.first(where: { $0.shotId == navigation.cutId }) {
             let frameLookup = library.projectWideFrameLookup
@@ -1156,17 +1175,17 @@ struct HeroPreviewModalHost: View {
     }
 
     private func currentBrowseId() -> String {
-        cutNavigation?.entryId ?? request?.imageId ?? ""
+        browseSelection?.id ?? cutNavigation?.entryId ?? request?.imageId ?? ""
     }
 
     /// ←/→ stepping through `browseItems()`, wrapping in both directions.
     private func navigate(by direction: Int) {
         let items = browseItems()
-        guard direction != 0, items.count > 1,
-              let currentIndex = items.firstIndex(where: { $0.id == currentBrowseId() }) else {
-            return
-        }
-        let nextIndex = ((currentIndex + direction) % items.count + items.count) % items.count
+        guard direction != 0, items.count > 1 else { return }
+        let currentIndex = items.firstIndex(where: { $0.id == currentBrowseId() })
+        let base = currentIndex ?? min(browseSelection?.index ?? 0, items.count - 1)
+        let step = currentIndex == nil && direction > 0 ? 0 : direction
+        let nextIndex = ((base + step) % items.count + items.count) % items.count
         openBrowseItem(items[nextIndex])
     }
 
@@ -1174,12 +1193,24 @@ struct HeroPreviewModalHost: View {
     /// browsing works across frames from different lenses, and a cut context
     /// keeps its cut with the destination entry.
     private func openBrowseItem(_ item: LensHeroPreviewBrowseItem) {
-        guard let resolved = resolvedHeroImageAcrossLenses(imageId: item.imageId) else {
+        var imageId = item.imageId
+        if imageId.isEmpty, !item.mediaId.isEmpty,
+           let lensId = request?.lensId ?? library.projectLenses.lenses.first?.lensId {
+            guard let adopted = library.adoptMediaImageAsFrame(mediaId: item.mediaId, lensId: lensId) else {
+                actionStatus = library.aestheticStatus
+                return
+            }
+            imageId = adopted.imageId
+        }
+        guard let resolved = resolvedHeroImageAcrossLenses(imageId: imageId) else {
             actionStatus = "That frame no longer exists"
             return
         }
         actionStatus = ""
         request = previewRequest(lens: resolved.lens, heroImage: resolved.heroImage)
+        if browseSelection != nil {
+            browseSelection = FrameBrowseSelection(id: item.id, index: browseItems().firstIndex { $0.id == item.id } ?? 0)
+        }
         if let navigation = cutNavigation {
             cutNavigation = HeroPreviewCutNavigation(cutId: navigation.cutId, entryId: item.id)
         }

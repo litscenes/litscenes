@@ -58,11 +58,36 @@ extension InferenceTraceStore {
             .compactMap { try? JSONDecoder().decode(WorkflowEvent.self, from: Data($0.utf8)) }
     }
 
+    func workflowLogSummaries(jobIds: [String]) throws -> [WorkflowLogEvidence] {
+        try ensureReady()
+        guard !jobIds.isEmpty else { return [] }
+        let placeholders = Array(repeating: "?", count: jobIds.count).joined(separator: ",")
+        let sql = """
+        SELECT json_object('jobId',j.job_id,
+          'eventMessage',(SELECT json_extract(e.payload_json,'$.message') FROM workflow_events e
+            WHERE e.job_id=j.job_id AND json_extract(e.payload_json,'$.message') != ''
+              AND (json_extract(e.payload_json,'$.kind')='error' OR json_extract(e.payload_json,'$.phase') IN ('video.error','error'))
+            ORDER BY e.rowid DESC LIMIT 1),
+          'providerResponse',(SELECT CASE WHEN c.response_text_json != '' THEN c.response_text_json ELSE CAST(c.response_body AS TEXT) END
+            FROM inference_calls c WHERE c.trace_id IN (SELECT value FROM json_each(j.payload_json,'$.traceIds'))
+              AND c.response_status_code >= 400 ORDER BY c.created_at DESC LIMIT 1))
+        FROM workflow_jobs j WHERE j.job_id IN (\(placeholders))
+        """
+        return try workflowRows(sql, values: jobIds).compactMap {
+            try? JSONDecoder().decode(WorkflowLogEvidence.self, from: Data(WorkflowPrivacy.json($0).utf8))
+        }
+    }
+
+    func workflowTraceRecords(ids: [String]) throws -> [WorkflowTraceRecord] {
+        let raw = try workflowTraceDetails(ids: ids)
+        return raw.components(separatedBy: "\n\n").filter { !$0.isEmpty }.map { WorkflowTraceRecord(rawJSON: $0) }
+    }
+
     func workflowTraceDetails(ids: [String]) throws -> String {
         try ensureReady()
         var results: [String] = []
         for id in ids {
-            let rows = try workflowRows("SELECT json_object('trace_id',trace_id,'provider',provider,'model',model,'operation',operation,'request',CASE WHEN request_text_json != '' THEN request_text_json ELSE CAST(request_body AS TEXT) END,'response',CASE WHEN response_text_json != '' THEN response_text_json ELSE CAST(response_body AS TEXT) END,'provider_request_id',provider_request_id,'provider_response_id',provider_response_id,'parsed_output',parsed_output_json,'media_refs',media_refs_json,'status_code',response_status_code,'error',error_message,'latency_ms',latency_ms,'input_tokens',input_tokens,'output_tokens',output_tokens) FROM inference_calls WHERE trace_id=?", values: [id])
+            let rows = try workflowRows("SELECT json_object('trace_id',trace_id,'created_at',created_at,'provider',provider,'model',model,'operation',operation,'request',CASE WHEN request_text_json != '' THEN request_text_json ELSE CAST(request_body AS TEXT) END,'response',CASE WHEN response_text_json != '' THEN response_text_json ELSE CAST(response_body AS TEXT) END,'provider_request_id',provider_request_id,'provider_response_id',provider_response_id,'parsed_output',parsed_output_json,'media_refs',media_refs_json,'status_code',response_status_code,'error',error_message,'latency_ms',latency_ms,'input_tokens',input_tokens,'output_tokens',output_tokens) FROM inference_calls WHERE trace_id=?", values: [id])
             results.append(contentsOf: rows.map(WorkflowPrivacy.json))
         }
         return results.joined(separator: "\n\n")

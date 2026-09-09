@@ -11,6 +11,7 @@ func generateShotClip(provider: VideoGenerationProvider, input: ShotClipGenerati
     switch input {
     case .frame(let request):
         let result = try await provider.generateClip(from: request)
+        await WorkflowCoordinator.shared.segmentStage(.finishing)
         await onProviderCompleted?(result)
         return result
     case .native(let request, let tailURL):
@@ -18,6 +19,7 @@ func generateShotClip(provider: VideoGenerationProvider, input: ShotClipGenerati
             throw ScreenGraphError.capture("The selected provider cannot execute Native Extend")
         }
         var result = try await native.generateExtension(from: request)
+        await WorkflowCoordinator.shared.segmentStage(.finishing)
         await onProviderCompleted?(result)
         _ = try await VideoChainMedia.extractTailSegment(videoURL: result.outputURL, outputURL: tailURL, durationSeconds: Double(request.durationSeconds))
         result.outputURL = tailURL

@@ -47,6 +47,11 @@ struct WorkflowJob: Codable, Identifiable, Sendable {
     var spendEntries: [SpendLedgerEntry]?
     var schemaVersion: Int? = 1
     var submissionKey: String?
+    var artifactLabel: String?
+    var outcomeMessage: String?
+    var completedAt: String?
+    var segmentProgress: [WorkflowSegmentProgress]?
+    var currentSegmentKey: String?
 
     var label: String {
         workflow.replacingOccurrences(of: "_", with: " ").capitalized
@@ -65,6 +70,8 @@ struct WorkflowEvent: Codable, Identifiable, Sendable {
     var phase: String
     var message: String = ""
     var traceId: String = ""
+    var kind: String? = nil
+    var segment: WorkflowSegmentProgress? = nil
 }
 
 struct WorkflowContext: Sendable {

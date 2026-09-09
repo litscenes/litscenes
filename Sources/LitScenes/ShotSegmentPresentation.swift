@@ -43,8 +43,42 @@ struct ShotSegmentPresentation: Identifiable {
     var title: String
     var preview: ShotSegmentPreview?
     var record: ShotContinuationRecord?
+    var progress: WorkflowSegmentProgress? = nil
     var isPlayable: Bool
     var clip: ShotRenderSegmentClip? { preview?.clip }
+
+    init(id: String, title: String, preview: ShotSegmentPreview? = nil, record: ShotContinuationRecord? = nil) {
+        self.id = id; self.title = title; self.preview = preview; self.record = record
+        isPlayable = preview.map { FileManager.default.fileExists(atPath: $0.clip.clipPath) } ?? false
+    }
+
+    func withProgress(_ work: WorkflowSegmentProgress?, shot: ProjectShot) -> ShotSegmentPresentation {
+        var value = self
+        value.progress = work
+        if work == nil, let record, let take = record.sortedTakes.last, take.takeId != record.selectedTakeId {
+            var previous = WorkflowSegmentProgress(placementKey: id, startEntryId: record.sourceEntryId,
+                endEntryId: record.entryId, title: title, takeId: take.takeId, takeNumber: take.takeNumber,
+                provider: take.renderStack.providerSelection.rawValue, model: take.renderStack.model.label,
+                durationSeconds: Double(take.renderStack.segmentSeconds))
+            switch take.takeStatus {
+            case .queued, .generating, .interrupted: previous.stage = .interrupted
+            case .ready: previous.stage = .saved
+            case .canceled: previous.stage = .canceled
+            default: previous.stage = .failed
+            }
+            previous.errorMessage = take.errorMessage
+            value.progress = previous
+        }
+        if value.preview == nil, let work {
+            let clip = shot.renderVersions.first { $0.versionId == work.versionId }?.segmentClips.first { $0.placementKey == work.placementKey }
+                ?? shot.continuationRecords.flatMap(\.takes).first { $0.takeId == work.takeId }?.segmentClip
+            if let clip {
+                value.preview = ShotSegmentPreview(clip: clip)
+                value.isPlayable = FileManager.default.fileExists(atPath: clip.clipPath)
+            }
+        }
+        return value
+    }
 
     init(record: ShotContinuationRecord,
          fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) {

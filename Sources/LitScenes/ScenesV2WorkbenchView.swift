@@ -95,6 +95,7 @@ private struct PendingReadyUnmark: Identifiable {
 /// switch with one click in the app sidebar, and the staged selection is
 /// remembered per project.
 struct ScenesV2WorkbenchView: View {
+    @ObservedObject private var workflows = WorkflowCoordinator.shared
     @ObservedObject var library: LibraryEngine
     @ObservedObject var session: ScenesV2Session
     var onOpenMediaItem: (String) -> Void
@@ -119,6 +120,8 @@ struct ScenesV2WorkbenchView: View {
     @State private var styleImagePreview: StyleImagePreviewRequest?
     @State private var heroPreviewRequest: LensHeroPreviewRequest?
     @State private var heroPreviewNavigation: HeroPreviewCutNavigation?
+    @State private var heroBrowseSelection: FrameBrowseSelection?
+    @State private var poolBrowseItems: [FrameBrowseReference] = []
     @State private var narrationFocusRequest: ShotNarrationFocusRequest?
     @State private var renderPlanFocusRequest: ShotRenderPlanFocusRequest?
     @State private var finalsReelRequest: FinalsReelRequest?
@@ -255,6 +258,8 @@ struct ScenesV2WorkbenchView: View {
                 library: library,
                 request: $heroPreviewRequest,
                 cutNavigation: $heroPreviewNavigation,
+                collectionSelection: $heroBrowseSelection,
+                collectionItems: poolBrowseItems,
                 onLaunchFrameCreator: { frameCreatorLaunch = $0 },
                 onEnterExcursion: { excursionRequest = $0 },
                 onStartScene: { imageId in
@@ -1135,9 +1140,17 @@ struct ScenesV2WorkbenchView: View {
             objectGroups: primaryLens.map {
                 library.lensObjectTakeGroups(lens: $0, versionId: newestVersionId)
             } ?? [],
-            onOpenFrame: { openFrameDetail($0, navigation: nil) },
+            onOpenFrame: { frame, id in
+                openFrameDetail(frame, navigation: nil)
+                heroBrowseSelection = FrameBrowseSelection(id: id, index: poolBrowseItems.firstIndex { $0.id == id } ?? 0)
+            },
+            onBrowseItemsChanged: { poolBrowseItems = $0 },
             onOpenMedia: onOpenMediaItem,
-            onOpenPhotoAsFrame: openPhotoAsFrame(mediaId:),
+            onOpenPhotoAsFrame: { mediaId in
+                openPhotoAsFrame(mediaId: mediaId)
+                let id = "photo_" + mediaId
+                heroBrowseSelection = FrameBrowseSelection(id: id, index: poolBrowseItems.firstIndex { $0.id == id } ?? 0)
+            },
             onStartNewScene: startNewScene(with:),
             showsSuggestions: primaryLens != nil,
             suggestions: suggestions.cards,
@@ -1187,7 +1200,7 @@ struct ScenesV2WorkbenchView: View {
             let visible = library.shotTimeline.visibleShots
             if let index = visible.firstIndex(where: { $0.shotId == library.activeShotRenderId }) {
                 let shot = visible[index]
-                let progress = shot.renderArtifact?.progressText.trimmed.nilIfEmpty ?? "RENDERING"
+                let progress = ShotWorkPresentation(jobs: workflows.jobs, shotId: shot.shotId).label
                 return "\(sceneDisplayName(shot: shot, index: index)) · \(progress)"
             }
         }
@@ -1221,7 +1234,8 @@ struct ScenesV2WorkbenchView: View {
             uniquingKeysWith: { first, _ in first }
         )
         let scenes = library.shotTimeline.visibleShots.enumerated().map { index, shot in
-            let progress = sceneRenderProgress(shot: shot, activeShotRenderId: library.activeShotRenderIds.contains(shot.shotId) ? shot.shotId : "")
+            let work = ShotWorkPresentation(jobs: workflows.jobs, shotId: shot.shotId, projectId: currentId)
+            let progress = sceneRenderProgress(shot: shot, activeShotRenderId: library.activeShotRenderIds.contains(shot.shotId) ? shot.shotId : "", work: work)
             return SceneIndexEntry(
                 projectId: currentId,
                 shotId: shot.shotId,
@@ -1232,7 +1246,7 @@ struct ScenesV2WorkbenchView: View {
                     frameStillPathById: stillPaths,
                     footageThumbnailPathByMediaId: footageThumbs
                 ),
-                badge: sceneRenderBadgeLive(shot: shot, activeShotRenderId: library.activeShotRenderIds.contains(shot.shotId) ? shot.shotId : ""),
+                badge: sceneRenderBadgeLive(shot: shot, activeShotRenderId: library.activeShotRenderIds.contains(shot.shotId) ? shot.shotId : "", work: work),
                 ledgerLine: sceneLedgerLine(shot: shot, frameLookup: frameLookup, mediaLookup: mediaLookup),
                 modelLabel: shot.renderStack.shortLabel.components(separatedBy: " · ").first ?? "",
                 hasNarration: shot.narrationArtifact?.isReady == true,
@@ -1413,6 +1427,7 @@ struct ScenesV2WorkbenchView: View {
         }
         heroPreviewRequest = request
         heroPreviewNavigation = navigation
+        heroBrowseSelection = nil
     }
 
     private func createScene() {

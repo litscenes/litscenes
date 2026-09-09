@@ -9,6 +9,8 @@ import SwiftUI
 /// gesture here, so the locked law is surfaced BEFORE the per-cell refusal:
 /// a persistent badge plus a drag-over hint.
 struct SceneBoxView: View {
+    @ObservedObject private var workflows = WorkflowCoordinator.shared
+    private var work: ShotWorkPresentation { ShotWorkPresentation(jobs: workflows.jobs, shotId: shot?.shotId ?? "") }
     /// nil = empty stage (renders the honest exhaustion plate).
     let shot: ProjectShot?
     /// Index among visibleShots — drives numbering and the strip's roman.
@@ -60,7 +62,7 @@ struct SceneBoxView: View {
     private var isActivelyRendering: Bool {
         guard let shot else { return false }
         return actions.activeShotRenderIds.contains(shot.shotId)
-            || shot.renderArtifact?.status == "generating"
+            || work.isActive
     }
 
     private var tailStartIndex: Int? {
@@ -190,11 +192,13 @@ struct SceneBoxView: View {
                 ProgressView()
                     .controlSize(.mini)
                     .scaleEffect(0.7)
-                Text("RENDERING")
+                Text(work.phase.isEmpty ? "RENDERING" : work.phase.uppercased())
                     .font(CanonType.archive(6.5, weight: .bold))
                     .kerning(0.6)
             }
             .foregroundStyle(CanonColor.brass)
+        } else if work.phase == "Interrupted" {
+            Text("INTERRUPTED · REVIEW LOGS").font(CanonType.archive(6.5, weight: .bold)).foregroundStyle(CanonColor.rust)
         } else if isLocked {
             HStack(spacing: 3) {
                 Image(systemName: "lock.fill")

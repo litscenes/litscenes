@@ -44,6 +44,20 @@ final class ProjectWorkspaceCoordinator: ObservableObject {
         WorkflowCoordinator.shared.showingLogs = false
     }
 
+    func engine(for job: WorkflowJob) -> LibraryEngine? {
+        sessions.first { $0.id == job.projectId }?.engine
+    }
+
+    func artifactLabel(for job: WorkflowJob) -> String {
+        if let label = job.artifactLabel, !label.isEmpty { return label }
+        guard let engine = engine(for: job) else { return job.artifactType.capitalized }
+        if let shot = engine.shotTimeline.shots.first(where: { $0.shotId == job.artifactId }) {
+            return shot.name.trimmed.nilIfEmpty ?? "Untitled Shot"
+        }
+        if let frame = engine.projectWideFrameLookup[job.artifactId] { return frame.label.trimmed.nilIfEmpty ?? "Frame" }
+        return engine.items.first { $0.mediaId == job.artifactId }?.filename ?? job.artifactType.capitalized
+    }
+
     func versions(projectId: String) -> [ProjectLensBodyVersion] {
         guard let project = projects.first(where: { $0.projectId == projectId }) else { return [] }
         let lenses = sessions.first(where: { $0.id == projectId })?.engine.projectLenses

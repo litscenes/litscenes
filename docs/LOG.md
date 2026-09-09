@@ -65,3 +65,7 @@
 2026-09-08T03:55:54Z exact-video-endpoints — Implemented exact/ranged video extraction, verified review cache, preserved retake inputs, missing-source guards and linked local trace events. Offline native append/reopen, retake/rechain/rebuild, footage, cancellation and provider-input checks pass; final package verification in progress.
 
 2026-09-08T03:57:48Z exact-video-endpoints — Complete: final offline native diagnostics pass, 1,281 existing tests pass serially, build/hygiene/whitespace/signature checks pass. Development app packaged; historical media preserved and no live project repair or paid calls performed.
+
+2026-09-09T00:55:43+00:00 shot-progress-logs-frame-navigation: implement approved consistent segment tiles, structured progress and outcomes, readable Logs, and origin-ordered Frame browsing.
+
+2026-09-09T01:57:00Z shot-progress-logs-frame-navigation: implemented shared segment lifecycle and stable video tiles, richer durable Logs and failure provenance, and live thumbnail-order Frame browsing. Native/offline diagnostics passed; final existing-suite and Development packaging verification recorded in the feature log.

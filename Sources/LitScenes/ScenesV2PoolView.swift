@@ -85,7 +85,8 @@ struct ScenesV2PoolGridSections: View {
     let mediaLookup: [String: MediaItemRecord]
     let characterGroups: [LensIdentityTakeGroup]
     let objectGroups: [LensIdentityTakeGroup]
-    var onOpenFrame: (ProjectLensHeroImage) -> Void
+    var onOpenFrame: (ProjectLensHeroImage, String) -> Void
+    var onBrowseItemsChanged: ([FrameBrowseReference]) -> Void = { _ in }
     var onOpenMedia: (String) -> Void
     /// A source photo opens as the Frame it is (adopted on first open); nil
     /// falls back to `onOpenMedia` for a surface without a Scene Plan.
@@ -138,6 +139,17 @@ struct ScenesV2PoolGridSections: View {
                 filteredGrid
             }
         }
+        .onChange(of: browseCollection, initial: true) { _, value in onBrowseItemsChanged(value) }
+    }
+
+    private var browseCollection: [FrameBrowseReference] {
+        if filter == .characters || filter == .objects {
+            return (filter == .characters ? characterGroups : objectGroups).flatMap { group in
+                poolIdentityBrowseTakes(group, query: searchQuery).filter { $0.status == "ready" && !$0.imagePath.isEmpty }
+                    .map { FrameBrowseReference(frame: $0, prefix: group.id + ":") }
+            }
+        }
+        return frameBrowseReferences(inputs: filteredInputs, frames: frameLookup, media: mediaLookup)
     }
 
     // MARK: Union grid
@@ -333,7 +345,7 @@ struct ScenesV2PoolGridSections: View {
         )
     }
 
-    private func frameTile(_ frame: ProjectLensHeroImage) -> some View {
+    private func frameTile(_ frame: ProjectLensHeroImage, prefix: String = "") -> some View {
         PoolTileView(
             thumbPath: frame.imagePath,
             caption: frame.label.trimmed.nilIfEmpty ?? "Frame",
@@ -342,7 +354,7 @@ struct ScenesV2PoolGridSections: View {
             status: frame.status,
             transfer: ShotFrameTransfer(frameImageId: frame.imageId),
             placeAction: tileAction,
-            onTap: { onOpenFrame(frame) },
+            onTap: { onOpenFrame(frame, FrameBrowseReference(frame: frame, prefix: prefix).id) },
             onStartNewScene: onStartNewScene,
             onPlace: place(_:)
         )
@@ -370,12 +382,7 @@ struct ScenesV2PoolGridSections: View {
         let query = searchQuery.trimmed.lowercased()
         // Planned studies live on the guided stage, not here — one home per
         // plan, and never a fake spinner in a roster section.
-        let takes = group.takes.filter { take in
-            !take.isPlanFulfillmentCandidate
-                && (query.isEmpty
-                    || take.label.lowercased().contains(query)
-                    || group.displayName.lowercased().contains(query))
-        }
+        let takes = poolIdentityBrowseTakes(group, query: searchQuery)
         let refs = group.referenceMediaIds.compactMap { mediaLookup[$0] }.filter { media in
             query.isEmpty
                 || media.filename.lowercased().contains(query)
@@ -411,7 +418,7 @@ struct ScenesV2PoolGridSections: View {
                 } else {
                     LazyVGrid(columns: Self.gridColumns, alignment: .leading, spacing: 10) {
                         ForEach(takes) { take in
-                            frameTile(take)
+                            frameTile(take, prefix: group.id + ":")
                         }
                         ForEach(refs, id: \.mediaId) { media in
                             mediaTile(media, kindLabel: "REF")

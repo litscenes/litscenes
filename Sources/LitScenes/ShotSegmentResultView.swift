@@ -30,6 +30,8 @@ struct ShotEditorFlow: Layout {
 
 struct ShotSegmentVideoThumbnail: View {
     let preview: ShotSegmentPreview?
+    var width: CGFloat = 128
+    var height: CGFloat = 72
     @StateObject private var loader = ShotFilmstripLoader()
     private var sample: Double {
         guard let preview else { return 0 }
@@ -51,7 +53,7 @@ struct ShotSegmentVideoThumbnail: View {
                     .foregroundStyle(.white.opacity(0.9), .black.opacity(0.45))
             }
         }
-        .frame(width: 128, height: 72)
+        .frame(width: width, height: height)
         .clipped()
         .overlay(Rectangle().stroke(PlateColor.hairline))
         .task(id: "\(path)|\(index)") {
@@ -76,7 +78,7 @@ struct ShotSegmentResultView: View {
             Text("\(ordinal) · \(result.title)".uppercased())
                 .font(PlateType.label(9, weight: .semibold)).foregroundStyle(PlateColor.inkFaint)
             HStack(alignment: .top, spacing: 10) {
-                Button(action: onSelect) { ShotSegmentVideoThumbnail(preview: result.preview) }
+                Button(action: onSelect) { ShotSegmentStatusThumbnail(result: result, width: 128, height: 72) }
                     .buttonStyle(.plain).help("Select this segment in the Shot timeline")
                 VStack(alignment: .leading, spacing: 5) {
                     if let clip = result.clip {
@@ -91,7 +93,7 @@ struct ShotSegmentResultView: View {
                             Text("Video file unavailable").font(.caption).foregroundStyle(CanonColor.rust)
                         }
                     } else {
-                        Text("Not rendered").font(PlateType.label(10, weight: .semibold))
+                        Text(result.progress?.stage.label ?? "Not rendered").font(PlateType.label(10, weight: .semibold))
                     }
                     ShotEditorFlow(spacing: 6) {
                         if result.clip != nil {
@@ -105,11 +107,17 @@ struct ShotSegmentResultView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            if let progress = result.progress, progress.stage != .saved {
+                Text(progress.label + (progress.errorMessage.isEmpty ? "" : " · " + progress.errorMessage))
+                    .font(.caption).foregroundStyle(progress.stage == .failed ? CanonColor.rust : PlateColor.inkFaint)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if isStale {
                 Text("Source changed · later clips remain in use. Review Takes to rechain.")
                     .font(.caption).foregroundStyle(CanonColor.rust)
             }
-            if let record = result.record, let attempt = record.renderingTake ?? record.sortedTakes.last,
+            if result.progress == nil || result.progress?.stage == .saved,
+               let record = result.record, let attempt = record.renderingTake ?? record.sortedTakes.last,
                attempt.takeId != record.selectedTakeId {
                 Text("\(attempt.takeStatus == .ready ? "Alternate take" : "Take") \(attempt.takeNumber) · \(attempt.takeStatus.rawValue)\(attempt.errorMessage.isEmpty ? "" : " · " + attempt.errorMessage)")
                     .font(.caption).foregroundStyle(attempt.takeStatus == .failed ? CanonColor.rust : PlateColor.inkFaint)

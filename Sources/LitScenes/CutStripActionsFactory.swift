@@ -146,6 +146,12 @@ func makeCutStripActions(
     actions.onRequestRerender = { cutId in
         surface.onOpenPlayer(ShotVideoRequest(shotId: cutId, intent: .edit))
     }
+    actions.onOpenShotSegment = { cutId, key in
+        surface.onOpenPlayer(ShotVideoRequest(shotId: cutId, intent: .segment(key)))
+    }
+    actions.onPreviewShotSegment = { cutId, preview in
+        surface.onOpenPlayer(ShotVideoRequest(shotId: cutId, intent: .preview(preview)))
+    }
     actions.onOpenShotEntry = { cutId, entryId in
         surface.onOpenPlayer(ShotVideoRequest(shotId: cutId, intent: .focus(entryId)))
     }

@@ -142,6 +142,7 @@ struct LibraryRootView: View {
     /// so macOS never repositions the application window).
     @State private var takePreview: LensHeroPreviewRequest?
     @State private var takePreviewNavigation: HeroPreviewCutNavigation?
+    @State private var takeBrowseSelection: FrameBrowseSelection?
     /// The Frame Creator hosted at the root for Media surfaces: Restyle on a
     /// photo adopts it as a Frame and opens the creator in place.
     @State private var rootFrameCreatorLaunch: WorkbenchFrameCreatorLaunch?
@@ -200,6 +201,11 @@ struct LibraryRootView: View {
                 library: library,
                 request: $takePreview,
                 cutNavigation: $takePreviewNavigation,
+                collectionSelection: $takeBrowseSelection,
+                collectionItems: creationsInventory(items: library.browsableMediaItems, lenses: library.projectLenses.lenses).flatMap(\.refs).compactMap {
+                    if case .lensTake(_, let frame) = $0 { return FrameBrowseReference(frame: frame) }
+                    return nil
+                },
                 onLaunchFrameCreator: { rootFrameCreatorLaunch = $0 },
                 onStartScene: { imageId in
                     // Media has no stage: the new Scene is staged on SCENES
@@ -1094,6 +1100,7 @@ struct LibraryRootView: View {
                             imagePreviewItem = nil
                             studioVideo = nil
                             takePreviewNavigation = nil
+                            takeBrowseSelection = FrameBrowseSelection(id: FrameBrowseReference(frame: image).id)
                             takePreview = HeroPreviewModalHost.request(
                                 library: library,
                                 lensId: lensId,

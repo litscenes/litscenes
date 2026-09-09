@@ -5145,6 +5145,7 @@ struct LensHeroPreviewBrowseItem: Identifiable, Hashable {
     let id: String
     let imageId: String
     let imagePath: String
+    var mediaId: String = ""
 }
 
 struct LensHeroPreviewVersionItem: Identifiable, Hashable {

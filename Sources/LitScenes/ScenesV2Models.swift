@@ -126,7 +126,12 @@ func sceneRenderBadgeFromDocument(shot: ProjectShot) -> SceneRenderBadge {
 /// Badge for the LOADED project — live engine truth. A persisted "generating"
 /// version without a matching active render id is a straggler the next
 /// reconcile will flip; it reports FAILED, never RENDERING.
-func sceneRenderBadgeLive(shot: ProjectShot, activeShotRenderId: String) -> SceneRenderBadge {
+func sceneRenderBadgeLive(shot: ProjectShot, activeShotRenderId: String, work: ShotWorkPresentation? = nil) -> SceneRenderBadge {
+    if let work, !work.jobId.isEmpty {
+        if work.isActive { return .rendering }
+        if work.phase == "Interrupted" { return .parked }
+        if work.currentSegments.contains(where: { $0.stage == .failed }) { return .failed }
+    }
     if !activeShotRenderId.isEmpty, activeShotRenderId == shot.shotId {
         return .rendering
     }
@@ -403,8 +408,15 @@ func sceneLedgerLine(
 /// reports 0 (starting), never a full bar.
 func sceneRenderProgress(
     shot: ProjectShot,
-    activeShotRenderId: String
+    activeShotRenderId: String,
+    work: ShotWorkPresentation? = nil
 ) -> (fraction: Double, label: String)? {
+    if let work, !work.jobId.isEmpty {
+        guard work.isActive else { return nil }
+        let generated = work.currentSegments.filter(\.isGeneration)
+        let saved = generated.filter { $0.stage == .saved }.count
+        return (generated.isEmpty ? 0 : Double(saved) / Double(generated.count), work.label)
+    }
     guard !activeShotRenderId.isEmpty, activeShotRenderId == shot.shotId,
           let artifact = shot.renderVersions.first(where: { $0.status == "generating" })
             ?? shot.renderArtifact else {

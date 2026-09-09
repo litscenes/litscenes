@@ -148,6 +148,8 @@ final class WorkflowCoordinator: ObservableObject {
 
     func transition(_ id: String, state: WorkflowState? = nil, phase: String, message: String = "", traceId: String = "") async {
         guard var job = jobs.first(where: { $0.id == id }), !terminating else { return }
+        let wasTerminal = job.state.isTerminal
+        if !traceId.isEmpty, !job.traceIds.contains(traceId) { job.traceIds.append(traceId) }
         if job.state == .pausedAutomatically, let state, state != .queued && state != .canceled {
             _ = await save(job, message: message, traceId: traceId)
             return
@@ -155,10 +157,20 @@ final class WorkflowCoordinator: ObservableObject {
         if let state, !job.state.isTerminal, job.state != .pausedAutomatically || state == .queued || state == .canceled {
             job.state = state
         }
-        // Late status messages must not erase the recovery action or terminal outcome.
-        if (job.state == .pausedAutomatically || job.state.isTerminal) && state == nil {
+        if !traceId.isEmpty, !job.traceIds.contains(traceId) { job.traceIds.append(traceId) }
+        // Late events may add evidence, but cannot change the terminal outcome or timing.
+        if wasTerminal || (job.state == .pausedAutomatically && state == nil) {
             _ = await save(job, message: message, traceId: traceId)
             return
+        }
+        if job.state.isTerminal, job.completedAt == nil {
+            job.completedAt = DateFormats.now()
+            for index in (job.segmentProgress ?? []).indices {
+                guard let stage = job.segmentProgress?[index].stage, stage.isPending else { continue }
+                let isUnstarted = stage == .queued && job.segmentProgress?[index].placementKey != job.currentSegmentKey
+                job.segmentProgress?[index].stage = isUnstarted ? .notStarted : job.state == .canceled ? .canceled : .failed
+                job.segmentProgress?[index].errorMessage = job.outcomeMessage ?? message
+            }
         }
         job.phase = phase
         if !message.isEmpty { job.reason = WorkflowPrivacy.text(message) }
@@ -168,21 +180,67 @@ final class WorkflowCoordinator: ObservableObject {
     }
 
     @discardableResult
-    private func save(_ job: WorkflowJob, message: String = "", traceId: String = "") async -> Bool {
+    private func save(_ job: WorkflowJob, message: String = "", traceId: String = "", kind: String? = nil, segment: WorkflowSegmentProgress? = nil) async -> Bool {
         // Publish before suspension so a sibling completion cannot overwrite a newer record.
         if let index = jobs.firstIndex(where: { $0.id == job.id }) { jobs[index] = job }
         else { jobs.insert(job, at: 0) }
         do {
             try await InferenceTraceStore.shared.saveWorkflow(job, event: WorkflowEvent(jobId: job.id,
-                state: job.state, phase: job.phase, message: WorkflowPrivacy.text(message), traceId: traceId))
+                state: job.state, phase: job.phase, message: WorkflowPrivacy.text(message), traceId: traceId, kind: kind, segment: segment))
             historyError = ""
             eventRevision += 1
             return true
         } catch { historyError = WorkflowPrivacy.text(error.localizedDescription); return false }
     }
 
-    func flagFailure() {
-        if let context = WorkflowContext.current { failures.insert(context.jobId) }
+    func flagFailure(message: String = "") {
+        guard let context = WorkflowContext.current else { return }
+        failures.insert(context.jobId)
+        if !message.isEmpty, let index = jobs.firstIndex(where: { $0.id == context.jobId }) {
+            jobs[index].outcomeMessage = WorkflowPrivacy.text(message)
+        }
+    }
+
+    func describeArtifact(_ label: String) async {
+        guard let id = WorkflowContext.current?.jobId, var job = jobs.first(where: { $0.id == id }) else { return }
+        job.artifactLabel = WorkflowPrivacy.text(label)
+        _ = await save(job)
+    }
+
+    func registerSegments(_ segments: [WorkflowSegmentProgress]) async {
+        guard let id = WorkflowContext.current?.jobId, var job = jobs.first(where: { $0.id == id }) else { return }
+        var combined = job.segmentProgress ?? []
+        for segment in segments {
+            combined.removeAll { $0.placementKey == segment.placementKey }
+            combined.append(segment)
+        }
+        job.segmentProgress = combined.sorted { $0.ordinal < $1.ordinal }
+        _ = await save(job)
+    }
+
+    func segmentStage(_ stage: ShotWorkStage, key: String? = nil, message: String = "") async {
+        guard let id = WorkflowContext.current?.jobId, var job = jobs.first(where: { $0.id == id }),
+              let key = key ?? job.currentSegmentKey,
+              let index = job.segmentProgress?.firstIndex(where: { $0.placementKey == key }) else { return }
+        job.currentSegmentKey = key
+        job.segmentProgress?[index].stage = stage
+        job.segmentProgress?[index].updatedAt = DateFormats.now()
+        if !message.isEmpty { job.segmentProgress?[index].errorMessage = WorkflowPrivacy.text(message) }
+        job.updatedAt = DateFormats.now()
+        _ = await save(job, message: job.segmentProgress?[index].label ?? stage.label,
+            kind: "segment", segment: job.segmentProgress?[index])
+    }
+
+    func outcome(_ message: String, failed: Bool = false) async {
+        guard let id = WorkflowContext.current?.jobId, var job = jobs.first(where: { $0.id == id }) else { return }
+        if failed { failures.insert(id) }
+        job.outcomeMessage = WorkflowPrivacy.text(message)
+        _ = await save(job, message: message, kind: failed ? "error" : "result")
+    }
+
+    func finishingShot() async {
+        guard let id = WorkflowContext.current?.jobId else { return }
+        await transition(id, phase: "Finishing Shot")
     }
 
     func checkStopRequested() throws {
@@ -209,8 +267,10 @@ final class WorkflowCoordinator: ObservableObject {
         if let reason = vendorHolds[metadata.provider], isSubmission {
             try await holdCurrent(provider: metadata.provider, reason: reason)
         } else if !admitted.contains(context.jobId) {
+            await segmentStage(.queued)
             guard await waitForAdmission(context.jobId) else { throw CancellationError() }
         }
+        await segmentStage(.rendering)
     }
 
     func providerResponded(_ metadata: InferenceTraceRequestMetadata, data: Data, response: HTTPURLResponse?) async {
@@ -220,7 +280,15 @@ final class WorkflowCoordinator: ObservableObject {
         let requestId = root["request_id"] as? String ?? root["job_id"] as? String
             ?? root["id"] as? String ?? response?.value(forHTTPHeaderField: "x-request-id") ?? ""
         if !requestId.isEmpty { job.providerRequestId = WorkflowPrivacy.text(requestId) }
+        if let response, response.statusCode >= 400,
+           let reason = workflowProviderError(root), !reason.isEmpty {
+            job.outcomeMessage = WorkflowPrivacy.text(reason)
+        }
         _ = await save(job, message: "Provider response received")
+        if let status = root["status"] as? String {
+            if status == "IN_QUEUE" { await segmentStage(.queued) }
+            else if status == "IN_PROGRESS" { await segmentStage(.rendering) }
+        }
         if let recovery = jobs.first(where: { $0.id != job.id && $0.state == .pausedAutomatically
             && $0.projectId == job.projectId && $0.provider == job.provider
             && !$0.providerRequestId.isEmpty && $0.providerRequestId == job.providerRequestId }) {
@@ -320,8 +388,14 @@ final class WorkflowCoordinator: ObservableObject {
     func note(project: ProjectRecord?, workflow: String, message: String, failed: Bool = false) async {
         if let context = WorkflowContext.current {
             guard let job = jobs.first(where: { $0.id == context.jobId }) else { return }
-            if failed, !job.state.isTerminal { failures.insert(context.jobId) }
-            await transition(context.jobId, phase: workflow, message: message)
+            if failed {
+                if !job.state.isTerminal { failures.insert(context.jobId) }
+                var updated = job
+                updated.outcomeMessage = WorkflowPrivacy.text(message)
+                _ = await save(updated, message: message, kind: "error")
+            } else {
+                await transition(context.jobId, phase: workflow, message: message)
+            }
         } else {
             await bootstrap()
             var job = WorkflowJob(projectId: project?.projectId ?? "", projectName: project?.name ?? "App",

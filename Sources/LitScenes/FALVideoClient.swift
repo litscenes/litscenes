@@ -1855,6 +1855,7 @@ func falVideoValidationSummary(from dictionary: [String: Any]) -> String? {
 }
 
 private func falVideoFailureSummary(from value: Any) -> String {
+    if let message = value as? String { return message.trimmed }
     if let dictionary = value as? [String: Any] {
         if let validation = falVideoValidationSummary(from: dictionary) {
             return validation
