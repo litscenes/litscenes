@@ -100,6 +100,9 @@ struct ShotCutPlaybackItem: Identifiable {
 /// material/output timeline mapping shared by strip, player, audio, export.
 struct ShotCutAssembly {
     var bands: [ShotStripBand] = []
+    var unavailableOutputScopeIds: [String] = []
+    var speedFallbackInsertionIds: [String] = []
+    var sourceScopeReferences: [String: ShotPictureScopeReference] = [:]
     var planClips: [ShotCutPlanClip] = []
     var playbackItems: [ShotCutPlaybackItem] = []
     /// Derived display state for every picture insertion — fresh copies also
@@ -396,11 +399,13 @@ func shotLookVisualFingerprint(shot: ProjectShot, assembly: ShotCutAssembly) -> 
 /// when the caller has loaded them (honest lengths), else stack/footage
 /// estimates.
 func shotCutAssembly(
-    shot: ProjectShot,
+    shot rawShot: ProjectShot,
     planSegments: [ShotRenderPlanSegment],
     clipDurationsByPath: [String: Double],
     fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
 ) -> ShotCutAssembly {
+    let shot = shotResolvingPictureSources(rawShot)
+    let sourceCatalog = ShotPictureSourceCatalog(shot: shot)
     let version = shot.playableRenderVersion
     let handoffTrimSeconds = 3.0 / 24.0
     let boundaryRightEntryIds = Set(shot.sourceBoundaries.map(\.rightEntryId))
@@ -430,7 +435,7 @@ func shotCutAssembly(
     var inputs: [ShotCutPlanClipInput] = []
     var seenPlayable = false
 
-    for segment in planSegments {
+    for segment in shotOutputScopePlan(shot: shot, segments: planSegments) {
         switch segment {
         case .footage(let footageSegment):
             let clip = footageSegment.clip
@@ -524,7 +529,8 @@ func shotCutAssembly(
                 segmentKey: preserved.placementKey,
                 displayIndex: preserved.displayIndex,
                 clipPath: path,
-                label: "\(preserved.displayIndex + 1) · ORIGINAL · SAVED",
+                label: shot.outputScopes.contains { $0.scopeId == preserved.sourceVersionId }
+                    ? "EARLIER CUT · EDITABLE" : "\(preserved.displayIndex + 1) · ORIGINAL · SAVED",
                 isFootage: false,
                 skipTarget: nil,
                 fillImagePath: nil
@@ -686,13 +692,29 @@ func shotCutAssembly(
         // clamped the base keeps with — copies obey the trim handles too.
         shotInSeconds: shot.cutList.shotInSeconds,
         shotOutSeconds: shot.cutList.shotOutSeconds,
-        activeTakePathsBySegmentKey: shotActiveTakePathsBySegmentKey(shot: shot),
+        activeTakePathsBySegmentKey: sourceCatalog.activePaths,
+        activeScopeReferences: sourceCatalog.activeScopeReferences,
         fileExists: fileExists
     )
+    let unavailable = spliced.cells.filter { !$0.state.isFresh && !$0.insertion.replacesRazorCutIds.isEmpty }
+    let unavailableCutIds = Set(unavailable.flatMap { $0.insertion.replacesRazorCutIds })
+    if rawShot.cutList.segmentCuts.contains(where: { unavailableCutIds.contains($0.id) }) {
+        // This is derived playback recovery, never a destructive document fix.
+        // Keep independent razors; a failed replacement cannot leave its own
+        // hidden span behind. The unavailable cell remains visible for repair.
+        var recovered = rawShot
+        recovered.cutList.segmentCuts.removeAll { unavailableCutIds.contains($0.id) }
+        var assembly = shotCutAssembly(shot: recovered, planSegments: planSegments,
+            clipDurationsByPath: clipDurationsByPath, fileExists: fileExists)
+        assembly.speedFallbackInsertionIds = Array(Set(assembly.speedFallbackInsertionIds + unavailable.map { $0.insertion.insertionId })).sorted()
+        return assembly
+    }
     return ShotCutAssembly(
         bands: bands,
+        unavailableOutputScopeIds: shotMissingOutputScopes(shot, fileExists: fileExists),
+        sourceScopeReferences: sourceCatalog.activeScopeReferences,
         planClips: plan.clips,
-        playbackItems: spliced.playbackItems,
+        playbackItems: shotMissingOutputScopes(shot, fileExists: fileExists).isEmpty ? spliced.playbackItems : [],
         insertionCells: spliced.cells,
         outputSeconds: spliced.outputSeconds,
         materialSeconds: plan.materialSeconds

@@ -16,7 +16,6 @@ struct CharactersWorkspaceView: View {
     @State private var imagePreview: StyleImagePreviewRequest?
     @State private var alert: CharactersAlert?
     @State private var drafts = CharacterEditDrafts()
-    @State private var refiningStudioIds: Set<String> = []
     @State private var isMediaPickerPresented = false
     @State private var studioScrollRequest = 0
     @State private var submittingStudyIds: Set<String> = []
@@ -162,7 +161,7 @@ struct CharactersWorkspaceView: View {
             .onChange(of: currentProjectId) { _, _ in reconcile() }
             .onChange(of: characterIds) { _, ids in session.reconcile(characterIds: ids) }
             .onChange(of: session.selectedCharacterId) { _, _ in
-                commitPendingEdits()
+                guard commitPendingEdits() else { return }
                 loadDrafts()
             }
             .onChange(of: focus) { old, new in
@@ -171,8 +170,11 @@ struct CharactersWorkspaceView: View {
             .onChange(of: selectedName) { _, value in
                 if focus != .name { drafts.name = value }
             }
-            .onChange(of: selectedAppearance) { _, value in
-                if focus != .appearance { drafts.appearance = value }
+            .onChange(of: selectedAppearance) { old, value in
+                if drafts.appearance.trimmed == old.trimmed { drafts.appearance = value }
+            }
+            .onChange(of: drafts.appearance) { _, value in
+                library.characterSmartPromptDrafts[drafts.characterId] = value
             }
             .onChange(of: selectedCharacter) { _, _ in synchronizeStudio() }
             .onChange(of: imageCandidates.map(\.mediaId)) { _, _ in synchronizeStudio() }
@@ -215,21 +217,36 @@ struct CharactersWorkspaceView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     masthead(for: character, copy: copy)
-                    if hasReferences {
-                        plate(for: character, copy: copy, stage: stage, workspaceHeight: workspaceHeight)
-                    } else {
+                    smartPrompt(for: character)
+                    if !hasReferences {
                         Text("Add or create a source image to establish this character’s look.")
                             .font(CanonType.editorial(18))
                             .foregroundStyle(CanonColor.bone)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     sources(for: character, stack: stack)
-                    if session.studio(for: character.characterId).isOpen {
-                        studio(for: character)
-                            .id("character-image-editor")
+                    studio(for: character)
+                        .id("character-image-editor")
+                    if character.activeSheetMediaId != nil {
+                        plate(for: character, copy: copy, stage: stage, workspaceHeight: workspaceHeight)
                     }
-                    identity(for: character)
-                    if hasReferences { promptSection(for: character, stack: stack) }
+                    if hasReferences, let stack {
+                        DisclosureGroup("Reference sheet prompt with layout") {
+                            Text(library.renderedCharacterSheetPrompt(for: character, stack: stack))
+                                .font(CanonType.interface(12)).textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .foregroundStyle(CanonColor.muted)
+                    }
+                    if let member = library.goalCastMember(forCharacterId: character.characterId, name: character.name) {
+                        DisclosureGroup("Story context") {
+                            Text(member.activeIdentity.essence)
+                                .font(CanonType.interface(13))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Button("Open Story", action: onOpenStory)
+                        }
+                        .foregroundStyle(CanonColor.muted)
+                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 18)
@@ -320,7 +337,7 @@ struct CharactersWorkspaceView: View {
                 imagePreview = StyleImagePreviewRequest(
                     url: URL(fileURLWithPath: item.path).absoluteString,
                     label: "\(character.name) — reference sheet \(library.characterSheetOrdinal(characterId: character.characterId, mediaId: item.mediaId).map(characterSheetOrdinalLabel) ?? "")",
-                    detail: item.filename
+                    detail: [character.promptVersionLabel(for: item.mediaId), item.filename].compactMap { $0 }.joined(separator: " · ")
                 )
             }
         ) {
@@ -379,7 +396,8 @@ struct CharactersWorkspaceView: View {
             onEnlarge: { item in
                 imagePreview = StyleImagePreviewRequest(
                     url: URL(fileURLWithPath: item.path).absoluteString,
-                    label: item.filename
+                    label: item.filename,
+                    detail: character.promptVersionLabel(for: item.mediaId) ?? ""
                 )
             },
             onMoreLikeThis: { openStudio(for: character, referenceId: $0) },
@@ -387,52 +405,21 @@ struct CharactersWorkspaceView: View {
         )
     }
 
-    private func identity(for character: ProjectCharacter) -> some View {
-        let characterId = character.characterId
-        return CharacterIdentityPanel(
-            character: character,
-            castMember: library.goalCastMember(forCharacterId: characterId, name: character.name),
-            appearanceDraft: $drafts.appearance,
-            draftDecision: library.characterIdentityDraftDecision(for: character),
-            isDrafting: library.draftingCharacterIds.contains(characterId),
-            focus: $focus,
-            onCommitAppearance: { commitField(.appearance) },
-            onSetProps: { _ = library.setCharacterSignatureProps(characterId: characterId, $0) },
-            onSetDirectives: { _ = library.setCharacterSheetDirectives(characterId: characterId, $0) },
-            onOpenStory: onOpenStory,
+    private func smartPrompt(for character: ProjectCharacter) -> some View {
+        CharacterSmartPromptPanel(
+            character: character, text: $drafts.appearance, focus: $focus,
+            isThinking: library.refiningCharacterIds.contains(character.characterId) || library.draftingCharacterIds.contains(character.characterId),
+            onSave: { commitField(.appearance) },
+            onRestore: { versionId in
+                guard commitPendingEdits() else { return }
+                if library.restoreCharacterSmartPrompt(characterId: character.characterId, versionId: versionId) {
+                    drafts.appearance = library.projectCharacters.character(withId: character.characterId)?.descriptionPrompt ?? ""
+                }
+            },
             onDraft: {
-                commitPendingEdits()
-                Task { _ = await library.draftCharacterIdentity(characterId: characterId) }
-            },
-            onRedraft: { alert = .redraft(character) }
-        )
-    }
-
-    private func promptSection(for character: ProjectCharacter, stack: RenderStack?) -> some View {
-        let state = stack.map { library.characterSheetPromptState(for: character, stack: $0) }
-        return CharacterPromptSection(
-            composedPrompt: state?.composed ?? "",
-            handEditedPrompt: state?.handEdited,
-            hasDrift: state?.hasDrift ?? false,
-            isEditing: drafts.isPromptEditRequested || state?.handEdited != nil,
-            isExpanded: $session.isPromptExpanded,
-            promptDraft: $drafts.prompt,
-            focus: $focus,
-            onBeginEdit: {
-                drafts.prompt = state?.effective ?? ""
-                drafts.isPromptEditRequested = true
-                focus = .prompt
-            },
-            onCommit: {
-                commitField(.prompt)
-                focus = nil
-            },
-            onRequestReset: { alert = .resetPrompt(character) },
-            onCopy: {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(state?.effective ?? "", forType: .string)
-            },
-            promptLimit: stack.flatMap { $0.isFAL ? $0.falPromptLimit : nil }
+                guard commitPendingEdits() else { return }
+                Task { _ = await library.draftCharacterIdentity(characterId: character.characterId) }
+            }
         )
     }
 
@@ -473,13 +460,14 @@ struct CharactersWorkspaceView: View {
 
     private func renderSheet(for character: ProjectCharacter, stack: RenderStack?) {
         guard let stack else { return }
-        commitPendingEdits()
+        guard commitPendingEdits() else { return }
         let characterId = character.characterId
         guard !submittingSheetIds.contains(characterId), !isGeneratingStudy(for: characterId) else { return }
+        let snapshot = library.projectCharacters.character(withId: characterId)
         submittingSheetIds.insert(characterId)
         Task {
             defer { submittingSheetIds.remove(characterId) }
-            _ = await library.startCharacterSheetRender(characterId: characterId, stack: stack)
+            _ = await library.startCharacterSheetRender(characterId: characterId, stack: stack, characterSnapshot: snapshot)
         }
     }
 
@@ -516,7 +504,6 @@ struct CharactersWorkspaceView: View {
             selectedStack: stack,
             credentialBlocker: { library.characterImageStackBlocker(for: $0, requiresReferences: !draft.referenceIds.isEmpty, isStudy: true) },
             isGenerating: isGeneratingStudy(for: characterId),
-            isRefining: refiningStudioIds.contains(characterId),
             blockedReason: studioBlockedReason(for: stack, characterId: characterId),
             failure: note?.lane == .study ? (note?.message ?? "") : "",
             draftsFirst: {
@@ -535,8 +522,6 @@ struct CharactersWorkspaceView: View {
                 _ = library.setCharacterStudyStack(characterId: characterId, stackId: $0, requiresReferences: !draft.referenceIds.isEmpty)
             },
             onOpenAppSettings: onOpenAppSettings,
-            onReset: { reseedStudio(for: character, force: true) },
-            onRefine: { refineStudio(for: character) },
             onGenerate: { generateStudy(for: character, stack: stack) },
             onClose: {
                 var draft = session.studio(for: characterId)
@@ -560,7 +545,7 @@ struct CharactersWorkspaceView: View {
 
     /// Every open request reveals the editor, even when its draft is already open.
     private func openStudio(for character: ProjectCharacter, referenceId: String? = nil) {
-        commitPendingEdits()
+        guard commitPendingEdits() else { return }
         let characterId = character.characterId
         var draft = session.studio(for: characterId)
         draft.isOpen = true
@@ -570,7 +555,7 @@ struct CharactersWorkspaceView: View {
             draft.look = .asDescribed
             draft.shot = .threeQuarter
         } else if !draft.hasSeeded {
-            draft.shot = library.usableCharacterSourceIds(for: character).isEmpty ? .portrait : .threeQuarter
+            draft.shot = .fullFigure
         }
         session.setStudio(draft, for: characterId)
         synchronizeStudio()
@@ -580,63 +565,45 @@ struct CharactersWorkspaceView: View {
     private func synchronizeStudio() {
         guard let character = selectedCharacter else { return }
         var draft = session.studio(for: character.characterId)
-        guard draft.isOpen || draft.hasSeeded else { return }
+        draft.isOpen = true
         let sourceIds = library.usableCharacterSourceIds(for: character)
         var available = Set(sourceIds)
         if let sheet = library.activeCharacterSheetItem(for: character.characterId),
            FileManager.default.fileExists(atPath: sheet.path) { available.insert(sheet.mediaId) }
         draft.reconcileReferences(sourceIds: sourceIds, availableIds: available)
-        draft.recompose(name: character.name, description: character.descriptionPrompt, signatureProps: character.signatureProps)
+        draft.recompose(name: character.name, description: character.descriptionPrompt, signatureProps: character.promptHistory == nil ? character.signatureProps : [], force: true)
         if draft != session.studio(for: character.characterId) { session.setStudio(draft, for: character.characterId) }
     }
 
     private func reseedStudio(for character: ProjectCharacter, force: Bool) {
         var draft = session.studio(for: character.characterId)
-        draft.recompose(name: character.name, description: character.descriptionPrompt, signatureProps: character.signatureProps, force: force)
+        draft.recompose(name: character.name, description: character.descriptionPrompt, signatureProps: character.promptHistory == nil ? character.signatureProps : [], force: force)
         session.setStudio(draft, for: character.characterId)
-    }
-
-    private func refineStudio(for character: ProjectCharacter) {
-        let characterId = character.characterId
-        var draft = session.studio(for: characterId)
-        let directive = draft.refineInput.trimmed
-        let current = draft.prompt
-        guard !directive.isEmpty, !current.trimmed.isEmpty, !refiningStudioIds.contains(characterId) else { return }
-        draft.refineInput = ""
-        session.setStudio(draft, for: characterId)
-        refiningStudioIds.insert(characterId)
-        Task {
-            let result = await library.transformFormPrompt(prompt: current, directive: directive, priorDirectives: [])
-            refiningStudioIds.remove(characterId)
-            var latest = session.studio(for: characterId)
-            if let result {
-                latest.prompt = result.prompt
-            } else {
-                latest.refineInput = directive
-            }
-            session.setStudio(latest, for: characterId)
-        }
     }
 
     private func generateStudy(for character: ProjectCharacter, stack: RenderStack?) {
         guard let stack else { return }
         let characterId = character.characterId
         guard studioBlockedReason(for: stack, characterId: characterId).isEmpty else { return }
-        commitPendingEdits()
+        guard commitPendingEdits() else { return }
         synchronizeStudio()
         let submittedDraft = session.studio(for: characterId)
+        let submittedCharacter = library.projectCharacters.character(withId: characterId) ?? character
         submittingStudyIds.insert(characterId)
         Task {
             defer { submittingStudyIds.remove(characterId) }
             var draft = submittedDraft
-            if case .draft = library.characterIdentityDraftDecision(for: character) {
+            var snapshot = submittedCharacter
+            if case .draft = library.characterIdentityDraftDecision(for: submittedCharacter) {
                 guard await library.draftCharacterIdentity(characterId: characterId),
                       let refreshed = characters.first(where: { $0.characterId == characterId }) else { return }
-                draft.recompose(name: refreshed.name, description: refreshed.descriptionPrompt, signatureProps: refreshed.signatureProps)
+                snapshot = refreshed
+                draft.recompose(name: refreshed.name, description: refreshed.descriptionPrompt, signatureProps: refreshed.promptHistory == nil ? refreshed.signatureProps : [], force: true)
             }
             _ = await library.startCharacterReferenceRender(
                 characterId: characterId, prompt: draft.prompt, shot: draft.shot, stack: stack,
-                references: CharacterStudyReferences(mediaIds: draft.referenceIds, look: draft.look)
+                references: CharacterStudyReferences(mediaIds: draft.referenceIds, look: draft.look),
+                characterSnapshot: snapshot
             )
         }
     }
@@ -715,12 +682,13 @@ struct CharactersWorkspaceView: View {
         let text = session.draft(for: characterId)
         let mediaIds = session.attachments(for: characterId)
         guard !text.trimmed.isEmpty || !mediaIds.isEmpty else { return }
-        commitPendingEdits()
+        guard commitPendingEdits() else { return }
         session.setDraft("", for: characterId)
         session.setAttachments([], for: characterId)
         let stack = library.resolvedCharacterSheetStack(for: character)
+        let snapshot = library.projectCharacters.character(withId: characterId)
         Task {
-            await library.sendCharacterChatMessage(characterId: characterId, text: text, mediaIds: mediaIds, stack: stack)
+            await library.sendCharacterChatMessage(characterId: characterId, text: text, mediaIds: mediaIds, stack: stack, characterSnapshot: snapshot)
         }
     }
 
@@ -732,25 +700,28 @@ struct CharactersWorkspaceView: View {
     // MARK: Drafts
 
     private func loadDrafts() {
-        guard let character = selectedCharacter else {
+        guard let selected = selectedCharacter else {
             drafts = CharacterEditDrafts()
             return
         }
+        _ = library.adoptCharacterSmartPrompt(characterId: selected.characterId)
+        let character = library.projectCharacters.character(withId: selected.characterId) ?? selected
         // A character's existing sources catch up on analysis when it is visited.
         library.ensureCharacterSourcesAnalyzed(mediaIds: character.referenceMediaIds)
         drafts = CharacterEditDrafts(
             characterId: character.characterId,
             name: character.name,
-            appearance: character.descriptionPrompt,
+            appearance: library.characterSmartPromptDrafts[character.characterId] ?? character.descriptionPrompt,
             prompt: character.sheetPromptOverride ?? "",
             isPromptEditRequested: false
         )
     }
 
-    private func commitPendingEdits() {
+    @discardableResult
+    private func commitPendingEdits() -> Bool {
         commitField(.name)
-        commitField(.appearance)
-        commitField(.prompt)
+        guard let character = characters.first(where: { $0.characterId == drafts.characterId }) else { return false }
+        return library.saveCharacterSmartPrompt(characterId: character.characterId, prompt: drafts.appearance)
     }
 
     private func commitField(_ field: CharacterEditField) {
@@ -767,7 +738,7 @@ struct CharactersWorkspaceView: View {
         case .appearance:
             let trimmed = drafts.appearance.trimmed
             if trimmed != character.descriptionPrompt {
-                _ = library.renameCharacter(characterId: characterId, name: character.name, descriptionPrompt: trimmed)
+                _ = library.saveCharacterSmartPrompt(characterId: characterId, prompt: trimmed)
             }
         case .prompt:
             guard drafts.isPromptEditRequested || character.hasSheetPromptOverride else { return }
@@ -870,7 +841,7 @@ struct CharactersWorkspaceView: View {
                 title: Text("Redraft \(character.name) from the story?"),
                 message: Text("The appearance, props, and story identity are replaced with a fresh draft from the Goal, the other characters, and the source images. Pinned cast dimensions stay."),
                 primaryButton: .destructive(Text("Redraft")) {
-                    commitPendingEdits()
+                    guard commitPendingEdits() else { return }
                     Task { _ = await library.draftCharacterIdentity(characterId: character.characterId, blanks: Set(CharacterIdentityBlank.allCases)) }
                 },
                 secondaryButton: .cancel()

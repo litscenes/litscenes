@@ -72,7 +72,7 @@ struct CharacterChatPane: View {
             Text("Describe or refine \(character.name).")
                 .font(CanonType.editorial(18, weight: .semibold))
                 .foregroundStyle(CanonColor.ink)
-            Text("Describe the character or ask for changes. Instructions are saved for your next generation; attached photos become source images.")
+            Text("Describe the subject or ask for changes. Chat revises the smart prompt on the left and saves a version; your edits are included in the next turn.")
                 .font(CanonType.editorial(14))
                 .foregroundStyle(CanonColor.ink.opacity(0.72))
                 .fixedSize(horizontal: false, vertical: true)
@@ -95,7 +95,7 @@ struct CharacterChatPane: View {
             let price = priceNote.isEmpty ? "unpriced" : priceNote
             return "Sending changes also regenerates the reference sheet · \(stackLabel.isEmpty ? "no model" : stackLabel) · \(price)"
         }
-        return "Messages update the sheet prompt. Render when ready."
+        return "Messages revise the smart prompt on the left. Generate when ready."
     }
 
     private var composer: some View {

@@ -49,11 +49,38 @@ func shotEndingSourceAnchor(shot: ProjectShot, entryId: String) -> ShotContinuat
 }
 
 func shotPendingEndingEntryIds(_ shot: ProjectShot) -> Set<String> {
-    Set(shot.entries.filter { entry in
-        !entry.isSkipped && !entry.isClip && !entry.isAIExtension
-            && shot.continuationRecord(entryId: entry.entryId)?.selectedTake == nil
-            && shotEndingSourceAnchor(shot: shot, entryId: entry.entryId) != nil
-    }.map(\.entryId))
+    var pending = Set<String>()
+    var pendingSuffix = false
+    for entry in shot.entries where !entry.isSkipped {
+        if shot.sourceBoundaries.contains(where: { $0.rightEntryId == entry.entryId }) { pendingSuffix = false }
+        guard !entry.isClip && !entry.isAIExtension else { continue }
+        if shot.continuationRecord(entryId: entry.entryId)?.selectedTake != nil { continue }
+        if pendingSuffix || shotEndingSourceAnchor(shot: shot, entryId: entry.entryId) != nil {
+            pending.insert(entry.entryId)
+            pendingSuffix = true
+        }
+    }
+    return pending
+}
+
+func shotOutputPrefix(_ shot: ProjectShot, before entryId: String) -> ProjectShot {
+    guard !entryId.isEmpty, let index = shot.entries.firstIndex(where: { $0.entryId == entryId }) else { return shot }
+    var prefix = shot
+    prefix.entries = Array(shot.entries.prefix(index))
+    let ids = Set(prefix.entries.map(\.entryId))
+    prefix.continuationRecords = shot.continuationRecords.filter { ids.contains($0.entryId) }
+    prefix.sourceBoundaries = shot.sourceBoundaries.filter { ids.contains($0.rightEntryId) }
+    return prefix
+}
+
+/// After selection the source cut lives in its owning scope. Before selection
+/// the same fingerprint resolves against the current prefix and its live edits.
+func shotReviewedOutputMatches(_ review: ShotContinuationOutputReview, shot: ProjectShot, entryId: String) -> Bool {
+    let scopeId = shot.continuationRecord(entryId: entryId)?.outputScopeId ?? review.scope.scopeId
+    let scope = shot.outputScope(scopeId)
+    let current = scope.map { $0.project(from: shot) } ?? shotOutputPrefix(shot, before: entryId)
+    let fingerprint = shotOutputFingerprint(current)
+    return fingerprint == review.fingerprint || scope?.lineageAliases?[review.fingerprint] == fingerprint
 }
 
 /// Resolve immutable clip provenance in the current plan's order.
@@ -92,6 +119,12 @@ func continuationFileFingerprint(path: String, readsBytes: Bool) -> String {
 /// A thumbnail addresses a placement boundary in the shared material/output map.
 func shotEntryFocusSeconds(shot: ProjectShot, entryId: String, assembly: ShotCutAssembly) -> Double? {
     guard let entry = shot.entries.first(where: { $0.entryId == entryId }) else { return nil }
+    if let scope = shot.outputScopes.first(where: { $0.entryIds.contains(entryId) }),
+       let group = assembly.planClips.first(where: { $0.segmentKey == scope.placementKey }) {
+        let local = scope.cache?.entryOffsets?[entryId] ?? 0
+        let seconds = assembly.outputSeconds(forMaterialSeconds: group.materialStartSeconds + local)
+        return min(max(seconds, 0), max(assembly.outputSeconds - 1.0 / 24.0, 0))
+    }
     var starts: [(Int, Bool)] = []
     var ends: [(Int, Bool)] = []
     for (index, band) in assembly.bands.enumerated() {

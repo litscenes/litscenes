@@ -45,6 +45,7 @@ struct ShotContinuationAnchor: Codable, Hashable, Sendable {
     var tailClipFingerprint: String = ""
     var anchorFingerprint: String = ""
     var endpointEvidence: ShotVideoEndpointEvidence?
+    var outputReview: ShotContinuationOutputReview?
 
     var tailClipDurationSeconds: Double {
         max(tailClipEndSeconds - tailClipStartSeconds, 0)
@@ -56,7 +57,7 @@ struct ShotContinuationAnchor: Codable, Hashable, Sendable {
         case sourceKind, sourceEntryId, sourceTakeId, sourceRenderVersionId
         case sourceSegmentPlacementKey, framePath, frameFingerprint
         case tailClipPath, tailClipStartSeconds, tailClipEndSeconds
-        case tailClipFingerprint, anchorFingerprint, endpointEvidence
+        case tailClipFingerprint, anchorFingerprint, endpointEvidence, outputReview
     }
 
     init(
@@ -102,6 +103,7 @@ struct ShotContinuationAnchor: Codable, Hashable, Sendable {
         tailClipFingerprint = try container.decodeIfPresent(String.self, forKey: .tailClipFingerprint) ?? ""
         anchorFingerprint = try container.decodeIfPresent(String.self, forKey: .anchorFingerprint) ?? ""
         endpointEvidence = try? container.decodeIfPresent(ShotVideoEndpointEvidence.self, forKey: .endpointEvidence)
+        outputReview = try container.decodeIfPresent(ShotContinuationOutputReview.self, forKey: .outputReview)
     }
 
     var syntheticFrame: ProjectLensHeroImage {
@@ -322,6 +324,7 @@ struct ShotContinuationRecord: Codable, Hashable, Sendable, Identifiable {
     var renderingTakeId: String = ""
     var takes: [ShotContinuationTake] = []
     var preservedSourceClips: [ShotRenderSegmentClip] = []
+    var outputScopeId: String?
     var rebuildPending: Bool = false
     var createdAt: String = ""
     var updatedAt: String = ""
@@ -330,7 +333,7 @@ struct ShotContinuationRecord: Codable, Hashable, Sendable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case entryId, sourceEntryId, selectedTakeId, renderingTakeId
-        case takes, preservedSourceClips, rebuildPending, createdAt, updatedAt
+        case takes, preservedSourceClips, outputScopeId, rebuildPending, createdAt, updatedAt
     }
 
     init(
@@ -359,6 +362,7 @@ struct ShotContinuationRecord: Codable, Hashable, Sendable, Identifiable {
         renderingTakeId = try container.decodeIfPresent(String.self, forKey: .renderingTakeId) ?? ""
         takes = ((try? container.decodeIfPresent([ShotContinuationTake].self, forKey: .takes)) ?? nil) ?? []
         preservedSourceClips = try container.decodeIfPresent([ShotRenderSegmentClip].self, forKey: .preservedSourceClips) ?? []
+        outputScopeId = try container.decodeIfPresent(String.self, forKey: .outputScopeId)
         rebuildPending = try container.decodeIfPresent(Bool.self, forKey: .rebuildPending) ?? false
         createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
         updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt) ?? ""
@@ -471,9 +475,12 @@ struct ShotContinuationAvailability: Sendable {
     var nativeStack: ShotRenderStack?
     var suggestedPrompt: String = "Smooth continuous camera and subject motion from the current final frame."
     var endpointNotice: String?
+    var preparationError: String?
+    var precedingEndingEntryId: String?
 
     var canContinue: Bool {
         lockReason == nil
+            && preparationError == nil
             && anchor?.hasFrame == true
             && (outFrameAvailable || nativeStack != nil)
     }
@@ -557,6 +564,9 @@ func shotContinuationRenderedSourceClips(
         return (take.anchor.sourceRenderVersionId, record.preservedSourceClips)
     }
     let anchor = take.anchor.normalized()
+    if let review = anchor.outputReview, !review.sourceClips.isEmpty {
+        return (anchor.sourceRenderVersionId, review.sourceClips)
+    }
     guard anchor.sourceKind == "rendered_original" else { return nil }
 
     let version = shot.renderVersions.first { $0.versionId == anchor.sourceRenderVersionId }
@@ -676,7 +686,12 @@ func shotContinuationStaleEntryIds(_ shot: ProjectShot) -> [String] {
             dependencyBroken = true
             continue
         }
-        if dependencyBroken {
+        if let review = take.anchor.outputReview {
+            if !shotReviewedOutputMatches(review, shot: shot, entryId: entry.entryId) {
+                stale.append(entry.entryId)
+                dependencyBroken = true
+            }
+        } else if dependencyBroken {
             stale.append(entry.entryId)
         } else if !previousContinuationTakeId.isEmpty {
             let namesExpectedTake = take.anchor.sourceTakeId == previousContinuationTakeId

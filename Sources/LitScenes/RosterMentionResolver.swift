@@ -222,7 +222,7 @@ enum RosterMentionResolver {
     /// Treatment-neutral descriptor for roster reference renders: there is no lens
     /// style in play, so the written prompt owns framing and treatment.
     static func characterStudyAttachmentDescriptor(name: String, label: String, isCompositeSheet: Bool, isCharacterSheet: Bool = false) -> String {
-        let descriptor = "CHARACTER identity reference for \"\(name)\": render this exact person; match their appearance, build, and distinguishing features from this image. It is subject matter, not a style reference — follow the written prompt for framing and treatment."
+        let descriptor = "CHARACTER identity reference for \"\(name)\": render this same subject; match its form and distinguishing features, applying explicit changes in the written prompt. It is subject matter, not a style reference — follow the written prompt for framing and treatment."
         return descriptor + descriptorSuffix(name: name, label: label, isCompositeSheet: isCompositeSheet, isCharacterSheet: isCharacterSheet)
     }
 
@@ -230,7 +230,7 @@ enum RosterMentionResolver {
     /// not a scene subject and not a style reference. With a sheet attached alongside,
     /// the sheet sets continuity and the photo corrects the likeness.
     static func characterSheetSourceDescriptor(name: String, label: String, hasSheet: Bool) -> String {
-        var descriptor = "SOURCE IMAGE for \"\(name)\": a photo or artwork of this character, an input the sheet is built from — take face, build, skin, hair, and distinguishing features from it. It is subject matter, not a style or layout reference."
+        var descriptor = "SOURCE IMAGE for \"\(name)\": a photo or artwork of this character, an input the sheet is built from — take the visible form, proportions, materials, and distinguishing features from it; apply explicit changes in the written prompt. It is subject matter, not a style or layout reference."
         if hasSheet {
             descriptor += " Reconcile it with the attached reference sheet: the sheet sets continuity; this image corrects and completes the likeness."
         }
@@ -239,7 +239,7 @@ enum RosterMentionResolver {
 
     private static func descriptorSuffix(name: String, label: String, isCompositeSheet: Bool, isCharacterSheet: Bool = false) -> String {
         if isCharacterSheet {
-            return " This image is \"\(name)\"'s generated reference sheet — turnaround, face, expression, pose, costume, and palette panels of the same character; match identity from it."
+            return " This image is \"\(name)\"'s generated reference sheet — views, details, states, and materials of the same subject; preserve its identity while applying the written changes."
         }
         if isCompositeSheet {
             return " This image is a labeled reference sheet — each panel shows \"\(name)\" from a different angle, age, or context; the panel captions name what each view shows."

@@ -69,3 +69,15 @@
 2026-09-09T00:55:43+00:00 shot-progress-logs-frame-navigation: implement approved consistent segment tiles, structured progress and outcomes, readable Logs, and origin-ordered Frame browsing.
 
 2026-09-09T01:57:00Z shot-progress-logs-frame-navigation: implemented shared segment lifecycle and stable video tiles, richer durable Logs and failure provenance, and live thumbnail-order Frame browsing. Native/offline diagnostics passed; final existing-suite and Development packaging verification recorded in the feature log.
+
+2026-09-09T20:31:52Z edited-shot-endings: Implement the approved shared start/end review, preserve existing edits when appending, and validate offline without changing live projects.
+
+2026-09-09T21:34:08Z edited-shot-endings — shared ending review, readable sheets, editable earlier-cut scopes, provenance and recovery implemented; 1,281 existing tests and native offline workflow diagnostics pass; Development app packaged. See docs/20260909T203152Z_edited-shot-endings.log.md.
+
+2026-09-10T02:45:20Z character-smart-prompt: begin approved shared editable smart prompt with durable revisions, chat updates, restore, and image/sheet provenance in the existing workspace.
+
+2026-09-10T03:09:21Z character-smart-prompt: completed uncommitted. One prominent shared editor, durable history and restore, automatic chat revisions with conflict proposals, legacy text recovery, stable background reconciliation, captured image/sheet prompt revisions, subject-neutral output defaults, and safe canonical trace augmentation. Final swift build and all 1,287 tests pass. Native component previews and Traces reader validation pass; hygiene and whitespace checks pass. No paid call, installation, commit, push, branch, or consumer pin update.
+
+2026-09-10T04:17:09Z repeated-speed-edits — repair source resolution, replacement ordering and atomic validation; verify cache/reload recovery.
+
+2026-09-10T04:49:46Z repeated-speed-edits — completed shared source resolution, stable scope references, ordered/atomic speed edits and visible recovery. Validated 1,287 existing tests, 89 model checks, 18 isolated native engine checks, export, source hygiene and signed Development packaging. Details: docs/20260910T041709Z_repeated-speed-edits.log.md. Uncommitted; unrelated work preserved.

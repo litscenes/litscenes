@@ -8,6 +8,7 @@ struct ShotTailPickerMenu: View {
     var actions: CutStripActions
     var isPreparingContinuation = false
     var continuationPreparationMessage = ""
+    var onEnding: (String) -> Void = { _ in }
     var onAI: () -> Void
     var onClose: () -> Void
     @State private var appendSearchQuery = ""
@@ -34,14 +35,34 @@ struct ShotTailPickerMenu: View {
         let placed = candidates.filter { input in
             input.isClip ? placedClipIds.contains(input.clipMediaId) : placedFrameIds.contains(input.frameImageId)
         }
+        let pending = cut.entries.first { shotPendingEndingEntryIds(cut).contains($0.entryId) }
         let coarseAvailability = actions.continuationAvailability(cut.shotId)
         let hardLocked = isLocked && !isSuffixAppendable
         return VStack(alignment: .leading, spacing: 10) {
             Text(tailActionLabel)
                 .font(CanonType.archive(8, weight: .semibold))
                 .kerning(1.2)
-                .foregroundStyle(CanonColor.muted)
-            if !cut.entries.isEmpty {
+                .foregroundStyle(ShotReviewPalette.muted)
+            if let pending {
+                let frame = actions.frameLookup[pending.frameImageId]
+                Button { onEnding(pending.entryId) } label: {
+                    HStack(spacing: 12) {
+                        Group {
+                            if let image = StripThumbnailCache.shared.image(path: frame?.imagePath ?? "") {
+                                Image(nsImage: image).resizable().scaledToFit()
+                            } else { Image(systemName: "photo") }
+                        }.frame(width: 112, height: 63)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("ENDING FRAME · NOT RENDERED").font(CanonType.archive(8, weight: .semibold))
+                            Text(frame?.label ?? "Selected Frame").font(CanonType.interface(11)).lineLimit(1)
+                            Text("Render Ending…").font(CanonType.interface(12, weight: .semibold))
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                    }.padding(10).frame(width: 548, alignment: .leading)
+                        .background(CanonColor.softGold.opacity(0.22), in: RoundedRectangle(cornerRadius: 7))
+                }.buttonStyle(.plain).disabled(isBusy)
+            } else if !cut.entries.isEmpty {
                 Button {
                     onAI()
                 } label: {
@@ -54,7 +75,7 @@ struct ShotTailPickerMenu: View {
                                 .kerning(0.7)
                             Text("Review the exact endpoint, method, direction, and price")
                                 .font(CanonType.interface(9.5))
-                                .foregroundStyle(CanonColor.muted)
+                                .foregroundStyle(ShotReviewPalette.muted)
                         }
                         Spacer()
                         if isPreparingContinuation {
@@ -120,11 +141,11 @@ struct ShotTailPickerMenu: View {
             Text("ADD FRAME OR FOOTAGE")
                 .font(CanonType.archive(7.5, weight: .semibold))
                 .kerning(0.8)
-                .foregroundStyle(CanonColor.muted)
+                .foregroundStyle(ShotReviewPalette.muted)
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(CanonColor.muted)
+                    .foregroundStyle(ShotReviewPalette.muted)
                 TextField("Search Frames and Footage", text: $appendSearchQuery)
                     .textFieldStyle(.plain)
                     .font(CanonType.interface(11))
@@ -138,7 +159,7 @@ struct ShotTailPickerMenu: View {
                     ? "No source material yet — render a new Frame below."
                     : "No Frames or Footage match this search.")
                     .font(CanonType.interface(11))
-                    .foregroundStyle(CanonColor.muted)
+                    .foregroundStyle(ShotReviewPalette.muted)
                     .frame(width: 300, alignment: .leading)
             } else {
                 ScrollView(.vertical, showsIndicators: true) {
@@ -153,12 +174,15 @@ struct ShotTailPickerMenu: View {
             if hardLocked {
                 Text("Frames and Footage require NEW VERSION; AI can continue the immutable rendered Original directly.")
                     .font(CanonType.interface(9))
-                    .foregroundStyle(CanonColor.muted)
+                    .foregroundStyle(ShotReviewPalette.muted)
                     .frame(width: 548, alignment: .leading)
             }
         }
         .padding(14)
-        .background(CanonColor.paper)
+        .background(ShotReviewPalette.paper)
+        .foregroundStyle(ShotReviewPalette.ink)
+        .environment(\.colorScheme, .light)
+        .preferredColorScheme(.light)
     }
 
 

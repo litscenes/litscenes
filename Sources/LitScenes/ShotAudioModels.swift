@@ -620,6 +620,7 @@ struct ShotAudioMix: Codable, Hashable, Sendable {
 struct ShotAudioStateSnapshot: Hashable, Sendable {
     var audioMix: ShotAudioMix
     var audioRegions: [ShotAudioRegion]
+    var scopeId: String = ""
 }
 
 struct ShotAudioStateEdit: Hashable, Sendable {

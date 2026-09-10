@@ -78,6 +78,10 @@ struct ShotRenderPlayerModal: View {
     var openProvenanceOnOpen: Bool
     var onInspectSource: (String) -> Void
     var onReviewEnding: (String) -> Void
+    var editingOutputScopeId: String
+    var outputScopeStatus: ShotOutputScopePreparation?
+    var onRetryOutputScope: () -> Void
+    var onSelectOutputScope: (String) -> Void
     var continuationEntryEstimate: ([String]) -> ShotRenderCostEstimate
     var continuationBranchImpact: (String, String) -> ShotContinuationBranchImpact?
     var onUseContinuationTake: (ShotContinuationBranchImpact) -> Void
@@ -162,7 +166,7 @@ struct ShotRenderPlayerModal: View {
     var onPasteSegmentCards: ([ShotPictureSegmentSpanRef], String?) -> ShotPictureStateEdit? = { _, _ in nil }
     /// SECTION SPEED: (materialStart, materialEnd, rate) — razors the span
     /// and plays a born-muted copy of it in place at `rate`, one edit.
-    var onSetSectionRate: (Double, Double, Double) -> ShotPictureStateEdit? = { _, _, _ in nil }
+    var onSetSectionRate: (Double, Double, Double) -> ShotSectionRateResult = { _, _, _ in ShotSectionRateResult() }
     var onClose: () -> Void
 
     @Environment(\.undoManager) private var undoManager
@@ -300,6 +304,10 @@ struct ShotRenderPlayerModal: View {
         openProvenanceOnOpen: Bool = false,
         onInspectSource: @escaping (String) -> Void = { _ in },
         onReviewEnding: @escaping (String) -> Void = { _ in },
+        editingOutputScopeId: String = "",
+        outputScopeStatus: ShotOutputScopePreparation? = nil,
+        onRetryOutputScope: @escaping () -> Void = {},
+        onSelectOutputScope: @escaping (String) -> Void = { _ in },
         onExtend: (() -> Void)? = nil,
         onNewVersion: (() -> Void)? = nil,
         onRebuild: (([ShotSegmentPromptOverride]) -> Void)? = nil,
@@ -364,7 +372,7 @@ struct ShotRenderPlayerModal: View {
         onSetPictureInsertionMuted: @escaping (Set<String>, Bool) -> ShotPictureStateEdit? = { _, _ in nil },
         onRecopyPictureInsertion: @escaping (String) -> ShotPictureStateEdit? = { _ in nil },
         onPasteSegmentCards: @escaping ([ShotPictureSegmentSpanRef], String?) -> ShotPictureStateEdit? = { _, _ in nil },
-        onSetSectionRate: @escaping (Double, Double, Double) -> ShotPictureStateEdit? = { _, _, _ in nil },
+        onSetSectionRate: @escaping (Double, Double, Double) -> ShotSectionRateResult = { _, _, _ in ShotSectionRateResult() },
         onClose: @escaping () -> Void
     ) {
         self.shot = shot
@@ -375,6 +383,10 @@ struct ShotRenderPlayerModal: View {
         self.openProvenanceOnOpen = openProvenanceOnOpen
         self.onInspectSource = onInspectSource
         self.onReviewEnding = onReviewEnding
+        self.editingOutputScopeId = editingOutputScopeId
+        self.outputScopeStatus = outputScopeStatus
+        self.onRetryOutputScope = onRetryOutputScope
+        self.onSelectOutputScope = onSelectOutputScope
         self.onExtend = onExtend
         self.onNewVersion = onNewVersion
         self.onRebuild = onRebuild
@@ -504,7 +516,7 @@ struct ShotRenderPlayerModal: View {
     /// Full-shot playback assembles the saved segment clips live through the
     /// cut layer (skips, razors, in/out) — the mp4 on disk is never touched.
     private var usesCutComposition: Bool {
-        !isPreviewingClip && activeLook == nil && assembly.hasPlayableClips
+        !isPreviewingClip && activeLook == nil && (assembly.hasPlayableClips || !assembly.unavailableOutputScopeIds.isEmpty)
     }
 
     /// Everything that shapes the playback composition; a change reloads the
@@ -924,7 +936,8 @@ struct ShotRenderPlayerModal: View {
             onEditCurrent: returnToCurrent,
             savedFallback: assembly.bands.first.flatMap { band in
                 if case .artifactFallback = band.segment { return band.segment }; return nil
-            }
+            },
+            editingEarlierCut: !editingOutputScopeId.isEmpty
         )
     }
 
@@ -940,6 +953,14 @@ struct ShotRenderPlayerModal: View {
         requestedPlayback = false
         player?.pause()
         guard let clip = assembly.planClips.first(where: { $0.segmentKey == key }) else {
+            if let scope = shot.outputScopes.first(where: { $0.segmentKeys.contains(key) }),
+               let group = assembly.planClips.first(where: { $0.segmentKey == scope.placementKey }) {
+                let local = scope.cache?.sourceOffsets?[key] ?? 0
+                let seconds = assembly.outputSeconds(forMaterialSeconds: group.materialStartSeconds + local)
+                if isPreviewingClip { pendingSeekSeconds = seconds; viewingSelection = .current }
+                else { seek(toOutputSeconds: seconds) }
+                return
+            }
             if isPreviewingClip {
                 pendingSeekSeconds = currentReturnSeconds
                 viewingSelection = .current
@@ -1047,6 +1068,37 @@ struct ShotRenderPlayerModal: View {
     }
 
     private var cutTimelineStrip: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !editingOutputScopeId.isEmpty || !shot.outputScopes.isEmpty {
+                HStack(spacing: 12) {
+                    if !editingOutputScopeId.isEmpty {
+                        Button("← Whole Shot") { pauseForEditorAction(); onSelectOutputScope("") }.buttonStyle(.plain)
+                        Text("EDITING EARLIER CUT").font(CanonType.archive(8, weight: .bold))
+                    } else {
+                        Text("WHOLE SHOT").font(CanonType.archive(8, weight: .bold))
+                    }
+                    ForEach(Array(shot.outputScopes.enumerated()), id: \.element.scopeId) { index, scope in
+                        Button {
+                            pauseForEditorAction(); onSelectOutputScope(scope.scopeId)
+                        } label: {
+                            Label("Earlier cut\(shot.outputScopes.count > 1 ? " \(index + 1)" : "") · Edit…", systemImage: "square.stack.3d.down.right")
+                        }.buttonStyle(.plain)
+                            .help("Edit this cut’s trims, copies, sound, Look, Reverse and loops. Its appended ending stays outside these edits.")
+                    }
+                    Spacer()
+                }.font(CanonType.interface(10)).padding(.horizontal, 12)
+                if let status = outputScopeStatus {
+                    HStack(spacing: 10) {
+                        if case .preparing = status { ProgressView().controlSize(.small) }
+                        Text(status.message)
+                        if case .failed = status { Button("Retry") { onRetryOutputScope() }.buttonStyle(.plain) }
+                    }.font(CanonType.interface(10)).padding(.horizontal, 12)
+                }
+            }
+        if !assembly.speedFallbackInsertionIds.isEmpty {
+            Text("Speed unavailable · Available source picture plays at 1×. Open the affected speed cell to repair it.")
+                .font(CanonType.interface(11)).foregroundStyle(CanonColor.rust).padding(.horizontal, 12)
+        }
         ShotCutTimelineStrip(
             shot: shot,
             assembly: assembly,
@@ -1118,7 +1170,8 @@ struct ShotRenderPlayerModal: View {
                     anchorSeconds: sibling.anchorSeconds,
                     playbackRate: sibling.playbackRate,
                     muteSourceAudio: sibling.muteSourceAudio,
-                    loopGroupId: sibling.loopGroupId
+                    loopGroupId: sibling.loopGroupId,
+                    sourceScope: sibling.sourceScope
                 )
                 registerPictureEdit(
                     onPastePictureSegments([minted], "One more copy — same speed and sound"),
@@ -1160,6 +1213,7 @@ struct ShotRenderPlayerModal: View {
             reverseBakeProgress: reverseBakeProgress,
             onSetReversed: { reversed in commitCutReversed(reversed) }
         )
+        }
     }
 
     // MARK: Picture undo (THE PICTURE SNAPSHOT LAW's registration half)
@@ -1731,11 +1785,10 @@ struct ShotRenderPlayerModal: View {
             return
         }
         player?.pause()
-        let edit = onSetSectionRate(span.lowSeconds, span.highSeconds, rate)
-        registerPictureEdit(edit, "Section Speed \(shotInsertionRateLabel(rate))")
-        if edit != nil {
-            stripSelectedSpan = nil
-        }
+        let result = onSetSectionRate(span.lowSeconds, span.highSeconds, rate)
+        registerPictureEdit(result.edit, "Section Speed \(shotInsertionRateLabel(rate))")
+        if result.edit != nil { stripSelectedSpan = nil }
+        transportStatus = result.message
     }
 
     /// ⌫ — removes the selected arranged-copy run. Returns whether anything
@@ -2806,6 +2859,9 @@ struct ShotRenderPlayerModal: View {
     /// Preview and export share one track graph: cut-aware source audio,
     /// narration, and the active microphone take with persisted lane gains.
     private func makePlayerItem() async throws -> AVPlayerItem {
+        if !isPreviewingClip && previewedVersionId == nil && !assembly.unavailableOutputScopeIds.isEmpty {
+            throw ScreenGraphError.capture("Preparing the earlier cut for playback. Its original segments and takes remain available in the editor.")
+        }
         if case .segment(let preview) = viewingSelection, let end = preview.sourceEndSeconds {
             let built = try await VideoChainMedia.buildStitchComposition(specs: [VideoChainMedia.StitchClipSpec(
                 url: URL(fileURLWithPath: preview.clip.clipPath),

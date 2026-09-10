@@ -8,18 +8,25 @@ struct ShotContinuationReviewView: View {
     let configuredModels: Set<ShotRenderModel>
     let pricing: FALPricingSnapshot?
     let title: String
+    var isPreparing: Bool
+    var onRefresh: () -> Void
+    var onPrecedingEnding: (String) -> Void
     var onCancel: () -> Void
     var onRender: (ShotContinuationRequest) -> Void
 
     @State private var mode: ShotContinuationMode
     @State private var stack: ShotRenderStack
     @State private var prompt: String
+    @State private var hasLoadedRecipe = false
 
     init(
         availability: ShotContinuationAvailability,
         configuredModels: Set<ShotRenderModel>,
         pricing: FALPricingSnapshot?,
         title: String,
+        isPreparing: Bool = false,
+        onRefresh: @escaping () -> Void = {},
+        onPrecedingEnding: @escaping (String) -> Void = { _ in },
         onCancel: @escaping () -> Void,
         onRender: @escaping (ShotContinuationRequest) -> Void
     ) {
@@ -27,6 +34,9 @@ struct ShotContinuationReviewView: View {
         self.configuredModels = configuredModels
         self.pricing = pricing
         self.title = title
+        self.isPreparing = isPreparing
+        self.onRefresh = onRefresh
+        self.onPrecedingEnding = onPrecedingEnding
         self.onCancel = onCancel
         self.onRender = onRender
         let initialMode = availability.preferredMode
@@ -67,7 +77,8 @@ struct ShotContinuationReviewView: View {
     }
 
     private var canSubmit: Bool {
-        !prompt.trimmed.isEmpty
+        !isPreparing && availability.canContinue
+            && !prompt.trimmed.isEmpty
             && availability.anchor != nil
             && price != nil
             && configuredModels.contains(stack.model)
@@ -84,9 +95,24 @@ struct ShotContinuationReviewView: View {
                 Text("PAID VIDEO GENERATION")
                     .font(CanonType.archive(7, weight: .semibold))
                     .kerning(0.7)
-                    .foregroundStyle(CanonColor.ink.opacity(0.65))
+                    .foregroundStyle(ShotReviewPalette.ink.opacity(0.65))
             }
 
+            if isPreparing {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Preparing current cut · No generation charge")
+                }.font(CanonType.interface(11))
+            } else if let message = availability.preparationError ?? availability.lockReason?.message {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(message).foregroundStyle(CanonColor.rust)
+                    if let entryId = availability.precedingEndingEntryId {
+                        Button("Review preceding ending…") { onPrecedingEnding(entryId) }.buttonStyle(.plain).underline()
+                    } else {
+                        Button("Refresh review") { onRefresh() }.buttonStyle(.plain).underline()
+                    }
+                }.font(CanonType.interface(11))
+            }
             endpointPreview
 
             if let target = availability.targetFrame {
@@ -98,16 +124,16 @@ struct ShotContinuationReviewView: View {
                     }
                     .frame(width: 160, height: 90)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("ENDING FRAME").font(CanonType.archive(8, weight: .bold))
+                        Text("END · SELECTED FRAME").font(CanonType.archive(8, weight: .bold))
                         Text(target.label).font(CanonType.interface(11))
-                        Text("Arrive at this Frame using a paired-frame model.").font(CanonType.interface(10))
+                        Text("The new clip starts at the current cut’s endpoint and arrives here.").font(CanonType.interface(10))
                     }
                 }
             } else {
             Text("CONTINUATION METHOD")
                 .font(CanonType.archive(7.5, weight: .semibold))
                 .kerning(0.8)
-                .foregroundStyle(CanonColor.ink.opacity(0.65))
+                .foregroundStyle(ShotReviewPalette.ink.opacity(0.65))
             HStack(spacing: 8) {
                 methodButton(
                     mode: .nativeExtend,
@@ -127,7 +153,7 @@ struct ShotContinuationReviewView: View {
 
             }
             if mode != .nativeExtend {
-                outFrameControls
+                outFrameControls.disabled(isPreparing)
             } else if let context = availability.anchor.flatMap({ anchor in
                 ltxShotExtendContextSeconds(
                     sourceDurationSeconds: anchor.tailClipDurationSeconds,
@@ -136,13 +162,13 @@ struct ShotContinuationReviewView: View {
             }) {
                 Text("\(stack.providerSelection.label) · LTX 2.3 · \(stack.segmentSeconds)s new · \(String(format: "%.1f", context))s tail context · native audio")
                     .font(CanonType.archive(7.5, weight: .medium))
-                    .foregroundStyle(CanonColor.ink.opacity(0.65))
+                    .foregroundStyle(ShotReviewPalette.ink.opacity(0.65))
             }
 
             Text("DIRECTION")
                 .font(CanonType.archive(7.5, weight: .semibold))
                 .kerning(0.8)
-                .foregroundStyle(CanonColor.ink.opacity(0.65))
+                .foregroundStyle(ShotReviewPalette.ink.opacity(0.65))
             TextEditor(text: $prompt)
                 .font(CanonType.interface(12))
                 .scrollContentBackground(.hidden)
@@ -153,7 +179,7 @@ struct ShotContinuationReviewView: View {
 
             HStack(spacing: 8) {
                 Button("CANCEL") { onCancel() }
-                    .buttonStyle(PlateButtonStyle())
+                    .buttonStyle(ShotReviewOutlineButtonStyle())
                 Spacer()
                 Button {
                     guard let anchor = availability.anchor else { return }
@@ -164,12 +190,12 @@ struct ShotContinuationReviewView: View {
                         preparedAnchor: anchor, targetFrame: availability.targetFrame
                     ))
                 } label: {
-                    Text("▶ RENDER TAKE · \(priceLabel)")
+                    Text("▶ \(availability.targetFrame == nil ? "RENDER TAKE" : "RENDER ENDING") · \(priceLabel)")
                         .font(CanonType.archive(8, weight: .bold))
                         .kerning(0.6)
                         .padding(.horizontal, 14)
                         .frame(height: 34)
-                        .foregroundStyle(CanonColor.ink)
+                        .foregroundStyle(ShotReviewPalette.ink)
                         .background(Capsule().fill(CanonColor.brass.opacity(0.86)))
                 }
                 .buttonStyle(.plain)
@@ -181,10 +207,18 @@ struct ShotContinuationReviewView: View {
         }
         .padding(16)
         .frame(width: 560)
-        .background(CanonColor.paper)
-        .foregroundStyle(CanonColor.ink)
+        .background(ShotReviewPalette.paper)
+        .foregroundStyle(ShotReviewPalette.ink)
         .environment(\.colorScheme, .light)
         .preferredColorScheme(.light)
+        .onChange(of: isPreparing) { _, preparing in
+            if !preparing && !hasLoadedRecipe {
+                mode = availability.preferredMode
+                stack = mode == .nativeExtend ? (availability.nativeStack ?? availability.outFrameStack) : availability.outFrameStack
+                if prompt.trimmed.isEmpty { prompt = availability.suggestedPrompt }
+                hasLoadedRecipe = true
+            }
+        }
     }
 
     private var endpointPreview: some View {
@@ -198,26 +232,26 @@ struct ShotContinuationReviewView: View {
                         .aspectRatio(contentMode: .fill)
                 } else {
                     Image(systemName: "photo")
-                        .foregroundStyle(CanonColor.ink.opacity(0.65))
+                        .foregroundStyle(ShotReviewPalette.ink.opacity(0.65))
                 }
             }
             .frame(width: 176, height: 99)
             .clipShape(RoundedRectangle(cornerRadius: 7))
             .overlay(RoundedRectangle(cornerRadius: 7).stroke(CanonColor.hairlinePaper, lineWidth: 1))
             VStack(alignment: .leading, spacing: 5) {
-                Text("EXACT CONTINUATION ANCHOR")
+                Text(availability.targetFrame == nil ? "EXACT CONTINUATION ANCHOR" : "START · CURRENT CUT’S FINAL FRAME")
                     .font(CanonType.archive(7.5, weight: .bold))
                     .kerning(0.7)
                 Text(anchorSourceLabel)
                     .font(CanonType.interface(11, weight: .semibold))
                 Text(anchorSourceDetail)
                     .font(CanonType.interface(9.5))
-                    .foregroundStyle(CanonColor.ink.opacity(0.65))
+                    .foregroundStyle(ShotReviewPalette.ink.opacity(0.65))
                     .fixedSize(horizontal: false, vertical: true)
                 if let notice = availability.endpointNotice {
                     Text(notice)
                         .font(CanonType.interface(9.5))
-                        .foregroundStyle(CanonColor.ink)
+                        .foregroundStyle(ShotReviewPalette.ink)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -226,6 +260,7 @@ struct ShotContinuationReviewView: View {
 
     private var anchorSourceLabel: String {
         switch availability.anchor?.sourceKind {
+        case "edited_output": return "Current cut’s final frame"
         case "frame": return "Ready Frame"
         case "footage": return "Placed Footage out point"
         case "continuation_take": return "Source continuation final frame"
@@ -266,7 +301,7 @@ struct ShotContinuationReviewView: View {
                 Text(detail)
                     .font(CanonType.interface(8.5))
                     .multilineTextAlignment(.leading)
-                    .foregroundStyle(CanonColor.ink.opacity(0.65))
+                    .foregroundStyle(ShotReviewPalette.ink.opacity(0.65))
             }
             .padding(9)
             .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)

@@ -23,6 +23,7 @@ struct ShotPictureInsertion: Codable, Hashable, Sendable, Identifiable {
     /// Absolute file path of the copied pixels: a generated take's saved clip,
     /// or a footage file. Never rewritten by re-renders.
     var sourceClipPath: String = ""
+    var sourceScope: ShotPictureScopeReference? = nil
     /// Footage only ("" on generated sources): the tray media id, kept so a
     /// moved library can relink the file later.
     var sourceMediaId: String = ""
@@ -76,7 +77,7 @@ struct ShotPictureInsertion: Codable, Hashable, Sendable, Identifiable {
         case anchorSegmentKey, anchorSeconds
         case playbackRate, muteSourceAudio, pitchMode
         case transformKind, transformSpec
-        case loopGroupId, replacesRazorCutIds, updatedAt
+        case loopGroupId, replacesRazorCutIds, updatedAt, sourceScope
     }
 
     init(
@@ -95,12 +96,14 @@ struct ShotPictureInsertion: Codable, Hashable, Sendable, Identifiable {
         transformSpec: String = "",
         loopGroupId: String = "",
         replacesRazorCutIds: [String] = [],
-        updatedAt: String = ""
+        updatedAt: String = "",
+        sourceScope: ShotPictureScopeReference? = nil
     ) {
         self.insertionId = insertionId.trimmed.nilIfEmpty
             ?? "pins_\(UUID().uuidString.lowercased())"
         self.sourceSegmentKey = sourceSegmentKey
         self.sourceClipPath = sourceClipPath
+        self.sourceScope = sourceScope
         self.sourceMediaId = sourceMediaId
         self.sourceStartSeconds = sourceStartSeconds
         self.sourceEndSeconds = sourceEndSeconds
@@ -121,6 +124,7 @@ struct ShotPictureInsertion: Codable, Hashable, Sendable, Identifiable {
         insertionId = try container.decodeIfPresent(String.self, forKey: .insertionId) ?? ""
         sourceSegmentKey = try container.decodeIfPresent(String.self, forKey: .sourceSegmentKey) ?? ""
         sourceClipPath = try container.decodeIfPresent(String.self, forKey: .sourceClipPath) ?? ""
+        sourceScope = try container.decodeIfPresent(ShotPictureScopeReference.self, forKey: .sourceScope)
         sourceMediaId = try container.decodeIfPresent(String.self, forKey: .sourceMediaId) ?? ""
         sourceStartSeconds = try container.decodeIfPresent(Double.self, forKey: .sourceStartSeconds) ?? 0
         sourceEndSeconds = try container.decodeIfPresent(Double.self, forKey: .sourceEndSeconds) ?? 0
@@ -364,6 +368,7 @@ func shotPictureInsertionSplice(
     /// seam-cut segment leaves the plan but its take stays active, and a copy
     /// of that beat must stay fresh (THE REPLACE PATTERN).
     activeTakePathsBySegmentKey: [String: String],
+    activeScopeReferences: [String: ShotPictureScopeReference] = [:],
     fileExists: (String) -> Bool
 ) -> (playbackItems: [ShotCutPlaybackItem], cells: [ShotInsertionCell], outputSeconds: Double) {
     guard !insertions.isEmpty else {
@@ -417,6 +422,26 @@ func shotPictureInsertionSplice(
     ) -> (afterIndex: Int, bandIndex: Int?, tickMaterial: Double?) {
         if let anchorClipIndex = clipIndex(forSegmentKey: insertion.anchorSegmentKey) {
             let anchorLocal = max(insertion.anchorSeconds, 0)
+            if allowSplit && !insertion.replacesRazorCutIds.isEmpty {
+                // Speed replaces material in its original order. Existing speed
+                // pieces count as material here, even when no base keep remains
+                // between adjacent replacements made in either editing order.
+                var preceding: Int?
+                var insideBase = false
+                for index in items.indices {
+                    let item = items[index]
+                    guard let keep = item.keepRange, let itemClipIndex = clipIndex(forSegmentKey: item.segmentKey),
+                          item.insertionId.isEmpty || insertions.contains(where: {
+                              $0.insertionId == item.insertionId && !$0.replacesRazorCutIds.isEmpty
+                          }) else { continue }
+                    if itemClipIndex > anchorClipIndex || (itemClipIndex == anchorClipIndex && anchorLocal <= keep.start + epsilon) {
+                        return (index - 1, anchorClipIndex, nil)
+                    }
+                    if itemClipIndex < anchorClipIndex || keep.end <= anchorLocal + epsilon { preceding = index }
+                    else { insideBase = true; break }
+                }
+                if !insideBase, let preceding { return (preceding, anchorClipIndex, nil) }
+            }
             let owned = items.indices.filter {
                 items[$0].insertionId.isEmpty
                     && items[$0].segmentKey == insertion.anchorSegmentKey
@@ -479,6 +504,7 @@ func shotPictureInsertionSplice(
             return fileExists(insertion.sourceClipPath) ? .fresh : .sourceMissing
         }
         guard fileExists(insertion.sourceClipPath) else { return .sourceMissing }
+        if let scope = insertion.sourceScope, scope != activeScopeReferences[insertion.sourceSegmentKey] { return .olderTake }
         let activePath = activeTakePathsBySegmentKey[insertion.sourceSegmentKey] ?? ""
         return (!activePath.isEmpty && activePath == insertion.sourceClipPath)
             ? .fresh
@@ -563,7 +589,8 @@ func shotPictureInsertionSplice(
             allowSplit: state.isFresh
         )
         // Paste order is presentation order: advance past an insertion run.
-        while afterIndex + 1 < items.count, !items[afterIndex + 1].insertionId.isEmpty {
+        while insertion.replacesRazorCutIds.isEmpty,
+              afterIndex + 1 < items.count, !items[afterIndex + 1].insertionId.isEmpty {
             afterIndex += 1
         }
         resolvedBandIndex[insertion.insertionId] = bandIndex
@@ -655,26 +682,10 @@ func shotPictureInsertionSplice(
     return (items, cells, cursor)
 }
 
-/// THE ACTIVE TAKE AUTHORITY: the file each segment key CURRENTLY plays —
-/// the playable version's clip where one exists, else the seed clip (the
-/// same `saved ?? seedClip` precedence band resolution uses). This is the
-/// freshness referee for arranged copies, and it must cover BOTH sources:
-/// judging by version clips alone made every copy on a seed-covered segment
-/// (combined CUTs, pasted segment cards) OLDER-TAKE-inert at birth — a
-/// SPEED gesture then razored the material and played nothing in the gap,
-/// reading as "speed deleted my section". Deliberately NOT the
-/// plan's clip paths: a seam-cut segment leaves the plan but its take stays
-/// active (THE REPLACE PATTERN).
+/// The active source remains identifiable even when a speed edit temporarily
+/// removes all of its base picture from the playback plan.
 func shotActiveTakePathsBySegmentKey(shot: ProjectShot) -> [String: String] {
-    var paths: [String: String] = [:]
-    for seed in shot.seedSegmentClips where !seed.clipPath.trimmed.isEmpty {
-        paths[seed.placementKey] = seed.clipPath
-    }
-    for saved in shot.playableRenderVersion?.segmentClips ?? []
-        where !saved.clipPath.trimmed.isEmpty {
-        paths[saved.placementKey] = saved.clipPath
-    }
-    return paths
+    ShotPictureSourceCatalog(shot: shot).activePaths
 }
 
 /// THE PIN SWEEP LAW, applied to arranged copies (mirrors
@@ -683,24 +694,10 @@ func shotActiveTakePathsBySegmentKey(shot: ProjectShot) -> [String: String] {
 /// (OLDER TAKE) and stays re-copyable. Footage copies are file-level and are
 /// never swept here.
 func shotStalePictureInsertionIds(shot: ProjectShot) -> [String] {
-    guard !shot.pictureInsertions.isEmpty else { return [] }
-    var retained = Set<String>()
-    for version in shot.renderVersions {
-        for clip in version.segmentClips where !clip.clipPath.isEmpty {
-            retained.insert(clip.clipPath)
-        }
-        // Copies captured off a synthetic artifact band pin the version's
-        // full video — retain it by the same law as its segment clips.
-        if !version.videoPath.trimmed.isEmpty {
-            retained.insert(version.videoPath.trimmed)
-        }
-    }
-    for clip in shot.seedSegmentClips where !clip.clipPath.isEmpty {
-        retained.insert(clip.clipPath)
-    }
-    return shot.pictureInsertions
-        .filter { !$0.isFootageSource && !$0.sourceClipPath.isEmpty && !retained.contains($0.sourceClipPath) }
-        .map(\.insertionId)
+    let catalog = ShotPictureSourceCatalog(shot: shot)
+    return shot.pictureInsertions.filter {
+        !$0.isFootageSource && !$0.sourceClipPath.isEmpty && !catalog.retains(key: $0.sourceSegmentKey, path: $0.sourceClipPath, scope: $0.sourceScope)
+    }.map(\.insertionId)
 }
 
 /// "0.5×" / "1×" / "1.5×" — one formatting law for status lines and chips.
@@ -743,7 +740,8 @@ func shotCopiedSpans(
             mediaId: mediaId,
             startSeconds: keep.start + (start - item.materialStartSeconds),
             endSeconds: keep.start + (end - item.materialStartSeconds),
-            label: band?.label ?? ""
+            label: band?.label ?? "",
+            sourceScope: assembly.sourceScopeReferences[item.segmentKey]
         ))
     }
     // Coalesce file-contiguous spans (a derived split around an existing
@@ -910,10 +908,14 @@ func shotInsertionCellRuns(_ cells: [ShotInsertionCell]) -> [[ShotInsertionCell]
 /// here by the copy seconds the window excludes.
 func shotPictureInsertionRuntimeSeconds(shot: ProjectShot) -> Double {
     guard !shot.pictureInsertions.isEmpty else { return 0 }
-    let activeTakePaths = shotActiveTakePathsBySegmentKey(shot: shot)
+    let catalog = ShotPictureSourceCatalog(shot: shot)
+    let activeTakePaths = catalog.activePaths
     var total = 0.0
     for rawInsertion in shot.pictureInsertions {
-        let insertion = rawInsertion.normalized()
+        var insertion = rawInsertion.normalized()
+        let source = catalog.resolved(key: insertion.sourceSegmentKey, path: insertion.sourceClipPath, scope: insertion.sourceScope)
+        insertion.sourceClipPath = source.path
+        if let reference = source.scope, catalog.active[insertion.sourceSegmentKey]?.scope != reference { continue }
         guard insertion.transformKind.isEmpty else { continue }
         if insertion.isFootageSource {
             total += insertion.outputSeconds

@@ -208,9 +208,9 @@ struct CharacterSheetRefineSourceNote: Codable, Hashable, Sendable {
 struct CharacterSheetRefineResponse: Codable, Hashable, Sendable {
     var schemaVersion: String = "litscenes.character_sheet_refine_response.v0.1"
     var assistantMessage: String = ""
-    /// Full replacement appearance line; empty keeps the current one.
+    /// Complete revised smart prompt; empty leaves the current prompt unchanged.
     var visualDescription: String = ""
-    /// Full replacement list; empty keeps the current props.
+    /// Defining objects or accessories present in the revised smart prompt.
     var signatureProps: [String] = []
     /// The COMPLETE directive list in force after this turn.
     var sheetDirectives: [String] = []

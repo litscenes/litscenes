@@ -18,8 +18,8 @@ enum CharacterStudyLook: String, CaseIterable, Identifiable, Sendable {
 
     var help: String {
         switch self {
-        case .asDescribed: return "Keep the face from the references and apply the written appearance"
-        case .asPhotographed: return "Same person, same look — only the framing changes"
+        case .asDescribed: return "Keep the subject identity from references and apply the smart prompt"
+        case .asPhotographed: return "Same subject and visible form — only the framing changes"
         }
     }
 
@@ -27,18 +27,18 @@ enum CharacterStudyLook: String, CaseIterable, Identifiable, Sendable {
         let images = referenceCount == 1 ? "the attached reference image" : "the attached reference images"
         switch self {
         case .asDescribed:
-            return "Use \(images) for the face and identity — this is the same person; apply the described appearance faithfully wherever it differs from the reference."
+            return "Use \(images) for subject identity; apply the described appearance faithfully wherever it differs from the reference."
         case .asPhotographed:
-            return "Match \(images) exactly — the same person with the same look, hair, and clothing — in the new framing."
+            return "Match \(images) — the same subject with the same form, materials, and distinguishing features — in the new framing."
         }
     }
 
     fileprivate func sourceDetail(name: String) -> String {
         switch self {
         case .asDescribed:
-            return "CHARACTER identity reference for \"\(name)\": this is the same person; take the face, build, and distinguishing features from this image and apply the written appearance where it differs."
+            return "CHARACTER identity reference for \"\(name)\": this is the same subject; take its form and distinguishing features from this image and apply the written appearance where it differs."
         case .asPhotographed:
-            return "CHARACTER identity reference for \"\(name)\": render this exact person as photographed — same face, hair, and clothing — in the framing the written prompt asks for."
+            return "CHARACTER identity reference for \"\(name)\": render this exact subject as photographed — same form and distinguishing features — in the framing the written prompt asks for."
         }
     }
 }

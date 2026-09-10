@@ -144,6 +144,27 @@ actor InferenceTraceStore {
         }
     }
 
+    func mergeRequestContext(traceId: String, values: [String: Any]) {
+        guard !traceId.isEmpty else { return }
+        do {
+            try ensureReady()
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(connection, "SELECT request_text_json FROM inference_calls WHERE trace_id = ?", -1, &statement, nil) == SQLITE_OK else { return }
+            guard let statement else { return }
+            defer { sqlite3_finalize(statement) }
+            bindText(traceId, to: statement, index: 1)
+            guard sqlite3_step(statement) == SQLITE_ROW else { return }
+            let existing = sqlite3_column_text(statement, 0).map { String(cString: $0) } ?? "{}"
+            var merged = (try? JSONSerialization.jsonObject(with: Data(existing.utf8))) as? [String: Any] ?? [:]
+            merged.merge(values) { _, new in new }
+            try updateTraceContext(traceId: traceId, traceGroupId: nil, parentTraceId: nil,
+                workflowName: nil, workflowStep: nil, artifactType: nil, artifactId: nil,
+                requestTextJSON: inferenceTraceJSONString(merged), responseTextJSON: nil, mediaRefsJSON: nil)
+        } catch {
+            print("[inference_trace] prompt_context_error trace_id=\(traceId) message=\(error.localizedDescription)")
+        }
+    }
+
     func enrichContext(
         traceId: String,
         traceGroupId: String? = nil,

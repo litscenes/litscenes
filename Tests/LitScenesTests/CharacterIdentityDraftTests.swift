@@ -73,7 +73,7 @@ struct CharacterIdentityDraftTests {
         #expect(withImages.contains("named exactly \"Auri\""))
         #expect(withImages.contains("Fill ONLY these parts: appearance (identity.visual_description); source_image_notes."))
         #expect(withImages.contains("  - signature props: a brass bell"))
-        #expect(withImages.contains("The attached images ARE this person."))
+        #expect(withImages.contains("The attached images show this subject."))
         #expect(withImages.contains("DISTINCT from every other listed character"))
         #expect(withImages.contains("- Senn — a broad-shouldered ferryman"))
         #expect(withImages.contains("media_id=m1"))
@@ -83,7 +83,7 @@ struct CharacterIdentityDraftTests {
         #expect(textOnly.contains("No images are attached"))
         #expect(textOnly.contains("- Nothing else is written yet."))
         #expect(textOnly.contains("source_image_notes: []."))
-        #expect(!textOnly.contains("The attached images ARE this person."))
+        #expect(!textOnly.contains("The attached images show this subject."))
     }
 
     @Test("Counter-fixture: another project's names produce the same shape with no leakage")

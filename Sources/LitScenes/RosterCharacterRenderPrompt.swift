@@ -15,9 +15,9 @@ enum RosterCharacterRenderPrompt {
 
         var label: String {
             switch self {
-            case .fullFigure: return "FULL FIGURE"
-            case .threeQuarter: return "THREE-QUARTER"
-            case .portrait: return "PORTRAIT"
+            case .fullFigure: return "ENTIRE SUBJECT"
+            case .threeQuarter: return "MEDIUM VIEW"
+            case .portrait: return "CLOSE DETAIL"
             }
         }
 
@@ -55,20 +55,20 @@ enum RosterCharacterRenderPrompt {
         fileprivate var opener: String {
             switch self {
             case .fullFigure, .threeQuarter:
-                return "Create one tall vertical character concept study."
+                return "Create one tall vertical subject study."
             case .portrait:
-                return "Create one square character portrait study."
+                return "Create one square subject detail study."
             }
         }
 
         fileprivate var framingLine: String {
             switch self {
             case .fullFigure:
-                return "Show the full figure head to toe, prominent in the frame. One figure only — no lineup, no panels."
+                return "Show the entire subject with its complete silhouette visible, prominent in the frame. One subject only — no lineup, no panels."
             case .threeQuarter:
-                return "Frame the figure from head to mid-thigh — a three-quarter view, prominent in the frame. One figure only — no lineup, no panels."
+                return "Use a medium view that emphasizes the subject’s defining form while retaining enough of its outline to recognize it. One subject only — no lineup, no panels."
             case .portrait:
-                return "Frame head and shoulders — a close portrait study, the face sharply resolved. One figure only — no lineup, no panels."
+                return "Show a close detail of the subject’s defining features, appropriate to its described form. One subject only — no lineup, no panels."
             }
         }
     }
@@ -83,7 +83,7 @@ enum RosterCharacterRenderPrompt {
             lines.append("Always with them: \(props.joined(separator: "; ")).")
         }
         lines.append(shot.framingLine)
-        lines.append("The figure stands alone as a clean isolated character study: no environment, no floor plane, no backdrop, no cast scenery — only the figure, their clothing, and what they carry.")
+        lines.append("Create a clean isolated study of the described subject and its stated defining elements. Preserve its specified form, proportions, materials, and features. Do not add anatomy, clothing, or scenery that the description does not call for.")
         lines.append("Do not render readable text; any typography stays graphic and minimal.")
         return lines.filter { !$0.isEmpty }.joined(separator: "\n")
     }

@@ -195,19 +195,19 @@ struct CharacterCastingDeskModelTests {
             name: "Milo Blink", description: "compact gecko", signatureProps: ["a token belt"],
             shot: .portrait, look: .asDescribed, referenceCount: 0
         )
-        #expect(text.hasPrefix("Create one square character portrait study."))
+        #expect(text.hasPrefix("Create one square subject detail study."))
         #expect(text.contains("The subject: \"Milo Blink\" — compact gecko"))
         #expect(!text.contains("attached reference"))
         let variant = CharacterStudyPrompt.compose(
             name: "Milo Blink", description: "compact gecko", signatureProps: [],
             shot: .threeQuarter, look: .asPhotographed, referenceCount: 2
         )
-        #expect(variant.contains("head to mid-thigh"))
-        #expect(variant.hasSuffix("Match the attached reference images exactly — the same person with the same look, hair, and clothing — in the new framing."))
+        #expect(variant.contains("medium view"))
+        #expect(variant.hasSuffix("Match the attached reference images — the same subject with the same form, materials, and distinguishing features — in the new framing."))
         let described = CharacterStudyPrompt.compose(
             name: "Milo", description: "", signatureProps: [], shot: .fullFigure, look: .asDescribed, referenceCount: 1
         )
-        #expect(described.hasSuffix("Use the attached reference image for the face and identity — this is the same person; apply the described appearance faithfully wherever it differs from the reference."))
+        #expect(described.hasSuffix("Use the attached reference image for subject identity; apply the described appearance faithfully wherever it differs from the reference."))
 
         let sheet = CharacterStudyReference(item: mediaItem("sheet", kind: MediaItemRecord.characterSheetDerivativeKind), isSheet: true)
         let source = CharacterStudyReference(item: mediaItem("a"), label: "young Milo")

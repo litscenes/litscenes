@@ -39,25 +39,25 @@ func generatePromptComposesPerShot() {
         signatureProps: ["a token belt", "a small headset", "a token belt"],
         shot: .fullFigure
     )
-    #expect(fullFigure.hasPrefix("Create one tall vertical character concept study."))
+    #expect(fullFigure.hasPrefix("Create one tall vertical subject study."))
     #expect(fullFigure.contains("The subject: \"Milo Blink\" — Adult house gecko with a compact body."))
     #expect(fullFigure.contains("Always with them: a token belt; a small headset."))
-    #expect(fullFigure.contains("Show the full figure head to toe"))
-    #expect(fullFigure.contains("stands alone as a clean isolated character study"))
+    #expect(fullFigure.contains("Show the entire subject with its complete silhouette"))
+    #expect(fullFigure.contains("clean isolated study of the described subject"))
     #expect(fullFigure.contains("Do not render readable text"))
 
     let threeQuarter = RosterCharacterRenderPrompt.prompt(
         name: "Milo Blink", description: "d", signatureProps: [], shot: .threeQuarter
     )
-    #expect(threeQuarter.hasPrefix("Create one tall vertical character concept study."))
-    #expect(threeQuarter.contains("head to mid-thigh"))
+    #expect(threeQuarter.hasPrefix("Create one tall vertical subject study."))
+    #expect(threeQuarter.contains("medium view"))
     #expect(!threeQuarter.contains("Always with them"))
 
     let portrait = RosterCharacterRenderPrompt.prompt(
         name: "Milo Blink", description: "d", signatureProps: [], shot: .portrait
     )
-    #expect(portrait.hasPrefix("Create one square character portrait study."))
-    #expect(portrait.contains("Frame head and shoulders"))
+    #expect(portrait.hasPrefix("Create one square subject detail study."))
+    #expect(portrait.contains("Show a close detail"))
 }
 
 @Test

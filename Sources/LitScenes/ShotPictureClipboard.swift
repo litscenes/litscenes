@@ -58,6 +58,7 @@ struct ShotPictureSegmentSpanRef: Codable, Hashable, Sendable {
     /// narration started mid-segment in the source).
     var narrationOffsetIntoSegmentSeconds: Double = 0
     var narrationLabel: String = ""
+    var sourceScope: ShotPictureScopeReference? = nil
 
     var seconds: Double { max(endSeconds - startSeconds, 0) }
     var isFootage: Bool { !mediaId.trimmed.isEmpty }
@@ -75,7 +76,7 @@ struct ShotPictureSegmentSpanRef: Codable, Hashable, Sendable {
         case promptOverride, renderStackRaw, seedClip
         case narrationPath, narrationSourceStartSeconds
         case narrationSliceSeconds, narrationOffsetIntoSegmentSeconds
-        case narrationLabel
+        case narrationLabel, sourceScope
     }
 
     init(
@@ -96,7 +97,8 @@ struct ShotPictureSegmentSpanRef: Codable, Hashable, Sendable {
         narrationSourceStartSeconds: Double = 0,
         narrationSliceSeconds: Double = 0,
         narrationOffsetIntoSegmentSeconds: Double = 0,
-        narrationLabel: String = ""
+        narrationLabel: String = "",
+        sourceScope: ShotPictureScopeReference? = nil
     ) {
         self.segmentKey = segmentKey
         self.clipPath = clipPath
@@ -116,6 +118,7 @@ struct ShotPictureSegmentSpanRef: Codable, Hashable, Sendable {
         self.narrationSliceSeconds = narrationSliceSeconds
         self.narrationOffsetIntoSegmentSeconds = narrationOffsetIntoSegmentSeconds
         self.narrationLabel = narrationLabel
+        self.sourceScope = sourceScope
     }
 
     init(from decoder: Decoder) throws {
@@ -138,6 +141,7 @@ struct ShotPictureSegmentSpanRef: Codable, Hashable, Sendable {
         narrationSliceSeconds = try container.decodeIfPresent(Double.self, forKey: .narrationSliceSeconds) ?? 0
         narrationOffsetIntoSegmentSeconds = try container.decodeIfPresent(Double.self, forKey: .narrationOffsetIntoSegmentSeconds) ?? 0
         narrationLabel = try container.decodeIfPresent(String.self, forKey: .narrationLabel) ?? ""
+        sourceScope = try container.decodeIfPresent(ShotPictureScopeReference.self, forKey: .sourceScope)
     }
 }
 
@@ -562,7 +566,8 @@ func mintedPictureInsertions(
                 transformKind: intent.transformKind,
                 transformSpec: intent.transformSpec,
                 loopGroupId: groupId,
-                updatedAt: now
+                updatedAt: now,
+                sourceScope: span.sourceScope
             ))
         }
     }
@@ -600,6 +605,7 @@ func shotApplyingSectionRate(
     let usable = spans.filter { $0.seconds >= ShotCutList.minimumRangeSeconds }
     guard !usable.isEmpty, abs(rate - 1) >= 0.001 else { return nil }
     var list = shot.cutList
+    let sources = ShotPictureSourceCatalog(shot: shot)
     var carriers: [ShotPictureInsertion] = []
     for span in usable {
         let cut = ShotSegmentCutRange(
@@ -609,7 +615,8 @@ func shotApplyingSectionRate(
             clipPath: span.isFootage ? "" : span.clipPath,
             startSeconds: span.startSeconds,
             endSeconds: span.endSeconds,
-            updatedAt: now
+            updatedAt: now,
+            sourceScope: span.sourceScope ?? sources.scopeReference(key: span.segmentKey, path: span.clipPath)
         )
         list.segmentCuts.append(cut)
         carriers.append(ShotPictureInsertion(
@@ -625,7 +632,8 @@ func shotApplyingSectionRate(
             // restores the stretched sound.
             muteSourceAudio: true,
             replacesRazorCutIds: [cut.id],
-            updatedAt: now
+            updatedAt: now,
+            sourceScope: cut.sourceScope
         ))
     }
     var value = shot.settingCutList(list, now: now)
@@ -675,10 +683,12 @@ func shotRecopyingSectionInsertion(
 ) -> ProjectShot? {
     guard let insertion = shot.pictureInsertions.first(where: { $0.insertionId == insertionId }),
           !activePath.trimmed.isEmpty else { return nil }
+    let scope = ShotPictureSourceCatalog(shot: shot).scopeReference(key: insertion.sourceSegmentKey, path: activePath)
     var value = shot
     for index in value.pictureInsertions.indices
         where value.pictureInsertions[index].insertionId == insertionId {
         value.pictureInsertions[index].sourceClipPath = activePath
+        value.pictureInsertions[index].sourceScope = scope
         value.pictureInsertions[index].updatedAt = now
     }
     let linked = Set(insertion.replacesRazorCutIds)
@@ -689,6 +699,7 @@ func shotRecopyingSectionInsertion(
             // the carrier onto the new take.
             if !list.segmentCuts[index].clipPath.isEmpty {
                 list.segmentCuts[index].clipPath = activePath
+                list.segmentCuts[index].sourceScope = scope
                 list.segmentCuts[index].updatedAt = now
             }
         }

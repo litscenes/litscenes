@@ -73,3 +73,18 @@
 2026-09-09T01:57:00Z Shot progress must describe a confirmed operation independently of selected immutable media; a failed retake may coexist with a playable selected clip, while queued siblings have not started.
 2026-09-09T01:57:00Z Native inspection caught an empty whole-video fallback during a first render; fallback tiles now require a recorded video path, and the isolated render diagnostic checks exact tile count while rendering.
 2026-09-09T01:57:00Z FAL trace summaries lost plain-string error leaves; retaining safe string values fixes both plain and nested error evidence without creative-text rules. Live Logs search now matches the durable payload so newly saved outcomes remain findable.
+
+2026-09-09T20:31:52Z Removing the arranged-output guard alone would allow existing Reverse, loops and OUT trims to transform or hide appended media; these edits need an explicit owning scope.
+
+2026-09-09T21:34:08Z An ending must append outside existing output edits; editable preceding-cut scopes preserve OUT, Reverse, arranged copies, audio and Looks without hiding the original segment cards.
+2026-09-09T21:34:08Z Review evidence must be immutable and cheap to pass through planning; sharing the evidence object avoids a worker-stack overflow without permitting provider provenance to change.
+2026-09-09T21:34:08Z A missing derived earlier-cut cache cannot justify playing only later clips; playback waits visibly while local composition rebuilds from retained media and edits.
+
+2026-09-10T02:45:20Z The detached image prompt protected manual edits by ignoring later identity updates; version history allows chat and manual edits to share one document without losing prior work.
+
+2026-09-10T03:09:21Z Queued generation must capture both prompt text and revision before its task starts; merging later output links must preserve newer active revisions and their original order. Local regression checks and canonical trace-reader inspection verified those boundaries.
+
+2026-09-10T04:49:46Z Speed used a razor plus a replacement copy, but freshness and retention omitted selected continuations and Earlier cut caches; one shared source catalog now governs both halves of the edit.
+2026-09-10T04:49:46Z Adjacent speed replacements must resolve by source order even after all base keeps disappear; all six edit orders of three adjoining sections preserve ordered coverage.
+2026-09-10T04:49:46Z Derived cache relocation is not a new creative edit; explicit scope references retain speed identity while a changed scope exposes available base picture and requires Re-copy.
+2026-09-10T04:49:46Z Native validation confirmed that a missing cache directory must be recreated before exporting an Earlier cut; this now succeeds without modifying source media.

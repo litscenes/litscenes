@@ -1969,6 +1969,8 @@ final class LibraryEngine: ObservableObject {
     @Published private(set) var refiningCharacterIds: Set<String> = []
     /// The CHARACTERS tab's status line.
     @Published var characterChatStatus = ""
+    /// Unsaved editor text protects local work while a chat response is in flight.
+    var characterSmartPromptDrafts: [String: String] = [:]
     var isAnimatingLensArtifact: Bool { !activeLensMotionImageIds.isEmpty }
     @Published private(set) var activeLensMotionImageIds: Set<String> = []
     var activeLensMotionImageId: String { activeLensMotionImageIds.sorted().first ?? "" }
@@ -5503,6 +5505,108 @@ final class LibraryEngine: ObservableObject {
         }
     }
 
+    @Published var outputScopePreparation: [String: ShotOutputScopePreparation] = [:]
+    private var outputScopeRefreshTasks: [String: Task<Void, Never>] = [:]
+
+    func shotForEditing(shotId: String) -> ProjectShot? {
+        guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+        guard let selection = ShotOutputEditContext.selection, selection.shotId == shotId,
+              let scope = shot.outputScope(selection.scopeId) else { return shot }
+        return scope.project(from: shot)
+    }
+
+    func scheduleOutputScopeRefresh() {
+        guard let project = currentProject else { return }
+        for shot in shotTimeline.shots where !shot.outputScopes.isEmpty {
+            guard outputScopeRefreshTasks[shot.shotId] == nil,
+                  shot.outputScopes.contains(where: { scope in
+                      scope.cache?.fingerprint != shotOutputFingerprint(scope.project(from: shot))
+                          || !FileManager.default.fileExists(atPath: scope.cache?.videoPath ?? "")
+                  }) else { continue }
+            let shotId = shot.shotId
+            outputScopeRefreshTasks[shotId] = Task { [weak self] in
+                await ShotOutputEditContext.$selection.withValue(nil) {
+                    guard let self else { return }
+                    defer { self.outputScopeRefreshTasks[shotId] = nil }
+                    self.outputScopePreparation[shotId] = .preparing
+                    do {
+                        while self.currentProject?.projectId == project.projectId,
+                              let current = self.shotTimeline.shots.first(where: { $0.shotId == shotId }),
+                              current.outputScopes.contains(where: {
+                                  $0.cache?.fingerprint != shotOutputFingerprint($0.project(from: current))
+                                      || !FileManager.default.fileExists(atPath: $0.cache?.videoPath ?? "")
+                              }) {
+                            let refreshed = try await self.preparingOutputScopes(current, project: project)
+                            guard let latest = self.shotTimeline.shots.first(where: { $0.shotId == shotId }),
+                                  shotOutputFingerprint(latest) == shotOutputFingerprint(current) else { continue }
+                            guard self.persistShotTimeline(self.shotTimeline.updatingShot(shotId: shotId, now: DateFormats.now()) {
+                                var value = $0; value.outputScopes = refreshed.outputScopes; value.reverseProxies = refreshed.reverseProxies; return value
+                            }, for: project) else { throw ScreenGraphError.capture("The updated cut could not be saved") }
+                        }
+                        self.outputScopePreparation[shotId] = nil
+                    } catch {
+                        self.outputScopePreparation[shotId] = .failed(error.localizedDescription)
+                    }
+                }
+            }
+        }
+    }
+
+    private func preparingOutputScopes(_ shot: ProjectShot, project: ProjectRecord) async throws -> ProjectShot {
+        var result = shot
+        for scope in shot.outputScopes {
+            var projected = try await preparingOutputScopes(scope.project(from: result), project: project)
+            let fingerprint = shotOutputFingerprint(projected)
+            var updated = scope.updating(projected)
+            updated.segmentKeys = shotRenderPromptPlan(shot: projected)?.segments.map(shotPlanPlacementKey) ?? scope.segmentKeys
+            if scope.cache?.fingerprint != fingerprint || !FileManager.default.fileExists(atPath: scope.cache?.videoPath ?? "") {
+                projected = try await preparingOutputReverse(projected, project: project)
+                let url = contextStore.aestheticProofDirectory(for: project)
+                    .appendingPathComponent("output_scope_\(fingerprint)_\(UUID().uuidString).mp4")
+                try ensureDirectory(url.deletingLastPathComponent())
+                if !FileManager.default.fileExists(atPath: url.path) {
+                    guard try await flattenShotOutput(shot: projected, to: url) else {
+                        throw ScreenGraphError.capture("The earlier cut has no playable video. Restore its source clips.")
+                    }
+                }
+                let map = await resolvedShotLookAssembly(shot: projected,
+                    planSegments: shotRenderPromptPlan(shot: projected)?.segments ?? [],
+                    reversed: projected.activeLookVersion?.sourceIsReversed ?? projected.cutList.isReversed, includeOutputLoop: true)
+                updated.cache = ShotOutputScopeCache(fingerprint: fingerprint, videoPath: url.path,
+                    durationSeconds: try await VideoChainMedia.videoDurationSeconds(videoURL: url),
+                    sourceOffsets: shotOutputSourceOffsets(shot: projected, assembly: map),
+                    entryOffsets: shotOutputEntryOffsets(shot: projected, assembly: map))
+                result.reverseProxies = projected.reverseProxies
+            }
+            result = result.replacingOutputScope(updated)
+        }
+        return result
+    }
+
+    private func preparingOutputReverse(_ shot: ProjectShot, project: ProjectRecord) async throws -> ProjectShot {
+        guard shot.cutList.isReversed else { return shot }
+        var result = shot
+        let plan = shotRenderPromptPlan(shot: shot)?.segments ?? []
+        let forward = shotCutAssembly(shot: shot, planSegments: plan, clipDurationsByPath: [:])
+        let ready = shot.readyReverseProxiesBySourcePath { FileManager.default.fileExists(atPath: $0) }
+        for path in Set(forward.playbackItems.map { $0.url.path }) where ready[path] == nil {
+            let key = try ReverseProxyBaker.cacheKey(sourcePath: path)
+            let url = contextStore.reverseProxyDirectory(for: project).appendingPathComponent("\(key)_review_\(UUID().uuidString).mp4")
+            let baked = try await ReverseProxyBaker.bake(sourceURL: URL(fileURLWithPath: path), outputURL: url, progress: { _ in })
+            let attributes = try FileManager.default.attributesOfItem(atPath: path)
+            var proxy = ShotReverseProxyArtifact(proxyId: key, sourcePath: path,
+                sourceByteCount: (attributes[.size] as? NSNumber)?.int64Value ?? 0,
+                sourceModifiedAt: (attributes[.modificationDate] as? Date).map(DateFormats.string) ?? "",
+                sourceDurationSeconds: baked.sourceDurationSeconds, proxyDurationSeconds: baked.proxyDurationSeconds,
+                frameCount: baked.frameCount, hasReversedAudio: baked.hasReversedAudio,
+                bakerVersion: ReverseProxyBaker.bakerVersion, status: "ready")
+            proxy.proxyPath = url.path
+            result.reverseProxies.removeAll { $0.proxyId == key }
+            result.reverseProxies.append(proxy)
+        }
+        return result
+    }
+
     // MARK: - Scene quick continuation
 
     /// Cheap, synchronous availability used to label and gate the tail menu.
@@ -5512,28 +5616,15 @@ final class LibraryEngine: ObservableObject {
         guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else {
             return ShotContinuationAvailability(lockReason: .missingTail)
         }
+        if let ending = shot.entries.first(where: { shotPendingEndingEntryIds(shot).contains($0.entryId) }) {
+            return shotEndingAvailability(shotId: shotId, entryId: ending.entryId)
+        }
         if cutHasInFlightVideoOperation(cutId: shotId) {
             return ShotContinuationAvailability(lockReason: .rendering)
         }
         guard let tailEntry = shot.entries.last(where: { !$0.isSkipped }) else {
             return ShotContinuationAvailability(lockReason: .emptyScene)
         }
-        if !shot.activeLookVersionId.isEmpty {
-            return ShotContinuationAvailability(lockReason: .activeLook)
-        }
-        if shot.cutList.shotOutSeconds != nil {
-            return ShotContinuationAvailability(lockReason: .shortenedOutput)
-        }
-        if shot.cutList.isReversed {
-            return ShotContinuationAvailability(lockReason: .reversedOutput)
-        }
-        if shot.cutList.normalized().outputLoopCount > 1 {
-            return ShotContinuationAvailability(lockReason: .loopedOutput)
-        }
-        if !shot.pictureInsertions.isEmpty {
-            return ShotContinuationAvailability(lockReason: .arrangedOutput)
-        }
-
         let outFrameStack = preferredShotContinuationOutFrameStack(shot: shot) ?? .fallback
         let outFrameAvailable = canExecuteShotRenderModel(outFrameStack.model)
             && !outFrameStack.isNarrationDriven
@@ -5702,14 +5793,101 @@ final class LibraryEngine: ObservableObject {
     /// confirmed render copies it into project proof storage; cancel leaves
     /// ProjectShot byte-for-byte unchanged.
     func prepareShotContinuationAvailability(shotId: String) async -> ShotContinuationAvailability {
-        var availability = shotContinuationAvailability(shotId: shotId)
-        guard availability.lockReason == nil, let anchor = availability.anchor else { return availability }
-        do {
-            availability.anchor = try await prepareExactContinuationAnchor(anchor)
-        } catch {
-            availability.lockReason = .missingTail
+        let availability = shotContinuationAvailability(shotId: shotId)
+        if let target = availability.targetFrame {
+            return await prepareShotContinuationRetakeAvailability(shotId: shotId, entryId: target.entryId)
         }
-        return availability
+        return await prepareContinuationOutput(availability, shotId: shotId, entryId: "", preserveInput: false)
+    }
+
+    private func prepareContinuationOutput(_ initial: ShotContinuationAvailability, shotId: String,
+                                           entryId: String, preserveInput: Bool,
+                                           sourceScope: ShotOutputScope? = nil) async -> ShotContinuationAvailability {
+        var value = initial
+        guard value.lockReason == nil, value.preparationError == nil else { return value }
+        guard let project = currentProject,
+              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return value }
+        do {
+            if preserveInput, let anchor = value.anchor {
+                let prepared = try await prepareExactContinuationAnchor(anchor)
+                value.anchor = prepared
+                let historicalFingerprint = anchor.frameFingerprint.nilIfEmpty
+                    ?? continuationFileFingerprint(path: anchor.framePath, readsBytes: true)
+                if prepared.endpointEvidence != nil, !historicalFingerprint.isEmpty,
+                   historicalFingerprint != prepared.frameFingerprint {
+                    value.endpointNotice = "This uses the verified ending of the same source video. The earlier take used a different frame; its saved input is unchanged."
+                }
+                return value
+            }
+            let prefix = sourceScope.map { $0.project(from: shot) } ?? shotOutputPrefix(shot, before: entryId)
+            let sourceFingerprint = shotOutputFingerprint(prefix)
+            var prepared = try await preparingOutputScopes(prefix, project: project)
+            prepared = try await preparingOutputReverse(prepared, project: project)
+            let plan = shotRenderPromptPlan(shot: prepared)?.segments ?? []
+            if !prepared.activeLookVersionId.isEmpty,
+               !FileManager.default.fileExists(atPath: prepared.activeLookVersion?.videoPath ?? "") {
+                throw ScreenGraphError.capture("The current Look’s video is missing. Restore it or select Original, then refresh review.")
+            }
+            for (index, segment) in plan.enumerated() {
+                if let clip = ShotSegmentPresentation(shot: prepared, segment: segment).clip,
+                   !FileManager.default.fileExists(atPath: clip.clipPath) {
+                    throw ScreenGraphError.capture("Segment \(index + 1)’s saved video is missing. Restore it before preparing this ending.")
+                }
+            }
+            let assembly = await resolvedShotLookAssembly(shot: prepared, planSegments: plan,
+                reversed: prepared.activeLookVersion?.sourceIsReversed ?? prepared.cutList.isReversed, includeOutputLoop: true)
+            if !assembly.hasPlayableClips && prepared.activeLookVersion == nil {
+                guard let anchor = value.anchor, anchor.sourceKind == "frame" || anchor.sourceKind == "footage" else {
+                    throw ScreenGraphError.capture("The current cut has no playable ending. Restore its source video, then refresh this review.")
+                }
+                value.anchor = try await prepareExactContinuationAnchor(anchor)
+                return value
+            }
+            let cacheDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("LitScenes-output-reviews", isDirectory: true)
+            try ensureDirectory(cacheDirectory)
+            let url = cacheDirectory.appendingPathComponent("\(safeIdentifier(project.projectId))_\(sourceFingerprint)_\(UUID().uuidString).mp4")
+            if !FileManager.default.fileExists(atPath: url.path) {
+                guard try await flattenShotOutput(shot: prepared, to: url) else { throw ScreenGraphError.capture("The current cut could not be prepared") }
+            }
+            let duration = try await VideoChainMedia.videoDurationSeconds(videoURL: url)
+            var scope = ShotOutputScope(shot: prepared, segmentKeys: plan.map(shotPlanPlacementKey),
+                scopeId: sourceScope?.scopeId ?? "scope_\(UUID().uuidString.lowercased())")
+            scope.cache = ShotOutputScopeCache(fingerprint: sourceFingerprint, videoPath: url.path, durationSeconds: duration,
+                sourceOffsets: shotOutputSourceOffsets(shot: prepared, assembly: assembly),
+                entryOffsets: shotOutputEntryOffsets(shot: prepared, assembly: assembly))
+            var sourceClips = prepared.playableRenderVersion.map { version in
+                version.clipPaths.compactMap { path in version.segmentClips.first { $0.clipPath == path } }
+            } ?? []
+            if sourceClips.isEmpty {
+                sourceClips = plan.compactMap { segment in
+                    if case .preserved(let saved) = segment { return saved.clip }; return nil
+                }
+            }
+            var anchor = ShotContinuationAnchor(sourceKind: "edited_output",
+                sourceEntryId: prefix.entries.last(where: { !$0.isSkipped })?.entryId ?? "",
+                sourceRenderVersionId: prefix.playableRenderVersion?.versionId ?? "",
+                tailClipPath: url.path, tailClipEndSeconds: duration,
+                tailClipFingerprint: continuationFileFingerprint(path: url.path, readsBytes: false))
+            anchor.outputReview = ShotContinuationOutputReview(fingerprint: sourceFingerprint, scope: scope, sourceClips: sourceClips)
+            value.anchor = try await prepareExactContinuationAnchor(anchor)
+            guard currentProject?.projectId == project.projectId,
+                  let live = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+                  shotOutputFingerprint(sourceScope.flatMap { live.outputScope($0.scopeId) }.map { $0.project(from: live) }
+                    ?? shotOutputPrefix(live, before: entryId)) == sourceFingerprint else {
+                throw ScreenGraphError.capture("The current cut changed during preparation. Refresh review to use its new ending.")
+            }
+            if value.targetFrame == nil, canExecuteShotRenderModel(.ltx23NativeExtend) {
+                let stack = ShotRenderStack.recipe(model: .ltx23NativeExtend,
+                    durationSeconds: ShotRenderModel.ltx23NativeExtend.defaultDuration)
+                if ltxShotExtendContextSeconds(sourceDurationSeconds: duration, extensionDurationSeconds: stack.segmentSeconds) != nil {
+                    value.nativeStack = stack
+                }
+            }
+            value.endpointNotice = "Existing edits stay with the earlier cut. The new clip is appended once after it."
+        } catch {
+            value.preparationError = safeShotContinuationError(error, phase: "preparing current cut")
+        }
+        return value
     }
 
     private func shotEndingAvailability(shotId: String, entryId: String) -> ShotContinuationAvailability {
@@ -5717,33 +5895,30 @@ final class LibraryEngine: ObservableObject {
               let entry = shot.entries.first(where: { $0.entryId == entryId }), !entry.isAIExtension, !entry.isClip else {
             return ShotContinuationAvailability(lockReason: .missingTail)
         }
-        let template = shot.continuationRecord(entryId: entryId)?.selectedTake
-            ?? shot.continuationRecord(entryId: entryId)?.sortedTakes.last
-        let frame = projectLenses.lenses.first?.heroImages.first { $0.imageId == entry.frameImageId }
+        let record = shot.continuationRecord(entryId: entryId)
+        let template = record?.selectedTake ?? record?.sortedTakes.last(where: \.isReady)
+        let frame = projectWideFrameLookup[entry.frameImageId]
         let target = template?.targetFrame ?? frame.map {
             ShotContinuationTargetFrame(entryId: entryId, imageId: $0.imageId, imagePath: $0.imagePath,
                 fingerprint: continuationFileFingerprint(path: $0.imagePath, readsBytes: true), label: $0.label)
         }
-        guard let target, !target.fingerprint.isEmpty, FileManager.default.fileExists(atPath: target.imagePath),
-              let anchor = template?.anchor ?? shotEndingSourceAnchor(shot: shot, entryId: entryId) else {
-            return ShotContinuationAvailability(lockReason: .missingTail)
-        }
-        var lock: ShotContinuationLockReason?
-        if cutHasInFlightVideoOperation(cutId: shotId) { lock = .rendering }
-        else if !shot.activeLookVersionId.isEmpty { lock = .activeLook }
-        else if shot.cutList.shotOutSeconds != nil { lock = .shortenedOutput }
-        else if shot.cutList.isReversed { lock = .reversedOutput }
-        else if shot.cutList.normalized().outputLoopCount > 1 { lock = .loopedOutput }
-        else if !shot.pictureInsertions.isEmpty { lock = .arrangedOutput }
         let planned = shotRenderPromptPlan(shotId: shotId)?.segments.compactMap { segment -> ShotSegmentPromptPlanItem? in
             if case .generated(let item) = segment, item.pair.endPlacementEntryId == entryId { return item }; return nil
         }.first
         let preferred = planned?.renderStack ?? template?.renderStack ?? shot.renderStack.upgradedForFutureRender
-        let stack = ([preferred] + ShotRenderModel.shotDefaultCases.map { ShotRenderStack.fallback.replacingModel($0) })
+        let stack = ([preferred] + ShotRenderModel.shotDefaultCases.map { preferred.replacingModel($0) })
             .first { $0.model.supportsShotEnding && canExecuteShotRenderModel($0.model) }
-        return ShotContinuationAvailability(anchor: anchor, targetFrame: target,
-            lockReason: lock ?? (stack == nil ? .missingCredential : nil), outFrameStack: stack ?? .fallback,
-            outFrameAvailable: stack != nil, suggestedPrompt: planned?.effectivePrompt.trimmed.nilIfEmpty ?? template?.prompt ?? "Continue the motion from the start frame and arrive naturally at the supplied ending frame.")
+        var value = ShotContinuationAvailability(anchor: template?.anchor ?? shotEndingSourceAnchor(shot: shot, entryId: entryId),
+            targetFrame: target, outFrameStack: stack ?? preferred, outFrameAvailable: stack != nil,
+            suggestedPrompt: planned?.effectivePrompt.trimmed.nilIfEmpty ?? template?.prompt ?? "Continue the motion from the start frame and arrive naturally at the supplied ending frame.")
+        if cutHasInFlightVideoOperation(cutId: shotId) { value.lockReason = .rendering }
+        else if let missing = shot.entries.prefix(while: { $0.entryId != entryId }).first(where: { shotPendingEndingEntryIds(shot).contains($0.entryId) }) {
+            value.precedingEndingEntryId = missing.entryId
+            value.preparationError = "Render the preceding ending first. This Frame will follow its completed video."
+        } else if target == nil || target?.fingerprint.isEmpty == true || !FileManager.default.fileExists(atPath: target?.imagePath ?? "") {
+            value.preparationError = "The selected ending Frame is missing. Restore or replace that Frame, then refresh this review."
+        } else if stack == nil { value.lockReason = .missingCredential }
+        return value
     }
 
     /// The same non-mutating confirmation payload for a new take on an
@@ -5764,21 +5939,6 @@ final class LibraryEngine: ObservableObject {
               let record = shot.continuationRecord(entryId: entryId),
               let take = record.selectedTake ?? record.sortedTakes.last else {
             return ShotContinuationAvailability(lockReason: .missingTail)
-        }
-        if !shot.activeLookVersionId.isEmpty {
-            return ShotContinuationAvailability(lockReason: .activeLook)
-        }
-        if shot.cutList.shotOutSeconds != nil {
-            return ShotContinuationAvailability(lockReason: .shortenedOutput)
-        }
-        if shot.cutList.isReversed {
-            return ShotContinuationAvailability(lockReason: .reversedOutput)
-        }
-        if shot.cutList.normalized().outputLoopCount > 1 {
-            return ShotContinuationAvailability(lockReason: .loopedOutput)
-        }
-        if !shot.pictureInsertions.isEmpty {
-            return ShotContinuationAvailability(lockReason: .arrangedOutput)
         }
         let resolvedAnchor = savedContinuationSourceAnchor(
             shot: shot,
@@ -5834,28 +5994,12 @@ final class LibraryEngine: ObservableObject {
         )
     }
 
-    func prepareShotContinuationRetakeAvailability(
-        shotId: String,
-        entryId: String
-    ) async -> ShotContinuationAvailability {
-        var availability = shotContinuationRetakeAvailability(shotId: shotId, entryId: entryId)
-        guard availability.lockReason == nil, let anchor = availability.anchor else { return availability }
-        do {
-            let prepared = try await prepareExactContinuationAnchor(anchor)
-            availability.anchor = prepared
-            if prepared.endpointEvidence != nil,
-               let record = shotTimeline.shots.first(where: { $0.shotId == shotId })?.continuationRecord(entryId: entryId),
-               let previous = record.selectedTake ?? record.sortedTakes.last {
-                let historicalFingerprint = previous.anchor.frameFingerprint.nilIfEmpty
-                    ?? continuationFileFingerprint(path: previous.anchor.framePath, readsBytes: true)
-                if !historicalFingerprint.isEmpty, historicalFingerprint != prepared.frameFingerprint {
-                    availability.endpointNotice = "This uses the verified ending of the same source video. The earlier take used a different frame; its saved input is unchanged."
-                }
-            }
-        } catch {
-            availability.lockReason = .missingTail
-        }
-        return availability
+    func prepareShotContinuationRetakeAvailability(shotId: String, entryId: String) async -> ShotContinuationAvailability {
+        let value = shotContinuationRetakeAvailability(shotId: shotId, entryId: entryId)
+        let shot = shotTimeline.shots.first { $0.shotId == shotId }
+        let record = shot?.continuationRecord(entryId: entryId)
+        let preserveInput = record?.selectedTake != nil || record?.sortedTakes.contains(where: \.isReady) == true
+        return await prepareContinuationOutput(value, shotId: shotId, entryId: entryId, preserveInput: preserveInput)
     }
 
     private func preferredShotContinuationOutFrameStack(shot: ProjectShot) -> ShotRenderStack? {
@@ -6026,6 +6170,9 @@ final class LibraryEngine: ObservableObject {
     /// Confirmation creates one logical cell and durable attempt before preflight.
     @discardableResult
     func startShotContinuation(shotId: String, request: ShotContinuationRequest) async -> ShotContinuationOutcome {
+        if let target = request.targetFrame {
+            return await startShotContinuationRetake(shotId: shotId, entryId: target.entryId, request: request)
+        }
         return await WorkflowCoordinator.shared.run(project: currentProject, workflow: "scene_extension", artifactType: "shot", artifactId: shotId, lane: .video, recipeJSON: workflowRecipe(request), failure: .failed(message: "The queued request was canceled or could not be saved")) { [self] in
             guard let project = currentProject,
                   let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
@@ -6035,7 +6182,8 @@ final class LibraryEngine: ObservableObject {
                 return .failed(message: aestheticStatus)
             }
             let availability = shotContinuationAvailability(shotId: shotId)
-            let matches = availability.anchor.map { continuationSourceMatches($0, request.preparedAnchor) } == true
+            let matches = request.preparedAnchor.outputReview.map { shotReviewedOutputMatches($0, shot: shot, entryId: "") }
+                ?? (availability.anchor.map { continuationSourceMatches($0, request.preparedAnchor) } == true)
             let preflightError = availability.lockReason?.message ?? (matches ? nil : "The Scene tail changed — reopen Extend Scene")
             let now = DateFormats.now()
             let entryId = "entry_\(UUID().uuidString.lowercased())"
@@ -6083,7 +6231,8 @@ final class LibraryEngine: ObservableObject {
         var preflightError: String?
         if existing == nil {
             let availability = shotEndingAvailability(shotId: shotId, entryId: entryId)
-            let sourceMatches = availability.anchor.map { continuationSourceMatches($0, request.preparedAnchor) } == true
+            let sourceMatches = request.preparedAnchor.outputReview.map { shotReviewedOutputMatches($0, shot: shot, entryId: entryId) }
+                ?? (availability.anchor.map { continuationSourceMatches($0, request.preparedAnchor) } == true)
             let targetMatches = availability.targetFrame?.fingerprint == request.targetFrame?.fingerprint
             preflightError = availability.lockReason?.message ?? (sourceMatches && targetMatches ? nil : "The ending inputs changed — reopen Render Ending")
         }
@@ -6145,6 +6294,7 @@ final class LibraryEngine: ObservableObject {
         let work = directory.appendingPathComponent("continuation_\(safeIdentifier(takeId))", isDirectory: true)
         let profile = VideoOutputProfile.standard(.landscape16x9, fitPolicy: .fitWithBlurFill)
         var ownsOperation = false
+        var selectedCompletedTake = false
         defer { if ownsOperation { activeShotRenderIds.remove(shotId) } }
 
         @discardableResult
@@ -6163,10 +6313,24 @@ final class LibraryEngine: ObservableObject {
             if take.segmentClip != nil || !take.providerOutputPath.isEmpty {
                 try? JSONCoding.encoder.encode(take).write(to: work.appendingPathComponent("take-recovery.json"), options: .atomic)
             }
-            record = record.upsertingTake(take, select: selected, now: take.updatedAt)
-            if selected, take.isReady { record.rebuildPending = false }
+            let live = document.shots.first { $0.shotId == shotId }
+            let matchesReview = take.anchor.outputReview.map { review in
+                live.map { shotReviewedOutputMatches(review, shot: $0, entryId: entryId) } == true
+            } ?? true
+            let shouldSelect = selected && matchesReview
+            if selected && take.isReady { selectedCompletedTake = shouldSelect }
+            if selected && !matchesReview {
+                take.errorMessage = "Take ready. The cut changed while rendering; preview this take before choosing how to use it."
+            }
+            if shouldSelect, let review = take.anchor.outputReview, record.outputScopeId == nil { record.outputScopeId = review.scope.scopeId }
+            record = record.upsertingTake(take, select: shouldSelect, now: take.updatedAt)
+            if shouldSelect, take.isReady { record.rebuildPending = false }
             return persistShotTimeline(document.updatingShot(shotId: shotId, now: take.updatedAt) {
-                $0.upsertingContinuationRecord(record, now: take.updatedAt)
+                var value = $0.upsertingContinuationRecord(record, now: take.updatedAt)
+                if shouldSelect, take.isReady, let review = take.anchor.outputReview {
+                    value = value.installingReviewedOutput(review, entryId: entryId)
+                }
+                return value
             }, for: project)
         }
         func event(_ status: String, message: String = "") async {
@@ -6204,6 +6368,26 @@ final class LibraryEngine: ObservableObject {
                 }
             }
             try ensureDirectory(work)
+            if let review = take.anchor.outputReview {
+                guard let live = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+                      shotReviewedOutputMatches(review, shot: live, entryId: entryId)
+                        || live.outputScope(live.continuationRecord(entryId: entryId)?.outputScopeId ?? review.scope.scopeId) != nil else {
+                    throw ScreenGraphError.capture("The reviewed cut changed. Refresh review before rendering.")
+                }
+                let verified = try await prepareExactContinuationAnchor(take.anchor)
+                try ShotVideoEndpoint.validateReviewed(take.anchor, prepared: verified)
+                let saved = work.appendingPathComponent("reviewed-cut.mp4")
+                try FileManager.default.copyItem(at: URL(fileURLWithPath: take.anchor.tailClipPath), to: saved)
+                take.anchor.tailClipPath = saved.path
+                take.anchor.tailClipFingerprint = continuationFileFingerprint(path: saved.path, readsBytes: false)
+                var scope = review.scope
+                scope.cache?.videoPath = saved.path
+                take.anchor.outputReview = ShotContinuationOutputReview(fingerprint: review.fingerprint,
+                    scope: scope, sourceClips: review.sourceClips)
+                take.anchor.endpointEvidence = nil
+                take.anchor.anchorFingerprint = ""
+                take.anchor = try await prepareExactContinuationAnchor(take.anchor)
+            }
             var targetEndURL: URL?
             if var target = take.targetFrame {
                 let saved = work.appendingPathComponent("target.png")
@@ -6313,6 +6497,12 @@ final class LibraryEngine: ObservableObject {
             guard !isGenerationPaused else { throw ScreenGraphError.capture("Generation is paused — resume to continue") }
             guard currentProject?.projectId == project.projectId else { throw CancellationError() }
             guard persist() else { throw ScreenGraphError.capture("Could not save the continuation attempt; no provider request was sent") }
+            if let review = take.anchor.outputReview,
+               let live = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+               live.outputScope(live.continuationRecord(entryId: entryId)?.outputScopeId ?? review.scope.scopeId) == nil,
+               !shotReviewedOutputMatches(review, shot: live, entryId: entryId) {
+                throw ScreenGraphError.capture("The cut changed before submission. Refresh review; no provider request was sent.")
+            }
             let submissionAnchor = try await prepareExactContinuationAnchor(take.anchor)
             try ShotVideoEndpoint.validateReviewed(take.anchor, prepared: submissionAnchor)
             phase = "provider"
@@ -6357,10 +6547,10 @@ final class LibraryEngine: ObservableObject {
             guard persist(selectOnSuccess) else { throw ScreenGraphError.capture("Video was saved, but its timeline could not be saved. Use local repair after restoring project access") }
             await event("completed", message: take.errorMessage)
             if currentProject?.projectId == project.projectId {
-                aestheticStatus = selectOnSuccess ? "Continuation ready — Play to review the Scene" : "Take ready — Preview or Use it from its thumbnail"
+                aestheticStatus = selectedCompletedTake ? "Continuation ready — Play to review the Scene" : "Take ready — Preview or Use it from its thumbnail"
             }
             await WorkflowCoordinator.shared.segmentStage(.saved, key: progress.placementKey)
-            await WorkflowCoordinator.shared.outcome("Take \(take.takeNumber) saved" + (selectOnSuccess ? " · In use" : " · Review Takes to use it"))
+            await WorkflowCoordinator.shared.outcome("Take \(take.takeNumber) saved" + (selectedCompletedTake ? " · In use" : " · Review Takes to use it"))
             return .ready(takeId: takeId)
         } catch {
             let canceled = Task.isCancelled || isCancellationLikeError(error)
@@ -6523,15 +6713,12 @@ final class LibraryEngine: ObservableObject {
             while let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
                   let entryId = shotContinuationStaleEntryIds(shot).first {
                 guard let record = shot.continuationRecord(entryId: entryId),
-                      let template = record.selectedTake ?? record.readyTakes.last,
-                      let sourceRecord = shot.continuationRecord(entryId: record.sourceEntryId),
-                      let sourceTake = sourceRecord.selectedTake,
-                      let candidate = continuationAnchor(following: sourceTake, sourceEntryId: record.sourceEntryId) else {
+                      let template = record.selectedTake ?? record.readyTakes.last else {
                     return failShotVideoOperation("Rechain paused — the next continuation has no ready upstream take")
                 }
                 let anchor: ShotContinuationAnchor
                 do {
-                    anchor = try await prepareExactContinuationAnchor(candidate)
+                    anchor = try await refreshedContinuationAnchor(shot: shot, record: record, take: template)
                 } catch {
                     aestheticStatus = "Rechain paused — the next saved endpoint is missing"
                     lastError = error.localizedDescription
@@ -6561,6 +6748,26 @@ final class LibraryEngine: ObservableObject {
             aestheticStatus = "Continuation chain ready — Play to review it"
             return true
         }
+    }
+
+    private func refreshedContinuationAnchor(shot: ProjectShot, record: ShotContinuationRecord,
+                                             take: ShotContinuationTake) async throws -> ShotContinuationAnchor {
+        if let review = take.anchor.outputReview {
+            let scope = shot.outputScope(record.outputScopeId ?? review.scope.scopeId)
+            let initial = ShotContinuationAvailability(anchor: take.anchor, targetFrame: take.targetFrame,
+                outFrameStack: take.renderStack, outFrameAvailable: true, suggestedPrompt: take.prompt)
+            let prepared = await prepareContinuationOutput(initial, shotId: shot.shotId, entryId: record.entryId,
+                preserveInput: false, sourceScope: scope)
+            guard prepared.canContinue, let anchor = prepared.anchor else {
+                throw ScreenGraphError.capture(prepared.preparationError ?? prepared.lockReason?.message ?? "The edited source cut is unavailable")
+            }
+            return anchor
+        }
+        let candidate = shot.continuationRecord(entryId: record.sourceEntryId)?.selectedTake.flatMap {
+            continuationAnchor(following: $0, sourceEntryId: record.sourceEntryId)
+        } ?? savedContinuationSourceAnchor(shot: shot, record: record, take: take)
+        guard let candidate else { throw ScreenGraphError.capture("The saved continuation source is missing") }
+        return try await prepareExactContinuationAnchor(candidate)
     }
 
     /// Explicit full-chain operation used by the replacement for RE-RENDER
@@ -6606,27 +6813,11 @@ final class LibraryEngine: ObservableObject {
                       let template = record.selectedTake ?? record.readyTakes.last else {
                     return failShotVideoOperation("Rebuild paused — a continuation has no reusable recipe")
                 }
-                let candidate: ShotContinuationAnchor
-                if let sourceRecord = shot.continuationRecord(entryId: record.sourceEntryId),
-                   let sourceTake = sourceRecord.selectedTake,
-                   let following = continuationAnchor(following: sourceTake, sourceEntryId: record.sourceEntryId) {
-                    candidate = following
-                } else if let saved = savedContinuationSourceAnchor(
-                    shot: shot,
-                    record: record,
-                    take: template
-                ) {
-                    candidate = saved
-                } else {
-                    return failShotVideoOperation("Rebuild paused — the saved continuation source is missing")
-                }
                 let anchor: ShotContinuationAnchor
                 do {
-                    anchor = try await prepareExactContinuationAnchor(candidate)
+                    anchor = try await refreshedContinuationAnchor(shot: shot, record: record, take: template)
                 } catch {
-                    aestheticStatus = "Rebuild paused — a saved endpoint is missing"
-                    lastError = error.localizedDescription
-                    return false
+                    return failShotVideoOperation("Rebuild paused — \(error.localizedDescription)")
                 }
                 let liveRecipe: ShotSegmentPromptPlanItem? = projectLenses.lenses.first.flatMap { lens in
                     let frameLookup = Dictionary(
@@ -6772,19 +6963,51 @@ final class LibraryEngine: ObservableObject {
             resolution: .selectCurrent)
     }
 
-    func useShotContinuationTake(shotId: String, impact: ShotContinuationBranchImpact) {
+    @discardableResult
+    func useShotContinuationTake(shotId: String, impact: ShotContinuationBranchImpact) async -> ShotPictureStateEdit? {
         guard let project = currentProject,
               let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
               let take = shot.continuationTake(entryId: impact.requestedEntryId, takeId: impact.requestedTakeId),
               let clip = take.segmentClip, FileManager.default.fileExists(atPath: clip.clipPath) else {
             aestheticStatus = "This take's video is missing — restore it before using it"
-            return
+            return nil
+        }
+        let entryId = impact.requestedEntryId
+        var grouping: ShotContinuationOutputReview?
+        if let review = take.anchor.outputReview,
+           shot.outputScope(shot.continuationRecord(entryId: entryId)?.outputScopeId ?? review.scope.scopeId) == nil {
+            if shotReviewedOutputMatches(review, shot: shot, entryId: entryId) { grouping = review }
+            else {
+                aestheticStatus = "Preparing current cut to use this take · No generation charge"
+                let initial = ShotContinuationAvailability(anchor: take.anchor, targetFrame: take.targetFrame,
+                    outFrameStack: take.renderStack, outFrameAvailable: true, suggestedPrompt: take.prompt)
+                let current = await prepareContinuationOutput(initial, shotId: shotId, entryId: entryId, preserveInput: false)
+                guard current.canContinue, let prepared = current.anchor?.outputReview else {
+                    aestheticStatus = current.preparationError ?? "The current cut could not be preserved"
+                    return nil
+                }
+                grouping = prepared
+            }
+        }
+        guard currentProject?.projectId == project.projectId,
+              let current = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+        if let grouping, !shotReviewedOutputMatches(grouping, shot: current, entryId: entryId) {
+            aestheticStatus = "The cut changed during preparation. Choose Use again to preserve the latest cut."
+            return nil
         }
         let now = DateFormats.now()
-        let selected = shot.selectingContinuationTake(entryId: impact.requestedEntryId, takeId: impact.requestedTakeId, now: now)
-        persistShotTimeline(shotTimeline.updatingShot(shotId: shotId, now: now) { _ in selected }, for: project)
+        var selected = current.selectingContinuationTake(entryId: entryId, takeId: impact.requestedTakeId, now: now)
+        if let grouping, var record = selected.continuationRecord(entryId: entryId) {
+            // This is a local playback group, not a rewrite of the take's
+            // provider anchor; a different current cut retains a stale warning.
+            record.outputScopeId = grouping.scope.scopeId
+            selected = selected.upsertingContinuationRecord(record, now: now)
+                .installingReviewedOutput(grouping, entryId: entryId)
+        }
+        guard persistShotTimeline(shotTimeline.updatingShot(shotId: shotId, now: now) { _ in selected }, for: project) else { return nil }
         let stale = shotContinuationStaleEntryIds(selected)
-        aestheticStatus = stale.isEmpty ? "Take selected — Play to review it" : "Take selected — later clips remain playable with stale-anchor warnings"
+        aestheticStatus = stale.isEmpty ? "Take selected — Play to review it" : "Take selected — clips remain playable with stale-anchor warnings"
+        return ShotPictureStateEdit(before: current.pictureStateSnapshot(), after: selected.pictureStateSnapshot())
     }
 
     /// Prepares exactly one open-ended extension beside a placed clip and
@@ -9021,6 +9244,12 @@ final class LibraryEngine: ObservableObject {
                     return value
                 }
             }
+            reconciled.characters = reconciled.characters.map { character in
+                var value = character
+                value.reconcileSmartPromptHistory(with: projectCharacters.projectId == project.projectId
+                    ? projectCharacters.character(withId: character.characterId) : nil)
+                return value
+            }
             var normalized = reconciled.normalized()
             if normalized.projectId.isEmpty {
                 normalized.projectId = project.projectId
@@ -9169,9 +9398,9 @@ final class LibraryEngine: ObservableObject {
         return CharacterSheetPrompt.Fill(
             name: character.name,
             visualDescription: character.descriptionPrompt,
-            signatureProps: character.signatureProps,
-            storyIdentity: story,
-            sheetDirectives: character.sheetDirectives,
+            signatureProps: character.promptHistory == nil ? character.signatureProps : [],
+            storyIdentity: character.promptHistory == nil ? story : nil,
+            sheetDirectives: character.promptHistory == nil ? character.sheetDirectives : [],
             attachesReferences: attachesReferences
         )
     }
@@ -9183,10 +9412,10 @@ final class LibraryEngine: ObservableObject {
             model: stack.isFAL ? stack.reframePromptModel : stack.model
         )
         let attaches = !characterSheetRenderPicks(for: character, stack: stack).isEmpty
-        return CharacterSheetPrompt.render(
-            template: template.body,
-            fill: characterSheetFill(for: character, attachesReferences: attaches)
-        )
+        let fill = characterSheetFill(for: character, attachesReferences: attaches)
+        return character.promptHistory == nil
+            ? CharacterSheetPrompt.render(template: template.body, fill: fill)
+            : CharacterSheetPrompt.renderShared(template: template.body, fill: fill)
     }
 
     /// Composed text, hand edit, drift, and currency in one place.
@@ -9329,6 +9558,36 @@ final class LibraryEngine: ObservableObject {
         return updateCharacter(characterId: characterId, status: status ?? "\(character.name)'s sheet prompt follows the identity again") {
             $0.sheetPromptOverride = nil
             $0.sheetPromptOverrideBaseHash = ""
+        }
+    }
+
+    /// Entering this workspace adopts one shared subject prompt, retaining old text.
+    @discardableResult
+    func adoptCharacterSmartPrompt(characterId: String) -> Bool {
+        guard let character = projectCharacters.character(withId: characterId) else { return false }
+        guard character.promptHistory == nil else { return true }
+        return updateCharacter(characterId: characterId, status: "Smart prompt ready") { $0.adoptSmartPrompt() }
+    }
+
+    @discardableResult
+    func saveCharacterSmartPrompt(characterId: String, prompt: String) -> Bool {
+        guard let character = projectCharacters.character(withId: characterId) else { return false }
+        if character.promptHistory != nil, character.descriptionPrompt == prompt.trimmed {
+            characterSmartPromptDrafts.removeValue(forKey: characterId)
+            return true
+        }
+        let saved = updateCharacter(characterId: characterId, status: "Smart prompt saved") {
+            $0.reviseSmartPrompt(prompt, source: "manual")
+        }
+        if saved { characterSmartPromptDrafts.removeValue(forKey: characterId) }
+        return saved
+    }
+
+    @discardableResult
+    func restoreCharacterSmartPrompt(characterId: String, versionId: String) -> Bool {
+        guard projectCharacters.character(withId: characterId)?.promptHistory?.versions.contains(where: { $0.id == versionId }) == true else { return false }
+        return updateCharacter(characterId: characterId, status: "Prompt restored as a new version") {
+            $0.restoreSmartPrompt(versionId: versionId)
         }
     }
 
@@ -9803,6 +10062,7 @@ final class LibraryEngine: ObservableObject {
 
     /// Whether a render for this character drafts the identity first.
     func characterIdentityDraftDecision(for character: ProjectCharacter) -> CharacterIdentityDraftDecision {
+        if character.promptHistory != nil, !character.descriptionPrompt.trimmed.isEmpty { return .skip }
         let identity = goalCastMember(forCharacterId: character.characterId, name: character.name)?.activeIdentity
         let hasCastIdentity = identity.map {
             !$0.essence.isEmpty || !$0.publicFunction.isEmpty || !$0.desire.isEmpty || !$0.signature.isEmpty
@@ -10243,7 +10503,8 @@ final class LibraryEngine: ObservableObject {
         characterId: String,
         text rawText: String,
         mediaIds rawMediaIds: [String] = [],
-        stack: RenderStack? = nil
+        stack: RenderStack? = nil,
+        characterSnapshot: ProjectCharacter? = nil
     ) async {
         guard let project = currentProject else {
             characterChatStatus = "Create or select a project first"
@@ -10260,6 +10521,7 @@ final class LibraryEngine: ObservableObject {
             return
         }
         guard !refiningCharacterIds.contains(characterId) else { return }
+        guard adoptCharacterSmartPrompt(characterId: characterId) else { return }
         refiningCharacterIds.insert(characterId)
         defer { refiningCharacterIds.remove(characterId) }
         lastError = ""
@@ -10282,7 +10544,7 @@ final class LibraryEngine: ObservableObject {
         let renderStack = stack ?? resolvedCharacterSheetStack(for: character)
         do {
             let client = try OpenAIClient.fromEnvironment()
-            let current = projectCharacters.character(withId: characterId) ?? character
+            let current = characterSnapshot ?? projectCharacters.character(withId: characterId) ?? character
             let activeSheet = activeCharacterSheetItem(for: characterId)
             let promptState = renderStack.map { characterSheetPromptState(for: current, stack: $0) }
             let renderedPrompt = promptState?.effective ?? ""
@@ -10305,9 +10567,9 @@ final class LibraryEngine: ObservableObject {
                 projectName: project.name,
                 characterName: current.name,
                 visualDescription: current.descriptionPrompt,
-                signatureProps: current.signatureProps,
+                signatureProps: current.promptHistory == nil ? current.signatureProps : [],
                 storyIdentityLines: identityLines,
-                currentDirectives: current.sheetDirectives,
+                currentDirectives: current.promptHistory == nil ? current.sheetDirectives : [],
                 renderedSheetPrompt: renderedPrompt,
                 sourceImageLines: selectedGoalMediaSummary(mediaIds: sourceIds),
                 hasActiveSheet: activeSheet != nil,
@@ -10315,6 +10577,7 @@ final class LibraryEngine: ObservableObject {
                 userMessage: submittedText,
                 generatedAt: DateFormats.now(),
                 promptIsHandEdited: promptState?.isHandEdited ?? false,
+                smartPromptVersionId: current.promptHistory?.activeVersionId ?? "",
                 characterId: characterId,
                 runId: userTurn.turnId
             )
@@ -10322,27 +10585,47 @@ final class LibraryEngine: ObservableObject {
             guard currentProject?.projectId == project.projectId else { return }
             let response = result.response
 
-            var changed = false
             let description = response.visualDescription.trimmed
-            if !description.isEmpty, description != current.descriptionPrompt {
-                changed = renameCharacter(characterId: characterId, name: current.name, descriptionPrompt: description) || changed
-            }
-            let props = uniqueNonEmpty(response.signatureProps)
-            if !props.isEmpty, props != current.signatureProps {
-                changed = setCharacterSignatureProps(characterId: characterId, props) || changed
-            }
-            let directives = uniqueNonEmpty(response.sheetDirectives)
-            if directives != current.sheetDirectives {
-                changed = setCharacterSheetDirectives(characterId: characterId, directives) || changed
-            }
-            for note in response.sourceImageNotes where !note.label.trimmed.isEmpty {
-                guard let latest = projectCharacters.character(withId: characterId),
-                      latest.referenceMediaIds.contains(note.mediaId),
-                      (latest.referenceLabels[note.mediaId] ?? "").isEmpty else { continue }
-                _ = setCharacterReferenceLabel(characterId: characterId, mediaId: note.mediaId, label: note.label.trimmed)
+            var changed = false
+            var applied = true
+            if !description.isEmpty {
+                let saved = updateCharacter(characterId: characterId, status: "Smart prompt revised") { latest in
+                    if let draft = characterSmartPromptDrafts[characterId], draft.trimmed != latest.descriptionPrompt.trimmed {
+                        latest.reviseSmartPrompt(draft, source: "manual")
+                    }
+                    let before = latest.descriptionPrompt
+                    applied = latest.reviseSmartPrompt(
+                        description, source: "chat", summary: response.changeSummary,
+                        baseVersionId: current.promptHistory?.activeVersionId ?? "", chatTurnId: userTurn.turnId
+                    )
+                    changed = applied && before != latest.descriptionPrompt
+                    if applied {
+                        latest.signatureProps = uniqueNonEmpty(response.signatureProps)
+                        latest.sheetDirectives = uniqueNonEmpty(response.sheetDirectives)
+                    }
+                    for note in response.sourceImageNotes where !note.label.trimmed.isEmpty {
+                        if latest.referenceMediaIds.contains(note.mediaId), (latest.referenceLabels[note.mediaId] ?? "").isEmpty {
+                            latest.referenceLabels[note.mediaId] = note.label.trimmed
+                        }
+                    }
+                }
+                guard saved else {
+                    characterChatStatus = "Could not save the prompt revision. Your current prompt is unchanged."
+                    return
+                }
+                if applied { characterSmartPromptDrafts.removeValue(forKey: characterId) }
+                let resultHistory = projectCharacters.character(withId: characterId)?.promptHistory
+                if let revision = applied ? resultHistory?.activeVersion : resultHistory?.versions.last {
+                    await InferenceTraceStore.shared.mergeRequestContext(traceId: result.traceId, values: [
+                        "smart_prompt_result_version_id": revision.id,
+                        "smart_prompt_result_applied": applied
+                    ])
+                }
             }
 
-            var reply = response.assistantMessage.trimmed.isEmpty ? "Noted." : response.assistantMessage.trimmed
+            var reply = applied
+                ? (response.assistantMessage.trimmed.isEmpty ? "Smart prompt updated." : response.assistantMessage.trimmed)
+                : "I saved a proposed prompt revision in History. Your newer edits remain current."
             if !response.changeSummary.trimmed.isEmpty {
                 reply += "\n\n" + response.changeSummary.trimmed
             }
@@ -10361,8 +10644,8 @@ final class LibraryEngine: ObservableObject {
                 isBusy: characterImageJobIsBusy(characterId),
                 hasReferences: latest.map { hasUsableCharacterSheetReference(for: $0) } ?? false
             )
-            characterChatStatus = decision.status
-            guard case .render = decision, let renderStack else { return }
+            characterChatStatus = applied ? decision.status : "New chat revision in prompt History; your edits are current."
+            guard applied, case .render = decision, let renderStack else { return }
             // The conversation turn is done; the render is its own paid gesture.
             refiningCharacterIds.remove(characterId)
             _ = await startCharacterSheetRender(characterId: characterId, stack: renderStack)
@@ -12043,17 +12326,18 @@ final class LibraryEngine: ObservableObject {
         prompt rawPrompt: String,
         shot: RosterCharacterRenderPrompt.Shot,
         stack: RenderStack,
-        references: CharacterStudyReferences? = nil
+        references: CharacterStudyReferences? = nil,
+        characterSnapshot: ProjectCharacter? = nil
     ) async -> Bool {
         guard !characterImageJobIsBusy(characterId) else { return false }
         let submittedProjectId = currentProject?.projectId
-        let submittedCharacter = projectCharacters.character(withId: characterId)
+        let submittedCharacter = characterSnapshot ?? projectCharacters.character(withId: characterId)
         let submittedPlan = submittedCharacter.flatMap { character in
             references.map { characterStudyPlan(for: character, references: $0, stack: stack) }
         }
         pendingCharacterImageIds.insert(characterId)
         defer { pendingCharacterImageIds.remove(characterId) }
-        return await WorkflowCoordinator.shared.run(project: currentProject, workflow: "character_study", artifactType: "character", artifactId: characterId, lane: .image, recipeJSON: workflowRecipe(["characterId": String(describing: characterId), "rawPrompt": String(describing: rawPrompt)]), failure: false) { [self] in
+        return await WorkflowCoordinator.shared.run(project: currentProject, workflow: "character_study", artifactType: "character", artifactId: characterId, lane: .image, recipeJSON: workflowRecipe(["characterId": characterId, "rawPrompt": rawPrompt, "smart_prompt": submittedCharacter?.descriptionPrompt ?? "", "smart_prompt_version_id": submittedCharacter?.promptHistory?.activeVersionId ?? ""]), failure: false) { [self] in
             guard let project = currentProject else {
                 aestheticStatus = "Create or select a project first"
                 return false
@@ -12189,7 +12473,7 @@ final class LibraryEngine: ObservableObject {
                 promptImageReferenceMode: !attachments.isEmpty,
                 sourceImageCount: attachments.count,
                 usesCompositeImage: usesCompositeImage,
-                skipPromptEnrichment: false,
+                skipPromptEnrichment: character.promptHistory != nil,
                 prompt: trimmedPrompt,
                 sourcePrompt: trimmedPrompt,
                 negativePrompt: "",
@@ -12240,6 +12524,12 @@ final class LibraryEngine: ObservableObject {
                     civitaiImageProvider: civitaiImageProvider,
                     falImageClient: falImageClient
                 )
+                await InferenceTraceStore.shared.mergeRequestContext(traceId: outcome.traceId, values: [
+                    "smart_prompt": character.descriptionPrompt,
+                    "character_id": characterId,
+                    "smart_prompt_version_id": character.promptHistory?.activeVersionId ?? "",
+                    "composed_prompt": job.prompt
+                ])
                 guard currentProject?.projectId == project.projectId else { return false }
                 // This lane bypasses the frame funnel, so its ledger row lives here —
                 // unpriced-never-$0, the recipe's provider price note rides along.
@@ -12285,7 +12575,7 @@ final class LibraryEngine: ObservableObject {
                         fallbackExtension: outputExtension
                     ),
                     tags: ["generated", "roster-reference", "character-render"],
-                    notes: "Generated \(character.name) reference from the roster.",
+                    notes: "Generated from smart prompt \(character.promptHistory?.activeOrdinal.map { "v\($0)" } ?? "unversioned").",
                     rejectedByDefault: true
                 ) else {
                     aestheticStatus = "Could not archive \(character.name)'s reference render"
@@ -12297,6 +12587,10 @@ final class LibraryEngine: ObservableObject {
                     characterId: characterId,
                     mediaIds: current.referenceMediaIds + [item.mediaId]
                 ) else { return false }
+                guard updateCharacter(characterId: characterId, status: "Image saved", mutate: {
+                    $0.promptHistory?.mediaVersionIds[item.mediaId] = character.promptHistory?.activeVersionId
+                }) else { return false }
+                await InferenceTraceStore.shared.enrichContext(traceId: outcome.traceId, artifactType: "media", artifactId: item.mediaId)
                 aestheticStatus = "\(character.name) reference ready — added to their reference pool"
                 characterRenderNotes.removeValue(forKey: characterId)
                 return true
@@ -12316,10 +12610,10 @@ final class LibraryEngine: ObservableObject {
     /// images. The result lands as character-sheet media and becomes the identity
     /// anchor for every later render of that character.
     @discardableResult
-    func startCharacterSheetRender(characterId: String, stack requestedStack: RenderStack? = nil) async -> Bool {
+    func startCharacterSheetRender(characterId: String, stack requestedStack: RenderStack? = nil, characterSnapshot: ProjectCharacter? = nil) async -> Bool {
         guard !characterImageJobIsBusy(characterId) else { return false }
         let submittedProjectId = currentProject?.projectId
-        let submittedCharacter = projectCharacters.character(withId: characterId)
+        let submittedCharacter = characterSnapshot ?? projectCharacters.character(withId: characterId)
         let submittedStack = requestedStack ?? submittedCharacter.flatMap { resolvedCharacterSheetStack(for: $0) }
         let submittedPicks: [CharacterSheetRenderPick]
         let submittedTemplate: String
@@ -12335,7 +12629,7 @@ final class LibraryEngine: ObservableObject {
         }
         pendingCharacterSheetIds.insert(characterId)
         defer { pendingCharacterSheetIds.remove(characterId) }
-        return await WorkflowCoordinator.shared.run(project: currentProject, workflow: "character_sheet", artifactType: "character", artifactId: characterId, lane: .image, recipeJSON: workflowRecipe(["characterId": String(describing: characterId)]), failure: false) { [self] in
+        return await WorkflowCoordinator.shared.run(project: currentProject, workflow: "character_sheet", artifactType: "character", artifactId: characterId, lane: .image, recipeJSON: workflowRecipe(["characterId": characterId, "smart_prompt": submittedCharacter?.descriptionPrompt ?? "", "smart_prompt_version_id": submittedCharacter?.promptHistory?.activeVersionId ?? ""]), failure: false) { [self] in
             guard let project = currentProject else {
                 aestheticStatus = "Create or select a project first"
                 return false
@@ -12382,6 +12676,7 @@ final class LibraryEngine: ObservableObject {
                       let refreshed = projectCharacters.character(withId: characterId) else { return false }
                 character.descriptionPrompt = refreshed.descriptionPrompt
                 character.signatureProps = refreshed.signatureProps
+                character.promptHistory = refreshed.promptHistory
             }
 
             let picks = submittedPicks
@@ -12392,8 +12687,11 @@ final class LibraryEngine: ObservableObject {
                 return false
             }
             fill.visualDescription = character.descriptionPrompt
-            fill.signatureProps = character.signatureProps
-            let prompt = character.sheetPromptOverride ?? CharacterSheetPrompt.render(template: submittedTemplate, fill: fill)
+            fill.signatureProps = character.promptHistory == nil ? character.signatureProps : []
+            let composed = character.promptHistory == nil
+                ? CharacterSheetPrompt.render(template: submittedTemplate, fill: fill)
+                : CharacterSheetPrompt.renderShared(template: submittedTemplate, fill: fill)
+            let prompt = character.sheetPromptOverride ?? composed
             let promptHash = CharacterSheetPrompt.promptHash(prompt)
             let attachesSheet = picks.contains(where: \.isSheet)
             let attachments = picks.map { pick -> LensPromptImageAttachment in
@@ -12532,6 +12830,12 @@ final class LibraryEngine: ObservableObject {
                     civitaiImageProvider: civitaiImageProvider,
                     falImageClient: falImageClient
                 )
+                await InferenceTraceStore.shared.mergeRequestContext(traceId: outcome.traceId, values: [
+                    "smart_prompt": character.descriptionPrompt,
+                    "character_id": characterId,
+                    "smart_prompt_version_id": character.promptHistory?.activeVersionId ?? "",
+                    "composed_prompt": job.prompt
+                ])
                 guard currentProject?.projectId == project.projectId else { return false }
                 // Bypasses the frame funnel, so the ledger row lives here —
                 // unpriced-never-$0, the recipe's provider price note rides along.
@@ -12577,7 +12881,7 @@ final class LibraryEngine: ObservableObject {
                         fallbackExtension: outputExtension
                     ),
                     tags: ["generated", "roster-reference", "character-sheet"],
-                    notes: "Generated \(character.name)'s character reference sheet.",
+                    notes: "Generated from smart prompt \(character.promptHistory?.activeOrdinal.map { "v\($0)" } ?? "unversioned").",
                     rejectedByDefault: true
                 ) else {
                     aestheticStatus = "Could not archive \(character.name)'s character sheet"
@@ -12587,7 +12891,9 @@ final class LibraryEngine: ObservableObject {
                 characterRenderNotes.removeValue(forKey: characterId)
                 let recorded = updateCharacter(characterId: characterId, status: "\(character.name)'s character sheet ready") {
                     $0.recordRenderedSheet(mediaId: item.mediaId, promptHash: promptHash)
+                    $0.promptHistory?.mediaVersionIds[item.mediaId] = character.promptHistory?.activeVersionId
                 }
+                await InferenceTraceStore.shared.enrichContext(traceId: outcome.traceId, artifactType: "media", artifactId: item.mediaId)
                 if recorded {
                     // THE SHEET → SUGGESTIONS hook — unstructured on purpose: the
                     // sheet lane returns (its defer clears the flags) before this
@@ -23756,7 +24062,7 @@ final class LibraryEngine: ObservableObject {
         _ transform: (ProjectShot, String) -> ProjectShot?
     ) -> ShotPictureStateEdit? {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+              let shot = shotForEditing(shotId: shotId) else { return nil }
         let now = DateFormats.now()
         guard let updated = transform(shot, now) else { return nil }
         let edit = ShotPictureStateEdit(
@@ -23764,10 +24070,13 @@ final class LibraryEngine: ObservableObject {
             after: updated.pictureStateSnapshot()
         )
         guard edit.before != edit.after else { return nil }
-        persistShotTimeline(
+        guard persistShotTimeline(
             shotTimeline.updatingShot(shotId: shotId, now: now) { _ in updated },
             for: project
-        )
+        ) else {
+            aestheticStatus = "The picture edit could not be saved. " + lastError
+            return nil
+        }
         if let status { aestheticStatus = status }
         return edit
     }
@@ -23780,7 +24089,7 @@ final class LibraryEngine: ObservableObject {
     /// `isReversed`, or a restored reversed CUT would never bake.
     func restoreShotPictureState(shotId: String, snapshot: ShotPictureStateSnapshot) {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return }
+              let shot = shotForEditing(shotId: shotId) else { return }
         let wasReversed = shot.cutList.isReversed
         let now = DateFormats.now()
         persistShotTimeline(
@@ -23835,7 +24144,7 @@ final class LibraryEngine: ObservableObject {
         var status = skipped
             ? "Segment skipped — seams heal to hard cuts"
             : "Segment restored"
-        if skipped, let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) {
+        if skipped, let shot = shotForEditing(shotId: shotId) {
             let dependentCopies = shot.pictureInsertions.filter { insertion in
                 shotSegmentKeyLeftEntryId(insertion.sourceSegmentKey) == entryId
                     || shotSegmentKeyRightEntryId(insertion.sourceSegmentKey) == entryId
@@ -23917,6 +24226,8 @@ final class LibraryEngine: ObservableObject {
             self.shotMutatingPictureInsertions(shot, shotId: shotId, now: now) { list in
                 list.append(contentsOf: minted.map { insertion in
                     var value = insertion
+                    value.sourceScope = value.sourceScope ?? ShotPictureSourceCatalog(shot: shot)
+                        .scopeReference(key: value.sourceSegmentKey, path: value.sourceClipPath)
                     value.updatedAt = now
                     return value
                 })
@@ -23930,7 +24241,7 @@ final class LibraryEngine: ObservableObject {
         insertionIds: Set<String>
     ) -> ShotPictureStateEdit? {
         guard !insertionIds.isEmpty,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+              let shot = shotForEditing(shotId: shotId) else { return nil }
         let liveCutIds = Set(shot.cutList.segmentCuts.map(\.id))
         let linked = Set(
             shot.pictureInsertions
@@ -23982,7 +24293,7 @@ final class LibraryEngine: ObservableObject {
         let clamped = min(max(rate, ShotPictureInsertion.minimumRate), ShotPictureInsertion.maximumRate)
         // THE 2-FRAME OUTPUT LAW guards every rate change (previously a copy
         // near the minimum span could be driven sub-frame).
-        if let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) {
+        if let shot = shotForEditing(shotId: shotId) {
             for insertion in shot.pictureInsertions
                 where insertionIds.contains(insertion.insertionId)
                     && insertion.sourceSeconds / clamped < 2 * ShotAudioTiming.frameSeconds {
@@ -24027,19 +24338,20 @@ final class LibraryEngine: ObservableObject {
     /// pixel swap in the freshness ladder — explicit, undoable, never silent.
     @discardableResult
     func recopyShotPictureInsertion(shotId: String, insertionId: String) -> ShotPictureStateEdit? {
-        guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+        guard let shot = shotForEditing(shotId: shotId),
               let insertion = shot.pictureInsertions.first(where: { $0.insertionId == insertionId }),
               !insertion.isFootageSource else { return nil }
-        // THE ACTIVE TAKE AUTHORITY (version clips, else seeds) — the same
-        // referee the splice's freshness uses, so Re-copy can always reach
-        // whatever the segment actually plays, seeded combined CUTs included.
-        let activePath = shotActiveTakePathsBySegmentKey(shot: shot)[insertion.sourceSegmentKey]?
-            .trimmed ?? ""
+        let source = ShotPictureSourceCatalog(shot: shot).active[insertion.sourceSegmentKey]
+        let activePath = source?.path.trimmed ?? ""
         guard !activePath.isEmpty else {
             aestheticStatus = "No current take to re-copy from — render the segment first"
             return nil
         }
-        guard activePath != insertion.sourceClipPath else { return nil }
+        guard FileManager.default.fileExists(atPath: activePath) else {
+            aestheticStatus = "The current source file is unavailable. Restore or prepare it before re-copying."
+            return nil
+        }
+        guard activePath != insertion.sourceClipPath || source?.scope != insertion.sourceScope else { return nil }
         let isCarrier = !insertion.replacesRazorCutIds.isEmpty
         return commitShotPictureEdit(
             shotId: shotId,
@@ -24051,6 +24363,7 @@ final class LibraryEngine: ObservableObject {
                 return self.shotMutatingPictureInsertions(current, shotId: shotId, now: now) { list in
                     for index in list.indices where list[index].insertionId == insertionId {
                         list[index].sourceClipPath = activePath
+                        list[index].sourceScope = source?.scope
                         list[index].updatedAt = now
                     }
                 }
@@ -24070,12 +24383,18 @@ final class LibraryEngine: ObservableObject {
                 now: now
             ) else { return nil }
             let newVisible = self.shotJoinAssembly(shot: updated, shotId: shotId)
-            return self.shotRipplingOverlays(
-                updated,
-                rippleStart: rippleStart,
-                delta: newVisible.outputSeconds - oldVisible.outputSeconds,
-                now: now
-            )
+            if let cell = newVisible.insertionCells.first(where: { $0.insertion.insertionId == insertionId }),
+               cell.state.isFresh, cell.placedOutputSeconds >= 2 * ShotAudioTiming.frameSeconds,
+               shotSpeedEditPreservesPicture(before: oldVisible, after: newVisible) {
+                return self.shotRipplingOverlays(
+                    updated,
+                    rippleStart: rippleStart,
+                    delta: newVisible.outputSeconds - oldVisible.outputSeconds,
+                    now: now
+                )
+            }
+            self.aestheticStatus = "The speed section could not be restored without changing the picture sequence. Your edit is unchanged."
+            return nil
         }
     }
 
@@ -24112,7 +24431,7 @@ final class LibraryEngine: ObservableObject {
         materialEnd: Double,
         rate: Double
     ) -> ShotPictureStateEdit? {
-        guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+        guard let shot = shotForEditing(shotId: shotId) else { return nil }
         let clamped = min(max(rate, ShotPictureInsertion.minimumRate), ShotPictureInsertion.maximumRate)
         guard abs(clamped - 1) >= 0.001 else {
             aestheticStatus = "1× is no change — pick a slower or faster speed"
@@ -24144,6 +24463,14 @@ final class LibraryEngine: ObservableObject {
                 return nil
             }
         }
+        for span in spans {
+            if let reference = ShotPictureSourceCatalog(shot: shot).scopeReference(key: span.segmentKey, path: span.clipPath),
+               let scope = shot.outputScope(reference.scopeId),
+               reference.fingerprint != shotOutputFingerprint(scope.project(from: shot)) {
+                aestheticStatus = "The earlier cut is updating. Wait for its picture to finish preparing, then apply Speed again."
+                return nil
+            }
+        }
         return commitShotPictureEdit(
             shotId: shotId,
             status: "Section plays at \(shotInsertionRateLabel(clamped)), born muted — ♪ restores its stretched sound; Delete the ⟳ cell to return to 1×"
@@ -24160,6 +24487,15 @@ final class LibraryEngine: ObservableObject {
                 rate: clamped,
                 now: now
             ) else { return nil }
+            let after = self.shotForwardAssembly(sectioned)
+            let newIds = Set(sectioned.pictureInsertions.map(\.insertionId)).subtracting(current.pictureInsertions.map(\.insertionId))
+            let replacementCells = after.insertionCells.filter { newIds.contains($0.insertion.insertionId) }
+            guard replacementCells.count == newIds.count,
+                  replacementCells.allSatisfy({ $0.state.isFresh && $0.placedOutputSeconds >= 2 * ShotAudioTiming.frameSeconds }),
+                  shotSpeedEditPreservesPicture(before: self.shotForwardAssembly(current), after: after) else {
+                self.aestheticStatus = "Speed could not preserve every selected picture in order. The cut is unchanged; refresh the selection and try again."
+                return nil
+            }
             let newVisible = self.shotJoinAssembly(shot: sectioned, shotId: shotId)
             return self.shotRipplingOverlays(
                 sectioned,
@@ -24196,7 +24532,7 @@ final class LibraryEngine: ObservableObject {
             return nil
         }
         guard frozenCutPermits(shotId: shotId, tailPredicate: { tail in
-            guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return false }
+            guard let shot = shotForEditing(shotId: shotId) else { return false }
             let index = afterEntryId
                 .flatMap { id in shot.entries.firstIndex { $0.entryId == id }.map { $0 + 1 } }
                 ?? shot.entries.count
@@ -24324,21 +24660,7 @@ final class LibraryEngine: ObservableObject {
     /// and media. The lookups are rebuilt here rather than threaded through
     /// because every caller starts from a shotId.
     private func shotForwardAssembly(_ shot: ProjectShot) -> ShotCutAssembly {
-        let frameLookup = Dictionary(
-            (projectLenses.lenses.first?.sortedHeroImages ?? []).map { ($0.imageId, $0) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        let mediaLookup = Dictionary(
-            items.map { ($0.mediaId, $0) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        let plan = shotRenderSegmentPlan(
-            shot: shot,
-            frameLookup: frameLookup,
-            mediaLookup: mediaLookup,
-            meaningNodes: []
-        )
-        return shotCutAssembly(shot: shot, planSegments: plan.segments, clipDurationsByPath: [:])
+        shotCutAssembly(shot: shot, planSegments: shotRenderPromptPlan(shot: shot)?.segments ?? [], clipDurationsByPath: [:])
     }
 
     /// Every distinct source file a reversed playback of this shot would need.
@@ -24362,7 +24684,7 @@ final class LibraryEngine: ObservableObject {
     /// Adopts any proxy already on disk and queues a bake for the rest.
     func ensureReverseProxies(shotId: String) async {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+              let shot = shotForEditing(shotId: shotId),
               shot.cutList.isReversed else { return }
 
         let directory = contextStore.reverseProxyDirectory(for: project)
@@ -24510,7 +24832,7 @@ final class LibraryEngine: ObservableObject {
         proxyId: String,
         state: ReverseProxyBakeProgress
     ) {
-        guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return }
+        guard let shot = shotForEditing(shotId: shotId) else { return }
         let paths = reverseProxySourcePaths(for: shot)
         let resolved = shot.readyReverseProxiesBySourcePath {
             FileManager.default.fileExists(atPath: $0)
@@ -24542,7 +24864,7 @@ final class LibraryEngine: ObservableObject {
     /// progress left the Reverse button stuck at a percentage with no task
     /// behind it and no way for the operator to retry.
     private func refreshReverseBakeState(shotId: String) {
-        guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else {
+        guard let shot = shotForEditing(shotId: shotId) else {
             activeReverseBakeShotIds.remove(shotId)
             reverseBakeProgress[shotId] = nil
             return
@@ -24784,7 +25106,7 @@ final class LibraryEngine: ObservableObject {
                 aestheticStatus = "That duration is not supported by \(provider.label)"
                 return false
             }
-            guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+            guard let shot = shotForEditing(shotId: shotId),
                   let cut = shot.cutList.segmentCuts.first(where: { $0.id == cutId }),
                   let sourceClip = shotJoinSourceClip(shot: shot, cut: cut),
                   FileManager.default.fileExists(atPath: sourceClip.clipPath) else {
@@ -24891,7 +25213,7 @@ final class LibraryEngine: ObservableObject {
                 artifact.errorMessage = ""
                 artifact.updatedAt = DateFormats.now()
                 guard currentProject?.projectId == project.projectId,
-                      let currentShot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else {
+                      let currentShot = shotForEditing(shotId: shotId) else {
                     return false
                 }
                 var updated = currentShot.upsertingJoinBridgeVersion(artifact, now: artifact.updatedAt)
@@ -24994,7 +25316,7 @@ final class LibraryEngine: ObservableObject {
     /// Exact, free preflight frames for the reviewed join-render surface.
     /// Cached by source file identity + cut bounds; no provider call occurs.
     func prepareShotRazorJoinFrames(shotId: String, cutId: String) async -> ShotJoinBoundaryPreview? {
-        guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+        guard let shot = shotForEditing(shotId: shotId),
               let cut = shot.cutList.segmentCuts.first(where: { $0.id == cutId }),
               let sourceClip = shotJoinSourceClip(shot: shot, cut: cut),
               FileManager.default.fileExists(atPath: sourceClip.clipPath) else { return nil }
@@ -25063,7 +25385,7 @@ final class LibraryEngine: ObservableObject {
     /// seconds (pass replication is mix-time), so ripple deltas computed from
     /// an N×-long assembly would shift them N times too far.
     private func shotJoinAssembly(shot: ProjectShot, shotId: String) -> ShotCutAssembly {
-        let plan = shotRenderPromptPlan(shotId: shotId)
+        let plan = shotRenderPromptPlan(shot: shot)
         return shotVisibleCutAssembly(
             shot: shot,
             planSegments: plan?.segments ?? [],
@@ -25192,7 +25514,7 @@ final class LibraryEngine: ObservableObject {
         _ transform: (ShotAudioMix) -> ShotAudioMix
     ) -> ShotAudioStateEdit? {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+              let shot = shotForEditing(shotId: shotId) else { return nil }
         let now = DateFormats.now()
         let updated = shot.settingAudioMix(transform(shot.audioMix), now: now)
         let edit = ShotAudioStateEdit(
@@ -25226,7 +25548,7 @@ final class LibraryEngine: ObservableObject {
     /// Adds an empty extra row of a kind (clip, ambient, or microphone).
     @discardableResult
     func addShotAudioLane(shotId: String, kind: String) -> ShotAudioStateEdit? {
-        guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+        guard let shot = shotForEditing(shotId: shotId),
               let added = shot.audioMix.addingLane(kind: kind) else { return nil }
         return commitShotAudioMixEdit(
             shotId: shotId,
@@ -25241,7 +25563,7 @@ final class LibraryEngine: ObservableObject {
     /// instead, so no gesture here can silently discard a placement.
     @discardableResult
     func removeShotAudioLane(shotId: String, laneId: String) -> ShotAudioStateEdit? {
-        guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+        guard let shot = shotForEditing(shotId: shotId) else { return nil }
         guard shot.audioRegions.allSatisfy({ $0.laneId != laneId }) else {
             aestheticStatus = "Move this row's audio to another row before removing it"
             return nil
@@ -25264,7 +25586,7 @@ final class LibraryEngine: ObservableObject {
         laneId: String
     ) -> ShotAudioRegion? {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+              let shot = shotForEditing(shotId: shotId) else { return nil }
         let now = DateFormats.now()
         let base = regionizedForAudioEdit(shot, now: now)
         guard let existing = base.audioRegions.first(where: { $0.regionId == regionId }),
@@ -25293,7 +25615,7 @@ final class LibraryEngine: ObservableObject {
     @discardableResult
     func activateShotMicrophoneTake(shotId: String, takeId: String) -> ShotAudioStateEdit? {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+              let shot = shotForEditing(shotId: shotId) else { return nil }
         let now = DateFormats.now()
         var next = shot.settingAudioMix(
             shot.audioMix.activatingMicrophoneTake(takeId),
@@ -25423,7 +25745,7 @@ final class LibraryEngine: ObservableObject {
     @discardableResult
     func deleteShotMicrophoneTake(shotId: String, takeId: String) -> Bool {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+              let shot = shotForEditing(shotId: shotId),
               let take = shot.audioMix.lane(ShotAudioLaneId.microphone).microphoneTakes
                 .first(where: { $0.takeId == takeId }) else {
             return false
@@ -25626,7 +25948,8 @@ final class LibraryEngine: ObservableObject {
     private func shotAudioStateSnapshot(_ shot: ProjectShot) -> ShotAudioStateSnapshot {
         ShotAudioStateSnapshot(
             audioMix: shot.audioMix.normalized(),
-            audioRegions: shot.audioRegions.map { $0.normalized() }
+            audioRegions: shot.audioRegions.map { $0.normalized() },
+            scopeId: ShotOutputEditContext.selection?.scopeId ?? ""
         )
     }
 
@@ -25641,7 +25964,7 @@ final class LibraryEngine: ObservableObject {
         _ transform: (ShotAudioRegion, Double) -> ShotAudioRegion
     ) -> ShotAudioRegion? {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+              let shot = shotForEditing(shotId: shotId) else { return nil }
         let now = DateFormats.now()
         let base = regionizedForAudioEdit(shot, now: now)
         guard let existing = base.audioRegions.first(where: { $0.regionId == regionId }),
@@ -25669,7 +25992,7 @@ final class LibraryEngine: ObservableObject {
         asset: ShotAudioAssetReference,
         startSeconds: Double
     ) -> ShotAudioStateEdit? {
-        guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+        guard let shot = shotForEditing(shotId: shotId) else { return nil }
         let cleanedKind = kind.trimmed.lowercased()
         guard ShotAudioLaneId.extendable.contains(cleanedKind) else { return nil }
         let base = regionizedForAudioEdit(shot, now: DateFormats.now())
@@ -25798,7 +26121,7 @@ final class LibraryEngine: ObservableObject {
         startSeconds: Double
     ) -> ShotAudioStateEdit? {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+              let shot = shotForEditing(shotId: shotId) else { return nil }
         let now = DateFormats.now()
         let base = regionizedForAudioEdit(shot, now: now)
         guard let normalizedRegion = builtShotAudioRegion(
@@ -25841,7 +26164,7 @@ final class LibraryEngine: ObservableObject {
         startSeconds: Double
     ) -> ShotAudioStateEdit? {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+              let shot = shotForEditing(shotId: shotId),
               !assets.isEmpty else { return nil }
         let now = DateFormats.now()
         var working = regionizedForAudioEdit(shot, now: now)
@@ -25898,7 +26221,7 @@ final class LibraryEngine: ObservableObject {
         startSeconds: Double
     ) -> ShotAudioStateEdit? {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+              let shot = shotForEditing(shotId: shotId),
               payload.isPasteable else { return nil }
         let now = DateFormats.now()
         let base = regionizedForAudioEdit(shot, now: now)
@@ -25939,7 +26262,7 @@ final class LibraryEngine: ObservableObject {
     @discardableResult
     func duplicateShotAudioRegion(shotId: String, regionId: String) -> ShotAudioStateEdit? {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+              let shot = shotForEditing(shotId: shotId) else { return nil }
         let now = DateFormats.now()
         let base = regionizedForAudioEdit(shot, now: now)
         guard let region = base.audioRegions.first(where: { $0.regionId == regionId }),
@@ -26009,7 +26332,7 @@ final class LibraryEngine: ObservableObject {
         atSeconds: Double
     ) -> ShotAudioStateEdit? {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+              let shot = shotForEditing(shotId: shotId) else { return nil }
         let now = DateFormats.now()
         let base = regionizedForAudioEdit(shot, now: now)
         guard let index = base.audioRegions.firstIndex(where: { $0.regionId == regionId }),
@@ -26067,7 +26390,7 @@ final class LibraryEngine: ObservableObject {
         asset: ShotAudioAssetReference
     ) -> ShotAudioRegion? {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+              let shot = shotForEditing(shotId: shotId) else { return nil }
         let now = DateFormats.now()
         let base = regionizedForAudioEdit(shot, now: now)
         guard let existing = base.audioRegions.first(where: { $0.regionId == regionId }),
@@ -26140,7 +26463,7 @@ final class LibraryEngine: ObservableObject {
         regionId: String
     ) -> ShotAudioStateEdit? {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+              let shot = shotForEditing(shotId: shotId) else { return nil }
         let now = DateFormats.now()
         let base = regionizedForAudioEdit(shot, now: now)
         guard let existing = base.audioRegions.first(where: { $0.regionId == regionId }),
@@ -26199,7 +26522,7 @@ final class LibraryEngine: ObservableObject {
     @discardableResult
     func setShotAudioRegion(shotId: String, region: ShotAudioRegion) -> ShotAudioRegion? {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+              let shot = shotForEditing(shotId: shotId) else { return nil }
         let normalized = region.normalized()
         guard !normalized.regionId.isEmpty,
               !normalized.laneId.isEmpty,
@@ -26242,7 +26565,7 @@ final class LibraryEngine: ObservableObject {
     @discardableResult
     func deleteShotAudioRegion(shotId: String, regionId: String) -> ShotAudioRegion? {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+              let shot = shotForEditing(shotId: shotId) else { return nil }
         let now = DateFormats.now()
         let base = regionizedForAudioEdit(shot, now: now)
         guard let region = base.audioRegions.first(where: { $0.regionId == regionId }),
@@ -26265,7 +26588,7 @@ final class LibraryEngine: ObservableObject {
     @discardableResult
     func deleteShotAudioRegions(shotId: String, regionIds: [String]) -> ShotAudioStateEdit? {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+              let shot = shotForEditing(shotId: shotId) else { return nil }
         let now = DateFormats.now()
         let base = regionizedForAudioEdit(shot, now: now)
         let targetIds = Set(regionIds)
@@ -26384,7 +26707,7 @@ final class LibraryEngine: ObservableObject {
         isMuted: Bool
     ) -> [ShotSourceSegmentAudio]? {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+              let shot = shotForEditing(shotId: shotId),
               let identity = shotSourceSegmentIdentity(shotId: shotId, segmentKey: segmentKey) else {
             return nil
         }
@@ -26427,7 +26750,7 @@ final class LibraryEngine: ObservableObject {
         segmentKey: String
     ) -> ShotSourceDetachSnapshot? {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+              let shot = shotForEditing(shotId: shotId),
               let identity = shotSourceSegmentIdentity(shotId: shotId, segmentKey: segmentKey) else {
             return nil
         }
@@ -26515,7 +26838,7 @@ final class LibraryEngine: ObservableObject {
     /// insert-time clamps either way.
     func backfillShotAudioRegionSourceDurations(shotId: String) async {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return }
+              let shot = shotForEditing(shotId: shotId) else { return }
         let missing = shot.audioRegions.filter {
             $0.sourceDurationSeconds == nil
                 && $0.laneId != ShotAudioLaneId.source
@@ -26533,7 +26856,7 @@ final class LibraryEngine: ObservableObject {
         }
         guard !resolved.isEmpty,
               currentProject?.projectId == project.projectId,
-              var updatedShot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return }
+              var updatedShot = shotForEditing(shotId: shotId) else { return }
         let now = DateFormats.now()
         for (regionId, seconds) in resolved {
             updatedShot = updatedShot.updatingAudioRegion(regionId: regionId, now: now) {
@@ -26697,7 +27020,7 @@ final class LibraryEngine: ObservableObject {
     }
 
     private func shotDurationSeconds(shotId: String) -> Double {
-        guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return 0 }
+        guard let shot = shotForEditing(shotId: shotId) else { return 0 }
         let plan = shotRenderPromptPlan(shotId: shotId)
         let assembly = shotCutAssembly(
             shot: shot,
@@ -26717,7 +27040,7 @@ final class LibraryEngine: ObservableObject {
     /// in-flight render completed. Footage cuts ("" pin) persist, and a pin
     /// that matches no band is already inert at plan time.
     private func sweepStalePinnedCuts(shotId: String, for project: ProjectRecord) {
-        guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return }
+        guard let shot = shotForEditing(shotId: shotId) else { return }
         let staleIds = shotStalePinnedCutIds(shot: shot)
         let staleInsertionIds = shotStalePictureInsertionIds(shot: shot)
         guard !staleIds.isEmpty || !staleInsertionIds.isEmpty else { return }
@@ -26761,7 +27084,7 @@ final class LibraryEngine: ObservableObject {
         startSeconds: Double?,
         endSeconds: Double?
     ) -> ShotPictureStateEdit? {
-        guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+        guard let shot = shotForEditing(shotId: shotId),
               let entry = shot.entries.first(where: { $0.entryId == entryId }),
               entry.isClip,
               let media = items.first(where: { $0.mediaId == entry.clipMediaId }) else {
@@ -26853,7 +27176,7 @@ final class LibraryEngine: ObservableObject {
         // confusing refusal, while rendered material stays untouchable.
         guard frozenCutPermits(shotId: shotId, tailPredicate: { tail in
             guard index >= tail,
-                  let entryIndex = shotTimeline.shots.first(where: { $0.shotId == shotId })?
+                  let entryIndex = shotForEditing(shotId: shotId)?
                       .entries.firstIndex(where: { $0.entryId == entryId }) else { return false }
             return entryIndex >= tail
         }) else { return }
@@ -27034,6 +27357,7 @@ final class LibraryEngine: ObservableObject {
             let saved = try contextStore.saveShotTimeline(stamped, for: project)
             if isCurrentProject {
                 shotTimeline = saved
+                scheduleOutputScopeRefresh()
             }
         } catch {
             lastError = error.localizedDescription
@@ -28133,14 +28457,14 @@ final class LibraryEngine: ObservableObject {
         skipped: [String],
         skippedPlaceholders: [ShotSkippedSegmentPlaceholder]
     )? {
-        guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
-              let lens = projectLenses.lenses.first else {
-            return nil
-        }
-        let frameLookup = Dictionary(
-            lens.sortedHeroImages.map { ($0.imageId, $0) },
-            uniquingKeysWith: { first, _ in first }
-        )
+        guard let shot = shotForEditing(shotId: shotId) else { return nil }
+        return shotRenderPromptPlan(shot: shot)
+    }
+
+    func shotRenderPromptPlan(shot: ProjectShot) -> (
+        segments: [ShotRenderPlanSegment], skipped: [String], skippedPlaceholders: [ShotSkippedSegmentPlaceholder]
+    )? {
+        let frameLookup = projectWideFrameLookup
         let mediaLookup = Dictionary(
             items.map { ($0.mediaId, $0) },
             uniquingKeysWith: { first, _ in first }
@@ -28356,7 +28680,7 @@ final class LibraryEngine: ObservableObject {
 
     func cancelShotLookRestyle(shotId: String) {
         guard let project = currentProject,
-              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+              let shot = shotForEditing(shotId: shotId),
               let artifact = shot.lookVersions.first(where: { $0.versionId.isEmpty == false && activeShotRestyleIds.contains($0.versionId) })
                 ?? shot.lookVersions.last(where: { ["preparing", "uploading", "queued", "generating", "downloading"].contains($0.status) }) else {
             return
@@ -28414,7 +28738,7 @@ final class LibraryEngine: ObservableObject {
     func retryShotLook(shotId: String, versionId: String) {
         guard shotRestyleTasks[shotId] == nil,
               !cutHasInFlightVideoOperation(cutId: shotId),
-              let artifact = shotTimeline.shots.first(where: { $0.shotId == shotId })?
+              let artifact = shotForEditing(shotId: shotId)?
                 .lookVersions.first(where: { $0.versionId == versionId }),
               ["failed", "paused", "queued", "generating", "downloading"].contains(artifact.status),
               !artifact.requestId.isEmpty else { return }
@@ -28458,7 +28782,7 @@ final class LibraryEngine: ObservableObject {
     ) async {
         return await WorkflowCoordinator.shared.run(project: currentProject, workflow: "shot_look", artifactType: "shot", artifactId: shotId, lane: .video, recipeJSON: workflowRecipe(["shotId": String(describing: shotId), "prompt": String(describing: prompt), "enhancePrompt": String(describing: enhancePrompt), "seed": String(describing: seed)]), failure: ()) { [self] in
             guard let project = currentProject,
-                  let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+                  let shot = shotForEditing(shotId: shotId),
                   let promptPlan = shotRenderPromptPlan(shotId: shotId) else {
                 aestheticStatus = "Shot Look source is unavailable"
                 return
@@ -28572,7 +28896,7 @@ final class LibraryEngine: ObservableObject {
             } catch {
                 guard currentProject?.projectId == project.projectId else { return }
                 if Task.isCancelled || isCancellationLikeError(error) {
-                    if let persisted = shotTimeline.shots.first(where: { $0.shotId == shotId })?
+                    if let persisted = shotForEditing(shotId: shotId)?
                         .lookVersions.first(where: { $0.versionId == versionId }), ["canceled", "paused"].contains(persisted.status) {
                         return
                     }
@@ -29089,7 +29413,7 @@ final class LibraryEngine: ObservableObject {
     private func clipLookArtifact(home: ClipLookHome, versionId: String) -> ShotRestyleArtifact? {
         switch home {
         case .shot(let shotId):
-            return shotTimeline.shots.first(where: { $0.shotId == shotId })?
+            return shotForEditing(shotId: shotId)?
                 .clipLookVersions.first(where: { $0.versionId == versionId })
         case .media:
             return mediaGenerations.lookVersions.first(where: { $0.versionId == versionId })
@@ -29185,7 +29509,7 @@ final class LibraryEngine: ObservableObject {
             }
             finalPrompt = ""
         }
-        guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+        guard let shot = shotForEditing(shotId: shotId),
               let entry = shot.entries.first(where: { $0.entryId == entryId }), entry.isClip,
               let media = items.first(where: { $0.mediaId == entry.clipMediaId }), media.kind == .video,
               !media.path.trimmed.isEmpty else {
@@ -29689,7 +30013,7 @@ final class LibraryEngine: ObservableObject {
             let versionNumber: Int
             switch home {
             case .shot(let shotId):
-                guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else {
+                guard let shot = shotForEditing(shotId: shotId) else {
                     aestheticStatus = "Clip Look source is unavailable"
                     return
                 }
@@ -30197,7 +30521,15 @@ final class LibraryEngine: ObservableObject {
         to exportURL: URL,
         profile: VideoOutputProfile = .standard(.landscape16x9, fitPolicy: .fitWithBlurFill)
     ) async throws -> Bool {
-        let promptPlan = shotRenderPromptPlan(shotId: shot.shotId)
+        if shot.outputScopes.contains(where: {
+            $0.cache?.fingerprint != shotOutputFingerprint($0.project(from: shot))
+                || !FileManager.default.fileExists(atPath: $0.cache?.videoPath ?? "")
+        }) {
+            guard let project = currentProject else { throw ScreenGraphError.capture("Open the project to prepare its earlier cut") }
+            let prepared = try await preparingOutputScopes(shot, project: project)
+            return try await flattenShotOutput(shot: prepared, to: exportURL, profile: profile)
+        }
+        let promptPlan = shotRenderPromptPlan(shot: shot)
         if promptPlan?.segments.contains(where: { segment in
             if case .preserved(let saved) = segment { return !FileManager.default.fileExists(atPath: saved.clip.clipPath) }
             return false

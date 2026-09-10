@@ -40,7 +40,7 @@ struct CharacterSheetPromptTests {
     @Test("The built-in body carries the eight sections and no aspect ratio")
     func builtInBodyShape() {
         let body = ProjectPromptSettingsDocument.builtInCharacterSheetBody
-        for section in ["1. CHARACTER PROFILE", "2. FULL-BODY TURNAROUND", "3. FACE AND IDENTITY DETAILS", "4. EXPRESSION SHEET", "5. POSE AND BODY LANGUAGE", "6. COSTUME DETAILS", "7. COLOR AND MATERIAL PALETTE", "8. DO NOT CHANGE"] {
+        for section in ["1. SUBJECT PROFILE", "2. FORM AND VIEWS", "3. IDENTITY DETAILS", "4. STATES", "5. MOVEMENT AND CONFIGURATION", "6. DEFINING ELEMENTS", "7. COLOR AND MATERIAL PALETTE", "8. CONTINUITY"] {
             #expect(body.contains(section), "missing \(section)")
         }
         #expect(!body.contains("4:5"))

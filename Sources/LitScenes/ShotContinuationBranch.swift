@@ -2,7 +2,7 @@ import Foundation
 
 /// An editable branch shares immutable media, but owns every placement and choice.
 func branchShotContinuationSequence(_ source: ProjectShot, plan: [ShotRenderPlanSegment], now: String) -> ProjectShot {
-    guard !source.continuationRecords.isEmpty else { return source.duplicated(now: now) }
+    guard !source.continuationRecords.isEmpty || !source.outputScopes.isEmpty else { return source.duplicated(now: now) }
     var copy = source
     copy.shotId = "shot_\(UUID().uuidString.lowercased())"
     func fresh(_ kind: String, _ old: String) -> String { "\(kind)_\(shortHash("\(copy.shotId):\(old)", length: 18))" }
@@ -102,7 +102,34 @@ func branchShotContinuationSequence(_ source: ProjectShot, plan: [ShotRenderPlan
     copy.audioRegions = source.audioRegions.map { raw in
         var value = raw; value.regionId = fresh("audio_region", raw.regionId); return value
     }
+    let scopes = copyShotOutputScopes(from: source, entries: entries, keys: keys, seed: copy.shotId)
+    copy.outputScopes = scopes.scopes
+    let scopeKeys = Dictionary(uniqueKeysWithValues: source.outputScopes.compactMap { original -> (String, String)? in
+        guard let mapped = scopes.scopes.first(where: { $0.scopeId == scopes.scopeIds[original.scopeId] }) else { return nil }
+        return (original.placementKey, mapped.placementKey)
+    })
+    copy.cutList.segmentCuts = copy.cutList.segmentCuts.map { original in
+        var cut = original
+        cut.segmentKey = scopeKeys[cut.segmentKey] ?? cut.segmentKey
+        cut.sourceScope = cut.sourceScope?.remapping(scopes.scopeIds)
+        return cut
+    }
+    copy.pictureInsertions = copy.pictureInsertions.map { original in
+        var insertion = original
+        insertion.sourceSegmentKey = scopeKeys[insertion.sourceSegmentKey] ?? insertion.sourceSegmentKey
+        insertion.anchorSegmentKey = scopeKeys[insertion.anchorSegmentKey] ?? insertion.anchorSegmentKey
+        insertion.sourceScope = insertion.sourceScope?.remapping(scopes.scopeIds)
+        return insertion
+    }
+    copy.joinBridgeVersions += scopes.bridges
+    copy.lookVersions += scopes.looks
+    copy.continuationRecords = copy.continuationRecords.map { record in
+        var value = record
+        let original = record.outputScopeId ?? record.selectedTake?.anchor.outputReview?.scope.scopeId ?? ""
+        value.outputScopeId = scopes.scopeIds[original] ?? record.outputScopeId
+        return value
+    }
     copy.createdAt = now
     copy.updatedAt = now
-    return copy.normalized()
+    return rebindCopiedScopeCaches(from: source, to: copy.normalized(), scopeIds: scopes.scopeIds)
 }

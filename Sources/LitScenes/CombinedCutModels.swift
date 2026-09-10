@@ -606,7 +606,7 @@ func buildCombinedCut(
             shot: source,
             plan: plan,
             assembly: assembly,
-            outputSeconds: max(assembly.outputSeconds, estimate)
+            outputSeconds: source.outputScopes.isEmpty ? max(assembly.outputSeconds, estimate) : assembly.outputSeconds
         )
     }
 
@@ -620,7 +620,11 @@ func buildCombinedCut(
     var renderOverrides: [ShotSegmentRenderOverride] = []
     var audioRegions: [ShotAudioRegion] = []
     var parentCuts: [ShotSegmentCutRange] = []
+    var parentInsertions: [ShotPictureInsertion] = []
     var parentJoinBridges: [ShotJoinBridgeArtifact] = []
+    var parentScopes: [ShotOutputScope] = []
+    var parentLooks: [ShotRestyleArtifact] = []
+    var scopeCopies: [(ProjectShot, [String: String])] = []
     var outputCursor = 0.0
 
     for (sourceIndex, sourcePlan) in sourcePlans.enumerated() {
@@ -878,11 +882,30 @@ func buildCombinedCut(
             }
         }
 
+        let scopeCopy = copyShotOutputScopes(from: source, entries: entryMap,
+            keys: parentKeyBySourceKey, seed: parentCutId + ":" + source.shotId)
+        parentScopes += scopeCopy.scopes
+        parentJoinBridges += scopeCopy.bridges
+        parentLooks += scopeCopy.looks
+        scopeCopies.append((source, scopeCopy.scopeIds))
+        for index in parentContinuations.indices {
+            let original = parentContinuations[index].outputScopeId
+                ?? parentContinuations[index].selectedTake?.anchor.outputReview?.scope.scopeId ?? ""
+            if let mapped = scopeCopy.scopeIds[original] { parentContinuations[index].outputScopeId = mapped }
+        }
+        for sourceScope in source.outputScopes {
+            if let mapped = scopeCopy.scopes.first(where: { $0.scopeId == scopeCopy.scopeIds[sourceScope.scopeId] }) {
+                parentKeyBySourceKey[sourceScope.placementKey] = mapped.placementKey
+            }
+        }
+        var cutIds: [String: String] = [:]
         for sourceCut in source.cutList.segmentCuts {
             guard let parentKey = parentKeyBySourceKey[sourceCut.segmentKey] else { continue }
             var copy = sourceCut
             copy.cutId = "cut_\(shortHash("\(parentCutId):\(sourceCut.cutId):\(UUID().uuidString)", length: 14))"
+            cutIds[sourceCut.cutId] = copy.cutId
             copy.segmentKey = parentKey
+            copy.sourceScope = copy.sourceScope?.remapping(scopeCopy.scopeIds)
             if sourceCut.joinRepair.mode == .generatedBridge,
                let sourceBridge = source.joinBridgeVersion(sourceCut.joinRepair.activeBridgeVersionId),
                sourceBridge.isReady,
@@ -902,6 +925,18 @@ func buildCombinedCut(
             }
             copy.updatedAt = now
             parentCuts.append(copy)
+        }
+
+        for original in source.pictureInsertions {
+            guard let anchor = parentKeyBySourceKey[original.anchorSegmentKey] else { continue }
+            var copy = original
+            copy.insertionId = "insertion_" + shortHash(parentCutId + ":" + source.shotId + ":" + original.insertionId, length: 18)
+            copy.anchorSegmentKey = anchor
+            copy.sourceSegmentKey = parentKeyBySourceKey[original.sourceSegmentKey] ?? original.sourceSegmentKey
+            copy.sourceScope = copy.sourceScope?.remapping(scopeCopy.scopeIds)
+            copy.replacesRazorCutIds = original.replacesRazorCutIds.compactMap { cutIds[$0] }
+            if !copy.loopGroupId.isEmpty { copy.loopGroupId = shortHash(parentCutId + ":" + source.shotId + ":" + copy.loopGroupId, length: 18) }
+            parentInsertions.append(copy)
         }
 
         // Convert source-level in/out handles into placement-local razor
@@ -1008,7 +1043,7 @@ func buildCombinedCut(
             .settingLaneVolume(laneId, volume: 1)
     }
 
-    let parent = ProjectShot(
+    var parent = ProjectShot(
         shotId: parentCutId,
         name: sources.map { $0.name.trimmed.nilIfEmpty ?? "CUT" }.joined(separator: " + "),
         entries: parentEntries,
@@ -1026,6 +1061,13 @@ func buildCombinedCut(
         createdAt: now,
         updatedAt: now
     ).normalized()
+    parent.outputScopes = parentScopes
+    parent.lookVersions = parentLooks
+    parent.reverseProxies = sources.flatMap(\.reverseProxies)
+    parent.pictureInsertions = parentInsertions
+    for (source, scopeIds) in scopeCopies {
+        parent = rebindCopiedScopeCaches(from: source, to: parent, scopeIds: scopeIds)
+    }
     return CombinedCutBuildResult(cut: parent, preflight: preflight)
 }
 

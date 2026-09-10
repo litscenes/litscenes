@@ -73,6 +73,7 @@ struct ShotRenderPromptPanel: View {
     var historyVersion: ShotRenderArtifact? = nil
     var onEditCurrent: () -> Void = {}
     var savedFallback: ShotRenderPlanSegment? = nil
+    var editingEarlierCut = false
     @State private var expandedInputs: Set<String> = []
     @State private var inspectedFrame: ProjectLensHeroImage?
     @State private var showRebuildReview = false
@@ -256,7 +257,7 @@ struct ShotRenderPromptPanel: View {
     private var panelHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                PlateLabel(text: historyVersion == nil ? "Current Shot · Segments" : "Historical Shot", size: 10, weight: .semibold)
+                PlateLabel(text: historyVersion == nil ? (editingEarlierCut ? "Earlier cut · Segments" : "Current Shot · Segments") : "Historical Shot", size: 10, weight: .semibold)
                 Spacer(minLength: 0)
             }
             if historyVersion == nil {

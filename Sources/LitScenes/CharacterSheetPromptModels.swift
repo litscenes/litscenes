@@ -115,6 +115,16 @@ enum CharacterSheetPrompt {
         return collapsingBlankRuns(rendered)
     }
 
+    static func renderShared(template: String, fill: Fill) -> String {
+        var layout = fill
+        layout.visualDescription = ""
+        layout.signatureProps = []
+        layout.storyIdentity = nil
+        layout.sheetDirectives = []
+        return ["Subject description: " + fill.visualDescription.trimmed, render(template: template, fill: layout)]
+            .joined(separator: "\n\n")
+    }
+
     /// Stable fingerprint of a rendered prompt; the stage compares it against the
     /// prompt the active sheet rendered from.
     static func promptHash(_ rendered: String) -> String {
@@ -195,7 +205,7 @@ extension ProjectPromptSettingsDocument {
     /// Superseded built-in sheet bodies, keyed like the live templates, so a project
     /// that saved the prompt sheet still receives repaired defaults.
     static let retiredCharacterSheetBodies: [String: Set<String>] = [
-        characterSheetTemplateKey(model: ""): [legacyCharacterSheetBody]
+        characterSheetTemplateKey(model: ""): [legacyCharacterSheetBody, previousCharacterSheetBody]
     ]
 
     /// Built-ins first, stored templates layered on top unless a stored body is a
@@ -220,8 +230,31 @@ extension ProjectPromptSettingsDocument {
         }
     }
 
-    /// Creator changes and identity continuity lead the layout so bounded providers retain them.
-    static let builtInCharacterSheetBody = legacyCharacterSheetBody
+    static let builtInCharacterSheetBody = """
+    Create a professional Character Reference Sheet for {{character_name}}{{reference_note}}. Create a continuity sheet focused on this subject.
+
+    {{visual_description}}
+    {{sheet_directives}}
+    {{signature_props}}
+    {{story_identity}}
+
+    Follow the described form and the latest explicit changes. Use reference images as identity evidence; requested changes take precedence. The subject may be human, animal, object, or another physical form. Do not invent human anatomy, expressions, poses, or clothing to fill a section. Adapt or omit inapplicable sections.
+    Where hair exists, preserve hair length, cut, silhouette, and texture. When a hair change is explicitly requested, carry it consistently into every applicable view and later update.
+
+    1. SUBJECT PROFILE — name, role, form, scale when known, and defining traits.
+    2. FORM AND VIEWS — useful views of the same subject at matching scale, preserving proportions and silhouette. Use front, side, and back where those orientations make sense.
+    3. IDENTITY DETAILS — close views of its defining structures, surfaces, and markings; show facial detail only when the subject has a face.
+    4. STATES — meaningful variations supported by the description, with consistent identity; expressions only where applicable.
+    5. MOVEMENT AND CONFIGURATION — supported motion or arrangement; a static subject may remain static.
+    6. DEFINING ELEMENTS — details of specified components, accessories, or clothing only where present.
+    7. COLOR AND MATERIAL PALETTE — the visible colors, textures, and materials.
+    8. CONTINUITY — preserve the resulting identity across all panels without introducing unrequested redesigns.
+
+    Use a clean neutral background, controlled lighting, sharp details, legible labels, and balanced spacing. Each panel shows the same subject. Include its stated defining elements and no unrelated subjects or scenery.
+    """
+
+    /// Retained byte-for-byte to migrate saved defaults without replacing custom layouts.
+    static let previousCharacterSheetBody = legacyCharacterSheetBody
         .replacingOccurrences(of: "\n{{sheet_directives}}\n", with: "")
         .replacingOccurrences(of: "{{visual_description}}", with: "{{sheet_directives}}\n\n" + hairContinuityInstruction + "\n\n{{visual_description}}")
         .replacingOccurrences(of: "8. DO NOT CHANGE — lock", with: "8. DO NOT CHANGE — except for explicitly requested changes, preserve")

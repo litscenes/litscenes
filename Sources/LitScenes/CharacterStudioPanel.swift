@@ -26,7 +26,6 @@ struct CharacterStudioPanel: View {
     let selectedStack: RenderStack?
     let credentialBlocker: (RenderStack) -> String?
     let isGenerating: Bool
-    let isRefining: Bool
     let blockedReason: String
     let failure: String
     /// GENERATE drafts the identity from the story before the study renders.
@@ -36,8 +35,6 @@ struct CharacterStudioPanel: View {
     var onUseCurrentSources: () -> Void
     var onSelectStack: (String) -> Void
     var onOpenAppSettings: () -> Void
-    var onReset: () -> Void
-    var onRefine: () -> Void
     var onGenerate: () -> Void
     var onClose: () -> Void
 
@@ -56,10 +53,13 @@ struct CharacterStudioPanel: View {
                 }
             }
             shotRow
-            editor
-            stateRow
-            refineRow
             footer
+            DisclosureGroup("Image prompt with framing") {
+                Text(draft.prompt).font(CanonType.interface(12)).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .font(CanonType.interface(11.5))
+            .foregroundStyle(CanonColor.muted)
         }
         .padding(14)
         .background(CanonColor.archiveWell, in: RoundedRectangle(cornerRadius: 10))
@@ -72,12 +72,12 @@ struct CharacterStudioPanel: View {
                 .font(CanonType.archive(8.5, weight: .bold))
                 .kerning(2.0)
                 .foregroundStyle(CanonColor.brass)
-            Text(draft.referenceIds.isEmpty ? "One image from the description" : "One image of \(name) from the selected references")
+            Text("Uses the smart prompt above")
                 .font(CanonType.interface(12))
                 .foregroundStyle(CanonColor.muted)
                 .lineLimit(1)
             Spacer(minLength: 0)
-            CharacterCapsButton(title: "CLOSE", color: CanonColor.muted, help: "Close the character image editor", action: onClose)
+
         }
     }
 
@@ -169,7 +169,7 @@ struct CharacterStudioPanel: View {
         StyleStudioFlowLayout(spacing: 6) {
             rowLabel("SHOT")
             ForEach(RosterCharacterRenderPrompt.Shot.allCases) { shot in
-                CharacterChip(title: shot.label, isActive: draft.shot == shot, help: "Seed a \(shot.label.lowercased()) study") {
+                CharacterChip(title: shot.label, isActive: draft.shot == shot, help: "Use \(shot.label.lowercased()) framing for the next image") {
                     draft.shot = shot
                     onChipsChanged()
                 }
@@ -187,87 +187,10 @@ struct CharacterStudioPanel: View {
         }
     }
 
-    private var editor: some View {
-        TextEditor(text: $draft.prompt)
-            .font(CanonType.interface(13))
-            .lineSpacing(3)
-            .foregroundStyle(CanonColor.bone)
-            .scrollContentBackground(.hidden)
-            .frame(minHeight: 140, idealHeight: 180, maxHeight: 220)
-            .padding(10)
-            .background(CanonColor.mediaCard, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(focus.wrappedValue == .studioPrompt ? CanonColor.brass.opacity(0.7) : CanonColor.hairlineDark))
-            .focused(focus, equals: .studioPrompt)
-    }
-
-    private var stateRow: some View {
-        HStack(spacing: 12) {
-            Text(draft.isEdited ? "EDITED" : "COMPOSED FROM SHOT + IDENTITY")
-                .font(CanonType.archive(7.5, weight: .semibold))
-                .kerning(1.0)
-                .foregroundStyle(draft.isEdited ? CanonColor.softGold : CanonColor.muted)
-            if draft.isEdited {
-                CharacterCapsButton(title: "UPDATE PROMPT", help: "Replace the edited prompt with the current shot and character description", action: onReset)
-            }
-            Spacer(minLength: 0)
-            if draft.sourcePromptChanged {
-                Text("Character or references changed; your edited prompt is retained.")
-                    .font(CanonType.interface(11))
-                    .foregroundStyle(CanonColor.softGold)
-            }
-            if let note = capacityNote {
-                Text(note.text)
-                    .font(CanonType.interface(11.5))
-                    .foregroundStyle(note.isWarning ? CanonColor.rust : CanonColor.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private var capacityNote: (text: String, isWarning: Bool)? {
-        let chosen = draft.referenceIds.count
-        guard chosen > 0 else { return nil }
-        let attached = attachedMediaIds.count
-        if attached < chosen {
-            return ("\(attached) of \(chosen) selected references attach; numbered images are used.", true)
-        }
-        return ("Using \(attached) reference\(attached == 1 ? "" : "s").", false)
-    }
-
-    private var refineRow: some View {
-        HStack(spacing: 8) {
-            TextField("Same sentiment, but… (rewrite the prompt per this direction)", text: $draft.refineInput)
-                .textFieldStyle(.plain)
-                .font(CanonType.interface(12.5))
-                .foregroundStyle(CanonColor.bone)
-                .focused(focus, equals: .studioRefine)
-                .onSubmit(onRefine)
-                .padding(.horizontal, 10)
-                .frame(height: 30)
-                .background(CanonColor.mediaCard, in: RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(focus.wrappedValue == .studioRefine ? CanonColor.brass.opacity(0.7) : CanonColor.hairlineDark))
-                .disabled(isRefining)
-            if isRefining {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(CanonColor.brass)
-            } else {
-                Button(action: onRefine) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundStyle(draft.refineInput.trimmed.isEmpty ? CanonColor.muted.opacity(0.5) : CanonColor.brass)
-                }
-                .buttonStyle(.plain)
-                .disabled(draft.refineInput.trimmed.isEmpty || draft.prompt.trimmed.isEmpty)
-                .help("Rewrite the prompt per this direction, preserving its sentiment")
-            }
-        }
-    }
-
     private var disabledReason: String {
         if isGenerating { return "Generating now." }
         if !blockedReason.isEmpty { return blockedReason }
-        if draft.prompt.trimmed.isEmpty { return "Write a prompt, or reset it." }
+        if draft.prompt.trimmed.isEmpty { return "Describe the subject in the smart prompt above." }
         return ""
     }
 

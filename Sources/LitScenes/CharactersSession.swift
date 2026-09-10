@@ -14,7 +14,7 @@ enum CharacterEditField: Hashable {
 /// editable prompt. Kept while the tab is open; never persisted.
 struct CharacterStudioDraft: Equatable {
     var isOpen = false
-    var shot: RosterCharacterRenderPrompt.Shot = .portrait
+    var shot: RosterCharacterRenderPrompt.Shot = .fullFigure
     var look: CharacterStudyLook = .asDescribed
     /// Chosen references: source media ids and/or the active sheet's id.
     var referenceIds: [String] = []

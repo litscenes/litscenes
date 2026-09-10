@@ -16,21 +16,40 @@ struct ShotPlayerSheetHost: View {
     /// Dismisses and focuses the narration strip on the shot's row.
     var onFocusNarration: (String) -> Void
     @State private var sourceInspection: ShotClipInspectorRequest?
-    @State private var endingReview: ShotContinuationAvailability?
-    @State private var endingEntryId = ""
+    @State private var endingSession: ShotContinuationReviewSession?
+    @State private var pendingEndingEntryId = ""
     @State private var endingMessage = ""
 
     @State private var isTailPickerOpen = false
     @State private var frameCreatorLaunch: WorkbenchFrameCreatorLaunch?
     @State private var pendingFrameCreatorLaunch: WorkbenchFrameCreatorLaunch?
     @State private var pendingTailReview = false
-    @State private var reviewPreparationId: UUID?
     @State private var promptDraftSaveFailed = false
     @State private var directionDraftSaveFailed = false
     @State private var styleImagePreview: StyleImagePreviewRequest?
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.undoManager) private var undoManager
     @State private var focusedEntryId = ""
+    @State private var editingScopeId = ""
     @StateObject private var editorPictureUndo = ShotPictureUndoCoordinator()
+
+    private func registerContinuationEdit(_ edit: ShotPictureStateEdit?) {
+        guard let edit else { return }
+        editorPictureUndo.applyState = { id, snapshot in library.restoreShotPictureState(shotId: id, snapshot: snapshot) }
+        editorPictureUndo.registerEdit(shotId: request.shotId, old: edit.before, new: edit.after,
+            actionName: "Use continuation take", undoManager: undoManager)
+    }
+
+    private func editing<T>(scopeId: String? = nil, _ action: () -> T) -> T {
+        let selected = scopeId ?? editingScopeId
+        let selection = selected.isEmpty ? nil : ShotOutputEditContext.Selection(shotId: request.shotId, scopeId: selected)
+        return ShotOutputEditContext.$selection.withValue(selection, operation: action)
+    }
+
+    private func editingAsync<T>(_ action: () async -> T) async -> T {
+        let selection = editingScopeId.isEmpty ? nil : ShotOutputEditContext.Selection(shotId: request.shotId, scopeId: editingScopeId)
+        return await ShotOutputEditContext.$selection.withValue(selection, operation: action)
+    }
 
     private var tailActions: CutStripActions {
         makeCutStripActions(library: library,
@@ -43,7 +62,7 @@ struct ShotPlayerSheetHost: View {
                     if next.openEndingReview { reviewEnding(next.focusedEntryId) }
                 },
                 onLaunchFrameCreator: { pendingFrameCreatorLaunch = $0; isTailPickerOpen = false },
-                pictureUndo: editorPictureUndo))
+                pictureUndo: editorPictureUndo, undoManager: undoManager))
     }
 
     private var tailInputs: [StageInput] {
@@ -66,33 +85,192 @@ struct ShotPlayerSheetHost: View {
     private func reviewEnding(_ entryId: String) { prepareSegmentReview(entryId: entryId) }
 
     private func prepareSegmentReview(entryId: String?) {
-        guard draftsSaved else {
-            endingMessage = "The latest segment drafts could not be saved. Retry from the segment card before rendering."
-            return
-        }
-        let preparationId = UUID()
-        reviewPreparationId = preparationId
-        Task {
-            let review: ShotContinuationAvailability
-            if let entryId {
-                review = await library.prepareShotContinuationRetakeAvailability(shotId: request.shotId, entryId: entryId)
-            } else {
-                review = await library.prepareShotContinuationAvailability(shotId: request.shotId)
-            }
-            guard reviewPreparationId == preparationId else { return }
-            reviewPreparationId = nil
-            if review.canContinue { endingEntryId = entryId ?? ""; endingReview = review }
-            else { endingMessage = review.lockReason?.message ?? "The segment inputs are not available" }
-        }
+        guard let shot = library.shotTimeline.shots.first(where: { $0.shotId == request.shotId }) else { return }
+        let targetId = entryId ?? shot.entries.first { shotPendingEndingEntryIds(shot).contains($0.entryId) }?.entryId ?? ""
+        let initial = targetId.isEmpty ? library.shotContinuationAvailability(shotId: request.shotId)
+            : shotEndingReviewPreview(shot: shot, entryId: targetId, frameLookup: library.projectWideFrameLookup)
+        endingSession = ShotContinuationReviewSession(intent: targetId.isEmpty ? .append
+            : (initial.targetFrame == nil ? .retake(targetId) : .ending(targetId)), initial: initial)
     }
 
-    @ViewBuilder
-    var body: some View {
-        if let index = library.shotTimeline.shots.firstIndex(where: { $0.shotId == request.shotId }) {
-            let plan = library.shotRenderPromptPlan(shotId: request.shotId)
-            ShotRenderPlayerModal(
-                shot: library.shotTimeline.shots[index],
-                shotOrdinal: index + 1,
+    private var scopedAudioRegionActions: ShotAudioRegionActions {
+        ShotAudioRegionActions(
+                    add: { laneId, asset, startSeconds in
+                        editing { library.addShotAudioRegion(
+                            shotId: request.shotId,
+                            laneId: laneId,
+                            asset: asset,
+                            startSeconds: startSeconds
+                        ) }
+                    },
+                    addTrack: { kind, asset, startSeconds in
+                        editing { library.addShotAudioTrack(
+                            shotId: request.shotId,
+                            kind: kind,
+                            asset: asset,
+                            startSeconds: startSeconds
+                        ) }
+                    },
+                    move: { regionId, startSeconds in
+                        editing { library.moveShotAudioRegion(
+                            shotId: request.shotId,
+                            regionId: regionId,
+                            startSeconds: startSeconds
+                        ) }
+                    },
+                    setGeometry: { regionId, start, sourceStart, duration in
+                        editing { library.setShotAudioRegionGeometry(
+                            shotId: request.shotId,
+                            regionId: regionId,
+                            startSeconds: start,
+                            sourceStartSeconds: sourceStart,
+                            durationSeconds: duration
+                        ) }
+                    },
+                    split: { regionId, atSeconds in
+                        editing { library.splitShotAudioRegion(
+                            shotId: request.shotId,
+                            regionId: regionId,
+                            atSeconds: atSeconds
+                        ) }
+                    },
+                    setLoops: { regionId, loops in
+                        editing { library.setShotAudioRegionLoops(
+                            shotId: request.shotId,
+                            regionId: regionId,
+                            loops: loops
+                        ) }
+                    },
+                    replaceMedia: { regionId, asset in
+                        editing { library.replaceShotAudioRegionMedia(
+                            shotId: request.shotId,
+                            regionId: regionId,
+                            asset: asset
+                        ) }
+                    },
+                    update: { region in
+                        editing { library.setShotAudioRegion(shotId: request.shotId, region: region) }
+                    },
+                    makeAudible: { regionId in
+                        editing { library.makeShotAudioRegionAudible(
+                            shotId: request.shotId,
+                            regionId: regionId
+                        ) }
+                    },
+                    delete: { regionId in
+                        editing { library.deleteShotAudioRegion(shotId: request.shotId, regionId: regionId) }
+                    },
+                    restore: { region in
+                        editing { library.restoreShotAudioRegion(shotId: request.shotId, region: region) }
+                    },
+                    restoreState: { snapshot in
+                        editing(scopeId: snapshot.scopeId, { library.restoreShotAudioState(
+                            shotId: request.shotId,
+                            snapshot: snapshot
+                        ) })
+                    },
+                    currentRegion: { regionId in
+                        editing { library.shotForEditing(shotId: request.shotId)?.audioRegions.first { $0.regionId == regionId } }
+                    },
+                    importAudioFiles: { urls in
+                        await library.importAudioMediaFiles(urls)
+                    },
+                    backfillDurations: {
+                        await editingAsync { await library.backfillShotAudioRegionSourceDurations(shotId: request.shotId) }
+                    },
+                    setSourceSegment: { segmentKey, gain, isMuted in
+                        editing { library.setShotSourceSegmentAudio(
+                            shotId: request.shotId,
+                            segmentKey: segmentKey,
+                            gain: gain,
+                            isMuted: isMuted
+                        ) }
+                    },
+                    detachSourceSegment: { segmentKey in
+                        editing { library.detachShotSourceSegmentAudio(
+                            shotId: request.shotId,
+                            segmentKey: segmentKey
+                        ) }
+                    },
+                    restoreSourceDetach: { snapshot in
+                        editing { library.restoreShotSourceDetach(shotId: request.shotId, snapshot: snapshot) }
+                    },
+                    currentSourceState: {
+                        let shot = editing { library.shotForEditing(shotId: request.shotId) }
+                        return ShotSourceDetachSnapshot(
+                            sourceSegmentAudio: shot?.sourceSegmentAudio ?? [],
+                            audioRegions: shot?.audioRegions ?? []
+                        )
+                    },
+                    addLane: { kind in
+                        editing { library.addShotAudioLane(shotId: request.shotId, kind: kind) }
+                    },
+                    removeLane: { laneId in
+                        editing { library.removeShotAudioLane(shotId: request.shotId, laneId: laneId) }
+                    },
+                    moveToLane: { regionId, laneId in
+                        editing { library.moveShotAudioRegionToLane(
+                            shotId: request.shotId,
+                            regionId: regionId,
+                            laneId: laneId
+                        ) }
+                    },
+                    setLaneEnabled: { laneId, enabled in
+                        editing { library.setShotAudioLaneEnabled(
+                            shotId: request.shotId,
+                            laneId: laneId,
+                            enabled: enabled
+                        ) }
+                    },
+                    setLaneVolume: { laneId, volume in
+                        editing { library.setShotAudioLaneVolume(
+                            shotId: request.shotId,
+                            laneId: laneId,
+                            volume: volume
+                        ) }
+                    },
+                    activateTake: { takeId in
+                        editing { library.activateShotMicrophoneTake(
+                            shotId: request.shotId,
+                            takeId: takeId
+                        ) }
+                    },
+                    addBatch: { laneId, assets, startSeconds in
+                        editing { library.addShotAudioRegionBatch(
+                            shotId: request.shotId,
+                            laneId: laneId,
+                            assets: assets,
+                            startSeconds: startSeconds
+                        ) }
+                    },
+                    deleteMany: { regionIds in
+                        editing { library.deleteShotAudioRegions(
+                            shotId: request.shotId,
+                            regionIds: regionIds
+                        ) }
+                    },
+                    paste: { payload, preferredLaneId, startSeconds in
+                        editing { library.pasteShotAudioRegion(
+                            shotId: request.shotId,
+                            payload: payload,
+                            preferredLaneId: preferredLaneId,
+                            startSeconds: startSeconds
+                        ) }
+                    },
+                    duplicate: { regionId in
+                        editing { library.duplicateShotAudioRegion(
+                            shotId: request.shotId,
+                            regionId: regionId
+                        ) }
+                    }
+                )
+    }
+
+    private func scopedPlayer(shot: ProjectShot, ordinal: Int) -> ShotRenderPlayerModal {
+        let plan = library.shotRenderPromptPlan(shot: shot)
+        return ShotRenderPlayerModal(
+                shot: shot,
+                shotOrdinal: ordinal,
                 planSegments: plan?.segments ?? [],
                 skipped: plan?.skipped ?? [],
                 skippedPlaceholders: plan?.skippedPlaceholders ?? [],
@@ -112,6 +290,10 @@ struct ShotPlayerSheetHost: View {
                     sourceInspection = ShotClipInspectorRequest(shotId: request.shotId, entryId: entryId)
                 },
                 onReviewEnding: { entryId in reviewEnding(entryId) },
+                editingOutputScopeId: editingScopeId,
+                outputScopeStatus: library.outputScopePreparation[request.shotId],
+                onRetryOutputScope: { library.scheduleOutputScopeRefresh() },
+                onSelectOutputScope: { editingScopeId = $0 },
                 onExtend: { isTailPickerOpen = true },
                 onNewVersion: {
                     guard draftsSaved else {
@@ -123,7 +305,6 @@ struct ShotPlayerSheetHost: View {
                         focusedEntryId = ""
                         promptDraftSaveFailed = false
                         directionDraftSaveFailed = false
-                        reviewPreparationId = nil
                         onReopen(ShotVideoRequest(shotId: copyId, intent: .edit))
                     }
                 },
@@ -143,7 +324,7 @@ struct ShotPlayerSheetHost: View {
                     )
                 },
                 onUseContinuationTake: { impact in
-                    library.useShotContinuationTake(shotId: request.shotId, impact: impact)
+                    Task { registerContinuationEdit(await library.useShotContinuationTake(shotId: request.shotId, impact: impact)) }
                 },
                 onRepairContinuationTake: { entryId, takeId in
                     await library.repairShotContinuationTake(shotId: request.shotId, entryId: entryId, takeId: takeId)
@@ -219,27 +400,27 @@ struct ShotPlayerSheetHost: View {
                     }
                 },
                 onSetSeamStyle: { entryId, style, intent in
-                    library.setShotSeamStyle(
+                    editing { library.setShotSeamStyle(
                         shotId: request.shotId,
                         entryId: entryId,
                         style: style,
                         intent: intent
-                    )
+                    ) }
                 },
                 onSetEntrySkipped: { entryId, skipped in
-                    library.setShotEntrySkipped(shotId: request.shotId, entryId: entryId, skipped: skipped)
+                    editing { library.setShotEntrySkipped(shotId: request.shotId, entryId: entryId, skipped: skipped) }
                 },
                 onSetCutList: { cutList in
-                    library.setShotCutList(shotId: request.shotId, cutList: cutList)
+                    editing { library.setShotCutList(shotId: request.shotId, cutList: cutList) }
                 },
                 onSetCutReversed: { reversed in
-                    library.setShotCutReversed(shotId: request.shotId, reversed: reversed)
+                    editing { library.setShotCutReversed(shotId: request.shotId, reversed: reversed) }
                 },
                 onRetryReverseProxies: {
                     // Opening the shot is a deliberate act, so it is the right
                     // moment to try a failed bake again — and the only reason a
                     // reversed CUT would otherwise sit playing forward forever.
-                    await library.ensureReverseProxies(shotId: request.shotId)
+                    await editingAsync { await library.ensureReverseProxies(shotId: request.shotId) }
                 },
                 reverseBakeProgress: library.reverseBakeProgress[request.shotId],
                 hasFALCredential: library.videoProviderCredentialStatuses
@@ -248,44 +429,44 @@ struct ShotPlayerSheetHost: View {
                     .first(where: { $0.provider == .decart })?.isConfigured == true,
                 activeShotJoinRenderId: library.activeJoinId(for: request.shotId),
                 onSetJoinRepair: { cutId, repair in
-                    library.setShotRazorJoinRepair(
+                    editing { library.setShotRazorJoinRepair(
                         shotId: request.shotId,
                         cutId: cutId,
                         repair: repair
-                    )
+                    ) }
                 },
                 onRestoreRazorCut: { cutId in
-                    library.restoreShotRazorCut(shotId: request.shotId, cutId: cutId)
+                    editing { library.restoreShotRazorCut(shotId: request.shotId, cutId: cutId) }
                 },
                 onRestorePictureState: { snapshot in
-                    library.restoreShotPictureState(shotId: request.shotId, snapshot: snapshot)
+                    editing(scopeId: snapshot.scopeId, { library.restoreShotPictureState(shotId: request.shotId, snapshot: snapshot) })
                 },
                 onRenderJoinBridge: { cutId, provider, duration, prompt in
                     Task {
-                        await library.renderShotRazorJoinBridge(
+                        await editingAsync { await library.renderShotRazorJoinBridge(
                             shotId: request.shotId,
                             cutId: cutId,
                             provider: provider,
                             durationSeconds: duration,
                             prompt: prompt
-                        )
+                        ) }
                     }
                 },
                 onPrepareJoinFrames: { cutId in
-                    await library.prepareShotRazorJoinFrames(
+                    await editingAsync { await library.prepareShotRazorJoinFrames(
                         shotId: request.shotId,
                         cutId: cutId
-                    )
+                    ) }
                 },
                 onCommitMicrophoneTake: { recording, startSeconds in
-                    await library.commitShotMicrophoneTake(
+                    await editingAsync { await library.commitShotMicrophoneTake(
                         shotId: request.shotId,
                         recording: recording,
                         startSeconds: startSeconds
-                    )
+                    ) }
                 },
                 onDeleteMicrophoneTake: { takeId in
-                    library.deleteShotMicrophoneTake(shotId: request.shotId, takeId: takeId)
+                    _ = editing { library.deleteShotMicrophoneTake(shotId: request.shotId, takeId: takeId) }
                 },
                 ambientBeds: library.ambientBedLibrary.beds,
                 audioClips: library.projectAudioItems,
@@ -300,216 +481,45 @@ struct ShotPlayerSheetHost: View {
                     library.renameAmbientBed(bedId: bedId, displayName: displayName)
                 },
                 onSetAmbientBed: { bedId in
-                    library.setShotAmbientBed(shotId: request.shotId, bedId: bedId)
+                    editing { library.setShotAmbientBed(shotId: request.shotId, bedId: bedId) }
                 },
                 onOpenNarration: {
                     onFocusNarration(request.shotId)
                 },
-                audioRegionActions: ShotAudioRegionActions(
-                    add: { laneId, asset, startSeconds in
-                        library.addShotAudioRegion(
-                            shotId: request.shotId,
-                            laneId: laneId,
-                            asset: asset,
-                            startSeconds: startSeconds
-                        )
-                    },
-                    addTrack: { kind, asset, startSeconds in
-                        library.addShotAudioTrack(
-                            shotId: request.shotId,
-                            kind: kind,
-                            asset: asset,
-                            startSeconds: startSeconds
-                        )
-                    },
-                    move: { regionId, startSeconds in
-                        library.moveShotAudioRegion(
-                            shotId: request.shotId,
-                            regionId: regionId,
-                            startSeconds: startSeconds
-                        )
-                    },
-                    setGeometry: { regionId, start, sourceStart, duration in
-                        library.setShotAudioRegionGeometry(
-                            shotId: request.shotId,
-                            regionId: regionId,
-                            startSeconds: start,
-                            sourceStartSeconds: sourceStart,
-                            durationSeconds: duration
-                        )
-                    },
-                    split: { regionId, atSeconds in
-                        library.splitShotAudioRegion(
-                            shotId: request.shotId,
-                            regionId: regionId,
-                            atSeconds: atSeconds
-                        )
-                    },
-                    setLoops: { regionId, loops in
-                        library.setShotAudioRegionLoops(
-                            shotId: request.shotId,
-                            regionId: regionId,
-                            loops: loops
-                        )
-                    },
-                    replaceMedia: { regionId, asset in
-                        library.replaceShotAudioRegionMedia(
-                            shotId: request.shotId,
-                            regionId: regionId,
-                            asset: asset
-                        )
-                    },
-                    update: { region in
-                        library.setShotAudioRegion(shotId: request.shotId, region: region)
-                    },
-                    makeAudible: { regionId in
-                        library.makeShotAudioRegionAudible(
-                            shotId: request.shotId,
-                            regionId: regionId
-                        )
-                    },
-                    delete: { regionId in
-                        library.deleteShotAudioRegion(shotId: request.shotId, regionId: regionId)
-                    },
-                    restore: { region in
-                        library.restoreShotAudioRegion(shotId: request.shotId, region: region)
-                    },
-                    restoreState: { snapshot in
-                        library.restoreShotAudioState(
-                            shotId: request.shotId,
-                            snapshot: snapshot
-                        )
-                    },
-                    currentRegion: { regionId in
-                        library.shotTimeline.shots
-                            .first { $0.shotId == request.shotId }?
-                            .audioRegions.first { $0.regionId == regionId }
-                    },
-                    importAudioFiles: { urls in
-                        await library.importAudioMediaFiles(urls)
-                    },
-                    backfillDurations: {
-                        await library.backfillShotAudioRegionSourceDurations(shotId: request.shotId)
-                    },
-                    setSourceSegment: { segmentKey, gain, isMuted in
-                        library.setShotSourceSegmentAudio(
-                            shotId: request.shotId,
-                            segmentKey: segmentKey,
-                            gain: gain,
-                            isMuted: isMuted
-                        )
-                    },
-                    detachSourceSegment: { segmentKey in
-                        library.detachShotSourceSegmentAudio(
-                            shotId: request.shotId,
-                            segmentKey: segmentKey
-                        )
-                    },
-                    restoreSourceDetach: { snapshot in
-                        library.restoreShotSourceDetach(shotId: request.shotId, snapshot: snapshot)
-                    },
-                    currentSourceState: {
-                        let shot = library.shotTimeline.shots.first { $0.shotId == request.shotId }
-                        return ShotSourceDetachSnapshot(
-                            sourceSegmentAudio: shot?.sourceSegmentAudio ?? [],
-                            audioRegions: shot?.audioRegions ?? []
-                        )
-                    },
-                    addLane: { kind in
-                        library.addShotAudioLane(shotId: request.shotId, kind: kind)
-                    },
-                    removeLane: { laneId in
-                        library.removeShotAudioLane(shotId: request.shotId, laneId: laneId)
-                    },
-                    moveToLane: { regionId, laneId in
-                        library.moveShotAudioRegionToLane(
-                            shotId: request.shotId,
-                            regionId: regionId,
-                            laneId: laneId
-                        )
-                    },
-                    setLaneEnabled: { laneId, enabled in
-                        library.setShotAudioLaneEnabled(
-                            shotId: request.shotId,
-                            laneId: laneId,
-                            enabled: enabled
-                        )
-                    },
-                    setLaneVolume: { laneId, volume in
-                        library.setShotAudioLaneVolume(
-                            shotId: request.shotId,
-                            laneId: laneId,
-                            volume: volume
-                        )
-                    },
-                    activateTake: { takeId in
-                        library.activateShotMicrophoneTake(
-                            shotId: request.shotId,
-                            takeId: takeId
-                        )
-                    },
-                    addBatch: { laneId, assets, startSeconds in
-                        library.addShotAudioRegionBatch(
-                            shotId: request.shotId,
-                            laneId: laneId,
-                            assets: assets,
-                            startSeconds: startSeconds
-                        )
-                    },
-                    deleteMany: { regionIds in
-                        library.deleteShotAudioRegions(
-                            shotId: request.shotId,
-                            regionIds: regionIds
-                        )
-                    },
-                    paste: { payload, preferredLaneId, startSeconds in
-                        library.pasteShotAudioRegion(
-                            shotId: request.shotId,
-                            payload: payload,
-                            preferredLaneId: preferredLaneId,
-                            startSeconds: startSeconds
-                        )
-                    },
-                    duplicate: { regionId in
-                        library.duplicateShotAudioRegion(
-                            shotId: request.shotId,
-                            regionId: regionId
-                        )
-                    }
-                ),
+                audioRegionActions: scopedAudioRegionActions,
                 restylePromptSeed: library.shotLookPromptSeed(),
                 activeShotRestyleId: library.activeLookVersionId(for: request.shotId),
                 onActivateLook: { versionId in
-                    library.activateShotLookVersion(shotId: request.shotId, versionId: versionId)
+                    editing { library.activateShotLookVersion(shotId: request.shotId, versionId: versionId) }
                 },
                 onStartRestyle: { prompt, enhancePrompt, seed, style, provider in
-                    library.startShotLookRestyle(
+                    editing { library.startShotLookRestyle(
                         shotId: request.shotId,
                         prompt: prompt,
                         enhancePrompt: enhancePrompt,
                         seed: seed,
                         style: style,
                         provider: provider
-                    )
+                    ) }
                 },
                 onCancelRestyle: {
-                    library.cancelShotLookRestyle(shotId: request.shotId)
+                    editing { library.cancelShotLookRestyle(shotId: request.shotId) }
                 },
                 onRetryRestyle: { versionId in
-                    library.retryShotLook(shotId: request.shotId, versionId: versionId)
+                    editing { library.retryShotLook(shotId: request.shotId, versionId: versionId) }
                 },
                 onContinueLookAsNewShot: {
-                    let newShotId = await library.continueActiveShotLookAsNewShot(shotId: request.shotId)
+                    let newShotId = await editingAsync { await library.continueActiveShotLookAsNewShot(shotId: request.shotId) }
                     if let newShotId {
                         onReopen(ShotVideoRequest(shotId: newShotId))
                     }
                     return newShotId
                 },
                 onSendToFootage: {
-                    await library.sendShotOutputToFootage(shotId: request.shotId)
+                    await editingAsync { await library.sendShotOutputToFootage(shotId: request.shotId) }
                 },
                 onExportForYouTube: {
-                    await library.exportShotOutputForYouTube(shotId: request.shotId)
+                    await editingAsync { await library.exportShotOutputForYouTube(shotId: request.shotId) }
                 },
                 onCollectFrame: { path, fileSeconds, outputSeconds in
                     await library.collectShotFrameStill(
@@ -521,58 +531,67 @@ struct ShotPlayerSheetHost: View {
                 },
                 projectId: library.currentProject?.projectId ?? "",
                 onPastePictureSegments: { insertions, status in
-                    library.pasteShotPictureSegments(
+                    editing { library.pasteShotPictureSegments(
                         shotId: request.shotId,
                         insertions: insertions,
                         status: status
-                    )
+                    ) }
                 },
                 onRemovePictureInsertions: { insertionIds in
-                    library.removeShotPictureInsertions(
+                    editing { library.removeShotPictureInsertions(
                         shotId: request.shotId,
                         insertionIds: insertionIds
-                    )
+                    ) }
                 },
                 onSetPictureInsertionRate: { insertionIds, rate in
-                    library.setShotPictureInsertionRate(
+                    editing { library.setShotPictureInsertionRate(
                         shotId: request.shotId,
                         insertionIds: insertionIds,
                         rate: rate
-                    )
+                    ) }
                 },
                 onSetPictureInsertionMuted: { insertionIds, muted in
-                    library.setShotPictureInsertionMuted(
+                    editing { library.setShotPictureInsertionMuted(
                         shotId: request.shotId,
                         insertionIds: insertionIds,
                         muted: muted
-                    )
+                    ) }
                 },
                 onRecopyPictureInsertion: { insertionId in
-                    library.recopyShotPictureInsertion(
+                    editing { library.recopyShotPictureInsertion(
                         shotId: request.shotId,
                         insertionId: insertionId
-                    )
+                    ) }
                 },
                 onPasteSegmentCards: { cards, afterEntryId in
-                    library.pasteShotSegmentCards(
+                    editing { library.pasteShotSegmentCards(
                         shotId: request.shotId,
                         cards: cards,
                         afterEntryId: afterEntryId
-                    )
+                    ) }
                 },
                 onSetSectionRate: { materialStart, materialEnd, rate in
-                    library.setShotSectionRate(
+                    let edit = editing { library.setShotSectionRate(
                         shotId: request.shotId,
                         materialStart: materialStart,
                         materialEnd: materialEnd,
                         rate: rate
-                    )
+                    ) }
+                    return ShotSectionRateResult(edit: edit, message: library.aestheticStatus)
                 },
                 onClose: {
                     onDismiss()
                 }
             )
-            .id(request.shotId)
+    }
+
+    @ViewBuilder
+    var body: some View {
+        if let index = library.shotTimeline.shots.firstIndex(where: { $0.shotId == request.shotId }) {
+            let rootShot = library.shotTimeline.shots[index]
+            let editorShot = rootShot.outputScope(editingScopeId)?.project(from: rootShot) ?? rootShot
+            scopedPlayer(shot: editorShot, ordinal: index + 1)
+            .id(request.shotId + ":" + editingScopeId)
             .sheet(item: $sourceInspection) { source in
                 if library.shotTimeline.shots.first(where: { $0.shotId == source.shotId })?.entries.first(where: { $0.entryId == source.entryId })?.isClip == true {
                     ShotClipInspectorView(library: library, shotId: source.shotId, entryId: source.entryId,
@@ -588,11 +607,14 @@ struct ShotPlayerSheetHost: View {
                     frameCreatorLaunch = launch
                 } else if pendingTailReview {
                     pendingTailReview = false
-                    reviewTail()
+                    let target = pendingEndingEntryId
+                    pendingEndingEntryId = ""
+                    prepareSegmentReview(entryId: target.isEmpty ? nil : target)
                 }
             }) {
                 ShotTailPickerMenu(cut: library.shotTimeline.shots[index], poolInputs: tailInputs,
                     actions: tailActions,
+                    onEnding: { pendingEndingEntryId = $0; pendingTailReview = true; isTailPickerOpen = false },
                     onAI: { pendingTailReview = true; isTailPickerOpen = false },
                     onClose: { isTailPickerOpen = false })
             }
@@ -608,26 +630,31 @@ struct ShotPlayerSheetHost: View {
             .onChange(of: library.shotTimeline.shots[index].entries.map(\.entryId)) { old, new in
                 if let appended = new.last, !old.contains(appended) { focusedEntryId = appended }
             }
-            .sheet(isPresented: Binding(get: { endingReview != nil }, set: { if !$0 { endingReview = nil } })) {
-                if let review = endingReview {
-                    ShotContinuationReviewView(availability: review,
-                        configuredModels: Set(ShotRenderModel.allCases.filter(library.canExecuteShotRenderModel)),
-                        pricing: library.falPricing, title: review.targetFrame == nil ? (endingEntryId.isEmpty ? "Extend Scene" : "Render new take") : "Render Ending",
-                        onCancel: { endingReview = nil }, onRender: { recipe in
-                            let entryId = endingEntryId
-                            endingReview = nil
-                            Task {
-                                if entryId.isEmpty { _ = await library.startShotContinuation(shotId: request.shotId, request: recipe) }
-                                else { _ = await library.startShotContinuationRetake(shotId: request.shotId, entryId: entryId, request: recipe) }
-                            }
-                        })
-                }
+            .sheet(item: $endingSession) { session in
+                ShotContinuationReviewSheet(session: session,
+                    configuredModels: Set(ShotRenderModel.allCases.filter(library.canExecuteShotRenderModel)),
+                    pricing: library.falPricing, prepare: {
+                        if !draftsSaved {
+                            var value = session.initial
+                            value.preparationError = "The latest direction could not be saved. Close this review and retry saving on the segment card."
+                            return value
+                        }
+                        return session.entryId.isEmpty ? await library.prepareShotContinuationAvailability(shotId: request.shotId)
+                            : await library.prepareShotContinuationRetakeAvailability(shotId: request.shotId, entryId: session.entryId)
+                    }, onPrecedingEnding: { reviewEnding($0) }, onCancel: { endingSession = nil }, onRender: { recipe in
+                        endingSession = nil
+                        Task {
+                            let before = library.shotTimeline.shots.first { $0.shotId == request.shotId }
+                            let outcome = session.entryId.isEmpty
+                                ? await library.startShotContinuation(shotId: request.shotId, request: recipe)
+                                : await library.startShotContinuationRetake(shotId: request.shotId, entryId: session.entryId, request: recipe)
+                            registerContinuationEdit(shotContinuationSelectionEdit(before: before,
+                                after: library.shotTimeline.shots.first { $0.shotId == request.shotId }, outcome: outcome))
+                        }
+                    }).id(session.id)
             }
-            .onDisappear { reviewPreparationId = nil }
-            .alert("Segment Review", isPresented: Binding(get: { !endingMessage.isEmpty }, set: { if !$0 { endingMessage = "" } })) {
-                Button("OK") { endingMessage = "" }
-            } message: { Text(endingMessage) }
             .onAppear {
+                library.scheduleOutputScopeRefresh()
                 if request.openEndingReview { reviewEnding(request.focusedEntryId) }
                 // The re-render panel shows spend estimates; refresh the
                 // day-cached FAL rates whenever the player opens (mirrors

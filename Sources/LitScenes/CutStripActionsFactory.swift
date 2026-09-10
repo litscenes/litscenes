@@ -267,6 +267,12 @@ func makeCutStripActions(
             )
         )
     }
+    func registerContinuationEdit(_ shotId: String, _ edit: ShotPictureStateEdit?) {
+        guard let edit else { return }
+        surface.pictureUndo.applyState = { id, snapshot in library.restoreShotPictureState(shotId: id, snapshot: snapshot) }
+        surface.pictureUndo.registerEdit(shotId: shotId, old: edit.before, new: edit.after,
+            actionName: "Use continuation take", undoManager: surface.undoManager)
+    }
     actions.continuationAvailability = { cutId in
         library.shotContinuationAvailability(shotId: cutId)
     }
@@ -274,19 +280,27 @@ func makeCutStripActions(
         await library.prepareShotContinuationAvailability(shotId: cutId)
     }
     actions.onStartContinuation = { cutId, request in
-        await library.startShotContinuation(shotId: cutId, request: request)
+        let before = library.shotTimeline.shots.first { $0.shotId == cutId }
+        let outcome = await library.startShotContinuation(shotId: cutId, request: request)
+        registerContinuationEdit(cutId, shotContinuationSelectionEdit(before: before,
+            after: library.shotTimeline.shots.first { $0.shotId == cutId }, outcome: outcome))
+        return outcome
     }
     actions.onPrepareContinuationRetake = { cutId, entryId in
         await library.prepareShotContinuationRetakeAvailability(shotId: cutId, entryId: entryId)
     }
     actions.onStartContinuationRetake = { cutId, entryId, request in
-        await library.startShotContinuationRetake(shotId: cutId, entryId: entryId, request: request)
+        let before = library.shotTimeline.shots.first { $0.shotId == cutId }
+        let outcome = await library.startShotContinuationRetake(shotId: cutId, entryId: entryId, request: request)
+        registerContinuationEdit(cutId, shotContinuationSelectionEdit(before: before,
+            after: library.shotTimeline.shots.first { $0.shotId == cutId }, outcome: outcome))
+        return outcome
     }
     actions.continuationBranchImpact = { cutId, entryId, takeId in
         library.shotContinuationBranchImpact(shotId: cutId, entryId: entryId, takeId: takeId)
     }
     actions.onUseContinuationTake = { cutId, impact in
-        library.useShotContinuationTake(shotId: cutId, impact: impact)
+        Task { registerContinuationEdit(cutId, await library.useShotContinuationTake(shotId: cutId, impact: impact)) }
     }
     actions.continuationRechainEstimate = { cutId, rebuildAll in
         library.shotContinuationRechainEstimate(shotId: cutId, rebuildAll: rebuildAll)

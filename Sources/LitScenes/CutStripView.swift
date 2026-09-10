@@ -303,11 +303,8 @@ struct CutStripView: View {
     @State private var targetedCellEntryId = ""
     @State private var isAppendTargeted = false
     @State private var isAppendPickerOpen = false
-    @State private var continuationReview: ShotContinuationAvailability?
+    @State private var continuationSession: ShotContinuationReviewSession?
     @State private var continuationRetakeEntryId = ""
-    @State private var isPreparingContinuation = false
-    @State private var continuationPreparationMessage = ""
-    @State private var continuationPreparationTask: Task<Void, Never>?
     @State private var takeBrowserEntryId = ""
     @State private var isTrashArmed = false
     @State private var trashArmGeneration = 0
@@ -414,7 +411,6 @@ struct CutStripView: View {
         .onHover { isHoveringStrip = $0 }
         .onDisappear {
             narrationPlayer.stop()
-            continuationPreparationTask?.cancel()
         }
     }
 
@@ -1496,7 +1492,9 @@ struct CutStripView: View {
             .font(CanonType.archive(7, weight: .semibold))
             .foregroundStyle(chipInk)
             if shotPendingEndingEntryIds(cut).contains(entry.entryId) {
-                Button("RENDER ENDING") { beginContinuationReview(retakeEntryId: entry.entryId) }
+                Text("ENDING FRAME · NOT RENDERED")
+                    .font(CanonType.archive(6.5, weight: .medium)).foregroundStyle(chipInk.opacity(0.7))
+                Button("RENDER ENDING…") { beginContinuationReview(retakeEntryId: entry.entryId) }
                     .buttonStyle(PlateButtonStyle())
                     .disabled(actions.videoOperationShotIds.contains(cut.shotId))
                     .help("Review the exact start and ending Frame, model, direction and price. Earlier clips are kept.")
@@ -2109,37 +2107,21 @@ struct CutStripView: View {
     }
 
     private func beginContinuationReview(retakeEntryId: String = "") {
-        guard !isPreparingContinuation else { return }
-        continuationRetakeEntryId = retakeEntryId
-        continuationReview = nil
-        continuationPreparationMessage = ""
-        isPreparingContinuation = true
+        let entryId = retakeEntryId.isEmpty
+            ? (cut.entries.first { shotPendingEndingEntryIds(cut).contains($0.entryId) }?.entryId ?? "") : retakeEntryId
+        continuationRetakeEntryId = entryId
+        let initial = entryId.isEmpty ? actions.continuationAvailability(cut.shotId)
+            : shotEndingReviewPreview(shot: cut, entryId: entryId, frameLookup: actions.frameLookup)
+        let intent: ShotContinuationReviewSession.Intent = entryId.isEmpty ? .append
+            : (initial.targetFrame == nil ? .retake(entryId) : .ending(entryId))
+        continuationSession = ShotContinuationReviewSession(intent: intent, initial: initial)
         isAppendPickerOpen = true
         actions.onRenderPlanOpened()
-        continuationPreparationTask?.cancel()
-        continuationPreparationTask = Task {
-            let prepared = retakeEntryId.isEmpty
-                ? await actions.onPrepareContinuation(cut.shotId)
-                : await actions.onPrepareContinuationRetake(cut.shotId, retakeEntryId)
-            guard !Task.isCancelled else { return }
-            isPreparingContinuation = false
-            if let reason = prepared.lockReason {
-                continuationPreparationMessage = reason.message
-            } else if prepared.canContinue {
-                continuationReview = prepared
-            } else {
-                continuationPreparationMessage = "No executable continuation method is available for this endpoint."
-            }
-        }
     }
 
     private func clearContinuationReview(closePopover: Bool) {
-        continuationReview = nil
+        continuationSession = nil
         continuationRetakeEntryId = ""
-        continuationPreparationMessage = ""
-        isPreparingContinuation = false
-        continuationPreparationTask?.cancel()
-        continuationPreparationTask = nil
         if closePopover { isAppendPickerOpen = false }
     }
 
@@ -2157,26 +2139,22 @@ struct CutStripView: View {
 
     @ViewBuilder
     private var appendPicker: some View {
-        if let availability = continuationReview {
-            ShotContinuationReviewView(
-                availability: availability,
-                configuredModels: actions.configuredRenderModels,
-                pricing: actions.falPricing,
-                title: availability.targetFrame != nil ? "Render Ending" : (continuationRetakeEntryId.isEmpty ? (cut.hasSavedPlayback ? "Extend Scene" : "Animate Frame") : "New Continuation Take"),
-                onCancel: { clearContinuationReview(closePopover: false) },
-                onRender: confirmContinuation
-            )
-        } else {
-            appendPickerMenu
-        }
+        if let session = continuationSession {
+            ShotContinuationReviewSheet(session: session, configuredModels: actions.configuredRenderModels,
+                pricing: actions.falPricing, prepare: {
+                    session.entryId.isEmpty ? await actions.onPrepareContinuation(cut.shotId)
+                        : await actions.onPrepareContinuationRetake(cut.shotId, session.entryId)
+                }, onPrecedingEnding: { beginContinuationReview(retakeEntryId: $0) },
+                onCancel: { clearContinuationReview(closePopover: true) }, onRender: confirmContinuation)
+                .id(session.id)
+        } else { appendPickerMenu }
     }
 
     /// The append picker: one semantic tail menu, then the complete Source
     /// Material inventory with unused inputs first.
     private var appendPickerMenu: some View {
         ShotTailPickerMenu(cut: cut, poolInputs: poolInputs, actions: actions,
-            isPreparingContinuation: isPreparingContinuation,
-            continuationPreparationMessage: continuationPreparationMessage,
+            onEnding: { beginContinuationReview(retakeEntryId: $0) },
             onAI: { beginContinuationReview() }, onClose: { isAppendPickerOpen = false })
     }
 

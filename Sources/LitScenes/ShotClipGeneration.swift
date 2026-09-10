@@ -48,6 +48,13 @@ func recordShotContinuationEvent(take: ShotContinuationTake, projectId: String, 
         "source_take_id": take.anchor.sourceTakeId,
         "source_render_version_id": take.anchor.sourceRenderVersionId
     ]
+    if let review = take.anchor.outputReview {
+        media["reviewed_output_fingerprint"] = review.fingerprint
+        media["reviewed_output_scope_id"] = review.scope.scopeId
+        media["reviewed_source_segment_keys"] = review.scope.segmentKeys
+        media["reviewed_source_take_ids"] = review.sourceClips.map(\.continuationTakeId).filter { !$0.isEmpty }
+        media["reviewed_output_seconds"] = review.scope.cache?.durationSeconds
+    }
     if let endpoint = take.anchor.endpointEvidence {
         media["endpoint_revision"] = endpoint.revision
         media["source_video_fingerprint"] = endpoint.sourceFingerprint

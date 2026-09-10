@@ -129,7 +129,9 @@ struct ShotInsertionPopover: View {
             switch state {
             case .olderTake:
                 PlateLabel(
-                    text: "The segment re-rendered; this copy pinned the old pixels and now plays nothing.",
+                    text: isSpeedCarrier
+                        ? "This speed section needs its current source. Available source picture plays at 1× until you re-copy it."
+                        : "The segment re-rendered; this copy pinned the old pixels and now plays nothing.",
                     size: 7,
                     color: PlateColor.inkFaint
                 )

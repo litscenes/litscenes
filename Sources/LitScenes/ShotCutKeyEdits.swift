@@ -226,32 +226,10 @@ func shotClipRangeShedKeys(entry: ShotFrameEntry) -> Set<String> {
 /// still-watched old take the moment an in-flight render completed.
 /// Unpinned (footage) razors are never stale here.
 func shotStalePinnedCutIds(shot: ProjectShot) -> [String] {
-    var retained = Set<String>()
-    for version in shot.renderVersions {
-        for clip in version.segmentClips where !clip.clipPath.isEmpty {
-            retained.insert(clip.clipPath)
-        }
-    }
-    for clip in shot.seedSegmentClips where !clip.clipPath.isEmpty {
-        retained.insert(clip.clipPath)
-    }
-    // Artifact-band cuts pin the version's FULL video, which is never in the
-    // segment-clip union — without this branch every artifact cut would be
-    // swept at the first render completion. Their own law: stale only when
-    // the version is gone or its video was re-pointed; a merely superseded
-    // version's cuts stay (inert while unshown, revived by re-activation).
-    let artifactPathsByVersionId = Dictionary(
-        shot.renderVersions.map { ($0.versionId, $0.videoPath.trimmed) },
-        uniquingKeysWith: { first, _ in first }
-    )
-    return shot.cutList.segmentCuts
-        .filter { cut in
-            if let versionId = shotArtifactSegmentKeyVersionId(cut.segmentKey) {
-                return artifactPathsByVersionId[versionId] != cut.clipPath
-            }
-            return !cut.clipPath.isEmpty && !retained.contains(cut.clipPath)
-        }
-        .map(\.id)
+    let catalog = ShotPictureSourceCatalog(shot: shot)
+    return shot.cutList.segmentCuts.filter {
+        !$0.clipPath.isEmpty && !catalog.retains(key: $0.segmentKey, path: $0.clipPath, scope: $0.sourceScope)
+    }.map(\.id)
 }
 
 /// The marker the Mark button would REMOVE: the nearest reference marker

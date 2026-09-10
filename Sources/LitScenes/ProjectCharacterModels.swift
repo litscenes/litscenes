@@ -7,6 +7,7 @@ struct ProjectCharacter: Codable, Hashable, Identifiable, Sendable {
     var characterId: String
     var name: String
     var descriptionPrompt: String = ""
+    var promptHistory: CharacterPromptHistory?
     /// Ordered MediaItemRecord.mediaId values; the first entries are the strongest
     /// references and attach first (up to the per-character attachment budget).
     var referenceMediaIds: [String] = []
@@ -114,6 +115,7 @@ struct ProjectCharacter: Codable, Hashable, Identifiable, Sendable {
         case characterId
         case name
         case descriptionPrompt
+        case promptHistory
         case referenceMediaIds
         case referenceLabels
         case signatureProps
@@ -173,6 +175,7 @@ struct ProjectCharacter: Codable, Hashable, Identifiable, Sendable {
         characterId = try container.decodeIfPresent(String.self, forKey: .characterId) ?? ""
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
         descriptionPrompt = try container.decodeIfPresent(String.self, forKey: .descriptionPrompt) ?? ""
+        promptHistory = try container.decodeIfPresent(CharacterPromptHistory.self, forKey: .promptHistory)
         referenceMediaIds = try container.decodeIfPresent([String].self, forKey: .referenceMediaIds) ?? []
         referenceLabels = try container.decodeIfPresent([String: String].self, forKey: .referenceLabels) ?? [:]
         signatureProps = try container.decodeIfPresent([String].self, forKey: .signatureProps) ?? []

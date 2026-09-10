@@ -344,6 +344,7 @@ struct CharacterSheetRefineContext {
     /// The transmitted prompt is the user's hand edit, so identity changes recorded
     /// this turn do not enter it until they reset or edit the prompt.
     var promptIsHandEdited: Bool = false
+    var smartPromptVersionId: String = ""
     var characterId: String = ""
     var runId: String = ""
 }
@@ -357,6 +358,7 @@ struct OpenAICharacterIdentityDraftResult: Sendable {
 
 struct OpenAICharacterSheetRefineResult: Sendable {
     var response: CharacterSheetRefineResponse
+    var traceId: String = ""
     var responseId: String
     var model: String
     var usage: OpenAIUsage
@@ -1916,6 +1918,7 @@ struct OpenAIClient: Sendable {
             traceArtifactId: context.characterId,
             traceRequestTextJSON: inferenceTraceJSONString([
                 "model": model, "prompt": prompt, "operator_prompt": context.userMessage,
+                "smart_prompt": context.visualDescription, "smart_prompt_version_id": context.smartPromptVersionId,
                 "reasoning": ["effort": "low"], "text": textFormat, "store": true,
                 "sources": sourceRefs
             ]),
@@ -1939,6 +1942,7 @@ struct OpenAIClient: Sendable {
         }
         return OpenAICharacterSheetRefineResult(
             response: response,
+            traceId: result.traceId,
             responseId: decoded.id,
             model: decoded.model ?? model,
             usage: decoded.usage ?? OpenAIUsage(inputTokens: 0, outputTokens: 0, totalTokens: 0)
@@ -3249,17 +3253,21 @@ struct OpenAIClient: Sendable {
             ? "This prompt is HAND-EDITED by the user and renders verbatim: your changes to the appearance, props, and refinements are recorded on the character but do NOT enter the prompt until the user resets it to the composed prompt or edits it by hand. Say so in assistant_message in one short clause."
             : ""
         return """
-        You refine one character's reference sheet through conversation. Return only JSON matching the schema.
+        You coauthor a story subject's SMART PROMPT with the user. It is the editable document on the left, shared by image and reference sheet generation. Return only JSON matching the schema.
+        Work from the full current prompt below, including the user's manual edits. Apply the requested change while retaining established details outside its scope. The result must remain a complete, useful subject description, never just a change summary.
+        Follow the described physical form. A story subject need not be human, humanoid, alive, or personified. Do not invent anatomy or clothing to fit a reference-sheet layout.
+        Include all current creative constraints in visual_description. The output image or sheet layout is configured separately; do not insert that layout into the shared subject description.
 
         Project: \(context.projectName)
         The character: "\(context.characterName)"
-        Appearance today: \(context.visualDescription.trimmed.isEmpty ? "(nothing written yet)" : context.visualDescription.trimmed)
+        Current smart prompt (the complete starting point):
+        \(context.visualDescription.trimmed.isEmpty ? "(nothing written yet)" : context.visualDescription.trimmed)
         Always with them: \(props.isEmpty ? "(nothing recorded)" : props.joined(separator: "; "))
         Story identity: \(context.storyIdentityLines.trimmed.isEmpty ? "(none)" : context.storyIdentityLines.trimmed)
         Sheet refinements currently in force:
         \(directives.isEmpty ? "(none)" : directives.map { "- \($0)" }.joined(separator: "\n"))
 
-        The exact prompt the next sheet render transmits today:
+        Reference sheet output configuration for context; it must not override the smart prompt:
         \"\"\"
         \(context.renderedSheetPrompt)
         \"\"\"
@@ -3276,11 +3284,11 @@ struct OpenAIClient: Sendable {
 
         Rules:
         - assistant_message: short and conversational — confirm the instructions saved for the next render. Do not promise that a future image will satisfy them or claim visual verification before inspecting an actual result. Describe appearance only; never identify a real private person by name.
-        - Preserve established hair length, cut, silhouette, and texture unless the user explicitly changes them. Carry requested appearance changes into visual_description as well as relevant sheet_directives. Apply the resulting look consistently across turnaround, face details, expression and pose panels. Keep an unchanged trait unchanged when another feature is edited.
-        - visual_description: the FULL replacement appearance line when the user changed how the character looks; "" to keep the current one.
-        - signature_props: the full replacement list (at most 3) when props changed; [] to keep the current ones.
+        - Preserve established form, proportions, materials, and distinguishing features unless the user explicitly changes them. Where hair exists, preserve its length, cut, silhouette, and texture. Carry requested changes and retained constraints into the full visual_description. Keep an unchanged trait unchanged when another feature is edited.
+        - visual_description: the FULL revised smart prompt when the user requests a change or supplies a description; "" only to leave it unchanged when answering a question. Retain the subject identity and all details not changed or retracted. A short change summary belongs only in change_summary.
+        - signature_props: the current defining objects or accessories (at most 3) stated in the revised smart prompt; [] when none remain. Do not invent additions.
         - sheet_directives: the COMPLETE list in force after this turn — carry forward every earlier directive the user did not retract, add the new ones, drop what they reversed; at most 12, each one imperative line about how the sheet renders. No story or frame style words.
-        - source_image_notes: for attached source images that clearly show this character, a short label of what the image shows ("face, three-quarter"); [] otherwise. Use media_id values exactly as listed.
+        - source_image_notes: for attached source images that clearly show this subject, a short label of the visible view or detail; [] otherwise. Use media_id values exactly as listed.
         - change_summary: one line, or "" when nothing about the character changed (the user only asked a question).
         """
     }
@@ -3449,7 +3457,7 @@ struct OpenAIClient: Sendable {
             ? "- Nothing else is written yet."
             : "- Already written — keep exactly, return these parts empty (\"\" or []):\n" + context.keepLines.map { "  - \($0)" }.joined(separator: "\n")
         let imageRule = context.sourceCount > 0
-            ? "- The attached images ARE this person. Derive face, hair, build, skin, and clothing from them, then reconcile with the Goal's world. Never identify a real person by name."
+            ? "- The attached images show this subject. Derive its form, proportions, materials, and distinguishing features from them, honoring explicit written changes. Never identify a real person by name."
             : "- No images are attached: invent the appearance within the Goal's world."
         let labelRule = context.sourceCount > 0
             ? "- source_image_notes: one short label per attached image naming what it shows (angle, age, context), using the media_id values listed below; [] when source_image_notes is not requested."
@@ -3466,7 +3474,7 @@ struct OpenAIClient: Sendable {
         Drafting rules:
         - Fit the saved Goal's world, era, and register; never import a genre the Goal does not state.
         - Make this character DISTINCT from every other listed character — silhouette, palette, age, build, gear, bearing — and coherent with the ensemble.
-        - visual_description is render-facing: species, age, build, face, hair, skin, dress, gear, bearing — plain content words, identical across appearances, 40 to 90 words. No style, medium, or camera words.
+        - visual_description is a complete render-facing subject description: form, proportions, materials, distinguishing features, and any specified anatomy or accessories. Do not assume the subject is human, humanoid, alive, or personified. Use plain content words, identical across appearances. No output-layout or camera instructions.
         \(imageRule)
         - signature_props: up to three physical objects or wearables they always carry; [] when not requested.
         - environment_affinity: the place they visually belong to, plain content words; "" when not requested.

@@ -711,6 +711,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
     /// become a second mutable take browser.
     var continuationRecords: [ShotContinuationRecord] = []
     var continuationOnlyVersionIds: [String] = []
+    var outputScopes: [ShotOutputScope] = []
     /// Immutable Lucy finishing passes. They are intentionally independent
     /// of render versions: the Original owns cuts and segment editing, while
     /// a Look is flattened picture derived from one exact visual edit.
@@ -854,6 +855,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         case activeRenderVersionId
         case continuationRecords
         case continuationOnlyVersionIds
+        case outputScopes
         case lookVersions
         case activeLookVersionId
         case clipLookVersions
@@ -953,6 +955,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         activeRenderVersionId = try container.decodeIfPresent(String.self, forKey: .activeRenderVersionId) ?? ""
         continuationRecords = ((try? container.decodeIfPresent([ShotContinuationRecord].self, forKey: .continuationRecords)) ?? nil) ?? []
         continuationOnlyVersionIds = try container.decodeIfPresent([String].self, forKey: .continuationOnlyVersionIds) ?? []
+        outputScopes = try container.decodeIfPresent([ShotOutputScope].self, forKey: .outputScopes) ?? []
         lookVersions = ((try? container.decodeIfPresent([ShotRestyleArtifact].self, forKey: .lookVersions)) ?? nil) ?? []
         activeLookVersionId = try container.decodeIfPresent(String.self, forKey: .activeLookVersionId) ?? ""
         clipLookVersions = ((try? container.decodeIfPresent([ShotRestyleArtifact].self, forKey: .clipLookVersions)) ?? nil) ?? []
@@ -1489,6 +1492,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         value.renderVersions = []
         value.activeRenderVersionId = ""
         value.continuationRecords = []
+        value.outputScopes = []
         value.lookVersions = []
         value.activeLookVersionId = ""
         value.clipLookVersions = []
@@ -1728,7 +1732,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
     /// strip can still produce).
     func settingCutList(_ list: ShotCutList, now: String) -> ProjectShot {
         var value = self
-        value.cutList = list.normalized().pruned(entries: entries)
+        value.cutList = list.normalized().pruned(entries: entries + outputScopes.map(\.syntheticEntry))
         value.updatedAt = now
         return value
     }
@@ -1743,7 +1747,10 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
             cutList: cutList.normalized(),
             audioMix: audioMix.normalized(),
             audioRegions: audioRegions.map { $0.normalized() },
-            pictureInsertions: pictureInsertions.map { $0.normalized() }
+            pictureInsertions: pictureInsertions.map { $0.normalized() },
+            outputScopes: outputScopes,
+            scopeId: ShotOutputEditContext.selection?.scopeId ?? "",
+            selectedContinuationTakeIds: Dictionary(continuationRecords.map { ($0.entryId, $0.selectedTakeId) }, uniquingKeysWith: { _, last in last })
         )
     }
 
@@ -1755,6 +1762,12 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         value.entries = snapshot.entries
         value.sourceBoundaries = snapshot.sourceBoundaries
         value.pictureInsertions = snapshot.pictureInsertions
+        value.outputScopes = snapshot.outputScopes
+        if let selections = snapshot.selectedContinuationTakeIds {
+            for index in value.continuationRecords.indices {
+                value.continuationRecords[index].selectedTakeId = selections[value.continuationRecords[index].entryId] ?? ""
+            }
+        }
         return value
             .settingCutList(snapshot.cutList, now: now)
             .settingAudioMix(snapshot.audioMix, now: now)
@@ -1973,7 +1986,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         )
         value.pictureInsertions = pruningPictureInsertions(
             value.pictureInsertions,
-            entries: value.entries
+            entries: value.entries + value.outputScopes.map(\.syntheticEntry)
         )
         value.migrateLegacyShotRenderPreferencesIfNeeded()
         value.migrateLegacyContinuationRecordsIfNeeded()
@@ -2323,7 +2336,13 @@ struct ProjectShotTimelineDocument: Codable, Hashable, Sendable {
     func updatingShot(shotId: String, now: String, _ transform: (ProjectShot) -> ProjectShot) -> ProjectShotTimelineDocument {
         guard let index = shots.firstIndex(where: { $0.shotId == shotId }) else { return self }
         var value = self
-        value.shots[index] = transform(value.shots[index])
+        if let selection = ShotOutputEditContext.selection, selection.shotId == shotId,
+           let scope = value.shots[index].outputScope(selection.scopeId) {
+            let edited = transform(scope.project(from: value.shots[index]))
+            value.shots[index] = value.shots[index].mergingScopeEdit(edited, scopeId: selection.scopeId)
+        } else {
+            value.shots[index] = transform(value.shots[index])
+        }
         value.updatedAt = now
         return value
     }
@@ -3857,6 +3876,9 @@ struct ShotPictureStateSnapshot: Hashable {
     /// The arrangement layer rides the same snapshot: paste, loop, rate,
     /// per-copy mute, and delete all undo through the one picture law.
     var pictureInsertions: [ShotPictureInsertion] = []
+    var outputScopes: [ShotOutputScope] = []
+    var scopeId: String = ""
+    var selectedContinuationTakeIds: [String: String]? = nil
 }
 
 /// Before AND after travel together (the `ShotAudioStateEdit` shape) because
@@ -4033,6 +4055,7 @@ struct ShotSegmentCutRange: Codable, Hashable, Sendable, Identifiable {
     var cutId: String = ""
     var segmentKey: String = ""
     var clipPath: String = ""
+    var sourceScope: ShotPictureScopeReference? = nil
     var startSeconds: Double = 0
     var endSeconds: Double = 0
     var joinRepair: ShotRazorJoinRepair = ShotRazorJoinRepair()
@@ -4050,7 +4073,7 @@ struct ShotSegmentCutRange: Codable, Hashable, Sendable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case cutId, segmentKey, clipPath, startSeconds, endSeconds, joinRepair, updatedAt
+        case cutId, segmentKey, clipPath, startSeconds, endSeconds, joinRepair, updatedAt, sourceScope
     }
 
     init(
@@ -4060,11 +4083,13 @@ struct ShotSegmentCutRange: Codable, Hashable, Sendable, Identifiable {
         startSeconds: Double = 0,
         endSeconds: Double = 0,
         joinRepair: ShotRazorJoinRepair = ShotRazorJoinRepair(),
-        updatedAt: String = ""
+        updatedAt: String = "",
+        sourceScope: ShotPictureScopeReference? = nil
     ) {
         self.cutId = cutId.trimmed.nilIfEmpty ?? "cut_\(UUID().uuidString.lowercased())"
         self.segmentKey = segmentKey
         self.clipPath = clipPath
+        self.sourceScope = sourceScope
         self.startSeconds = startSeconds
         self.endSeconds = endSeconds
         self.joinRepair = joinRepair
@@ -4076,6 +4101,7 @@ struct ShotSegmentCutRange: Codable, Hashable, Sendable, Identifiable {
         cutId = try container.decodeIfPresent(String.self, forKey: .cutId) ?? ""
         segmentKey = try container.decodeIfPresent(String.self, forKey: .segmentKey) ?? ""
         clipPath = try container.decodeIfPresent(String.self, forKey: .clipPath) ?? ""
+        sourceScope = try container.decodeIfPresent(ShotPictureScopeReference.self, forKey: .sourceScope)
         startSeconds = try container.decodeIfPresent(Double.self, forKey: .startSeconds) ?? 0
         endSeconds = try container.decodeIfPresent(Double.self, forKey: .endSeconds) ?? 0
         joinRepair = ((try? container.decodeIfPresent(ShotRazorJoinRepair.self, forKey: .joinRepair)) ?? nil) ?? ShotRazorJoinRepair()
