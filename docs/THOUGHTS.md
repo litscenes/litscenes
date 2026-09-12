@@ -88,3 +88,7 @@
 2026-09-10T04:49:46Z Adjacent speed replacements must resolve by source order even after all base keeps disappear; all six edit orders of three adjoining sections preserve ordered coverage.
 2026-09-10T04:49:46Z Derived cache relocation is not a new creative edit; explicit scope references retain speed identity while a changed scope exposes available base picture and requires Re-copy.
 2026-09-10T04:49:46Z Native validation confirmed that a missing cache directory must be recreated before exporting an Earlier cut; this now succeeds without modifying source media.
+
+2026-09-12T18:39:28Z The Story card combines tuple enumeration, string interpolation, Text overload resolution and chip styling inside a larger ViewBuilder; typed helper boundaries reduce the compiler inference burden without changing the UI.
+
+2026-09-12T18:42:24Z Separating the Story scene row and chip compiled successfully while retaining the original four-title cap and styling; the complete existing suite passed, but the remote toolchain still needs its own rebuild.

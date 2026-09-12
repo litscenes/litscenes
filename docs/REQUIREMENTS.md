@@ -12,6 +12,7 @@ LitScenes Desktop is the public, canonical macOS application for turning persona
 
 ## Creative Workflow
 
+- The Story preview card shows up to four numbered scene titles in their existing order, retaining duplicate titles and the current navigation behavior.
 - Analyze Media has an always-enabled Hide control that minimizes its log to a live status pill while analysis continues. Clicking the pill restores the same log; Cancel remains a separate action, and the pill can be closed once the run ends.
 - Media intake preserves source identity and bytes, avoids accidental cropping in review surfaces, distinguishes missing files from managed/linked storage, and treats every source photo as an adoptable Frame without spend.
 - STORY persists the creator's purpose, content type, constraints, cast, places, and source-media evidence. Saved state—not unsaved field text—determines readiness, and usable-but-imperfect story language may continue with warnings.

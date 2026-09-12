@@ -81,3 +81,7 @@
 2026-09-10T04:17:09Z repeated-speed-edits — repair source resolution, replacement ordering and atomic validation; verify cache/reload recovery.
 
 2026-09-10T04:49:46Z repeated-speed-edits — completed shared source resolution, stable scope references, ordered/atomic speed edits and visible recovery. Validated 1,287 existing tests, 89 model checks, 18 isolated native engine checks, export, source hygiene and signed Development packaging. Details: docs/20260910T041709Z_repeated-speed-edits.log.md. Uncommitted; unrelated work preserved.
+
+2026-09-12T18:39:28Z story-scene-typecheck: begin the requested build repair. Split the nested Story scene-title chips into independently checked row and chip helpers; preserve visible labels, ordering, four-title cap, and appearance. The provided fatal diagnostic is a SwiftUI type-check timeout; the accompanying deprecation/trailing-closure diagnostics are warnings.
+
+2026-09-12T18:42:24Z story-scene-typecheck: completed uncommitted. Extracted scene-title row and chip helpers with explicit String labels and index iteration. Local Apple Swift 6.1.2 arm64 build succeeds; all 1,287 existing tests pass. Public source hygiene, private hygiene on canonical/pinned source, and whitespace checks pass. The remote M5 toolchain was not available for direct reproduction. No new tests, commit, branch, push, provider call, installation, or submodule update.

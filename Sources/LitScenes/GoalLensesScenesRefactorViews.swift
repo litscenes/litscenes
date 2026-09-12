@@ -3394,19 +3394,7 @@ struct LensWorkbenchView: View {
                     }
                     let sceneTitles = landingStorySceneTitles(signature: signature, snapshotKey: snapshotKey)
                     if !sceneTitles.isEmpty {
-                        HStack(spacing: 6) {
-                            ForEach(Array(sceneTitles.prefix(4).enumerated()), id: \.offset) { index, title in
-                                Text("\(index + 1) · \(title)")
-                                    .font(CanonType.archive(9, weight: .medium))
-                                    .kerning(0.6)
-                                    .foregroundStyle(CanonColor.ink.opacity(0.56))
-                                    .lineLimit(1)
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 4)
-                                    .background(Color.white.opacity(0.4), in: Capsule())
-                                    .overlay(Capsule().stroke(CanonColor.hairlinePaper.opacity(0.8)))
-                            }
-                        }
+                        lensStorySceneTitleChips(sceneTitles)
                     }
                 }
                 .padding(12)
@@ -3429,6 +3417,28 @@ struct LensWorkbenchView: View {
                     .foregroundStyle(CanonColor.ink.opacity(0.6))
             }
         }
+    }
+
+    private func lensStorySceneTitleChips(_ titles: [String]) -> some View {
+        let visibleTitles: [String] = Array(titles.prefix(4))
+        return HStack(spacing: 6) {
+            ForEach(visibleTitles.indices, id: \.self) { index in
+                lensStorySceneTitleChip(number: index + 1, title: visibleTitles[index])
+            }
+        }
+    }
+
+    private func lensStorySceneTitleChip(number: Int, title: String) -> some View {
+        let label: String = "\(number) · \(title)"
+        return Text(verbatim: label)
+            .font(CanonType.archive(9, weight: .medium))
+            .kerning(0.6)
+            .foregroundStyle(CanonColor.ink.opacity(0.56))
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(Color.white.opacity(0.4), in: Capsule())
+            .overlay(Capsule().stroke(CanonColor.hairlinePaper.opacity(0.8)))
     }
 
     private func storySignature(for entry: ProjectStoryLibraryEntry) -> StorySignatureDocument? {
