@@ -1,6 +1,6 @@
 # Desktop Go integration
 
-Self-serve setup is available with your own provider accounts. **Go subscriptions are not yet available through direct checkout or the App Store.** The client integration described below is implemented; payment controls must follow the gateway’s availability response.
+Self-serve setup is available with your own provider accounts. **Direct-download Go checkout is available; App Store purchases remain unavailable.** The client integration described below is implemented; payment controls must follow the gateway’s availability response.
 
 ## Setup and configuration
 
@@ -14,14 +14,18 @@ An unconfigured launch, including its automatically opened settings modal, does 
 
 `LitScenesDistribution` selects direct Stripe checkout or native StoreKit. The [packaging script](../scripts/build_litscenes_app.sh) accepts `--distribution direct|app-store`; App Store packaging adds sandbox entitlements, uses the required signing/provisioning inputs, and omits the direct updater feed. StoreKit support in source does not mean App Store subscriptions are available.
 
-## Planned subscriptions
+## Subscriptions
 
 | Plan | Monthly price | Monthly credits |
 | --- | --- | --- |
 | Go | $16.80 | 750 |
 | Go Plus | $68 | 3,500 |
 
-Both planned tiers provide the same managed capabilities, including hosted story context. Monthly credits expire at renewal, with no rollover, new credit packs, or automatic overages. Existing prepaid balances remain recoverable; monthly credits are spent first. Desktop balances are separate from SMS and mobile balances. Applicable taxes are added at direct checkout; localized App Store prices are authoritative for native purchases.
+Both tiers provide the same managed capabilities, including hosted story context. Monthly credits expire at renewal, with no rollover or automatic overages. Existing prepaid balances remain recoverable; monthly credits are spent first. Desktop balances are separate from SMS and mobile balances. Applicable taxes are added at direct checkout; localized App Store prices are authoritative for native purchases.
+
+Active paid subscribers can buy a one-time refill in Account & usage: 1,000 credits for $25 or 10,000 credits for $238, plus applicable tax. Refill credits never expire and are used after monthly credits. Buying a refill preserves the subscription, renewal date, and selected billing source. Refills are absent from initial onboarding and are unavailable in App Store builds.
+
+The gateway advertises `refill_version`, `refills_available`, and `packs`; the account response supplies `refill_eligible`. Monthly offers keep their own version so older clients can continue subscribing. Refill checkout uses the existing authenticated purchase and Keychain recovery flow with its refill offer version. A successful checkout refreshes the account and resumes only previously approved work waiting for credits.
 
 Direct checkout is integrated with Stripe Managed Payments. The client checks the versioned offer before purchase and presents the server’s immediate charge, additional credits, and recurring terms before an upgrade. Paid upgrades retain the renewal date and prorate additional credits; failed payment leaves the current plan intact. Downgrades and cancellation take effect at renewal. Billing remains accessible during generation suspension, including cancellation when a downgrade is scheduled. Each billing provider remains independently manageable.
 

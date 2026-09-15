@@ -15,7 +15,7 @@ I built LitScenes because I wanted to make videos that hold together as stories 
 
 It is not finished. There are plenty of gaps — some flows are rough, and the documentation trails the app. That is also the good news: LitScenes is easy and ready to improve, and the code is now yours to improve it with.
 
-I need to make a living, so I’m developing LitScenes Go: an optional managed service to help fund work on this free app. Go subscriptions are not yet available. You can use the app with your own provider accounts, with usage billed by those providers.
+I need to make a living, so I offer LitScenes Go: an optional managed service to help fund work on this free app. Go subscriptions are available through direct checkout; App Store purchases are not yet available. You can use the app with your own provider accounts, with usage billed by those providers.
 
 If you find LitScenes useful, and it helps you drive a good story into the world, I would be delighted. That is the point.
 
@@ -38,7 +38,7 @@ Velorn, OpenScene, and SynthCut are excellent AI-native timeline editors and age
 LitScenes is in beta. It works, and it has rough edges:
 
 - Self-serve setup is available: start with an OpenAI API key and add other vendors when needed.
-- Go subscriptions are not yet available. The planned managed service and client integration are described in [Desktop Go integration](docs/desktop-go-integration.md).
+- Go subscriptions are available through direct checkout; App Store purchases are not yet available. The managed service and client integration are described in [Desktop Go integration](docs/desktop-go-integration.md).
 - Documentation trails the app.
 - Some editing flows are unpolished.
 - Provider errors are sometimes surfaced tersely.
@@ -89,12 +89,12 @@ Personal-key setup offers OpenAI Save & Test. Video and narration request additi
 
 Personal-key mode uses an OpenAI-compatible provider with the bundled starter meaning vocabulary. Advanced settings support compatible endpoint and model overrides.
 
-The planned Go service bundles hosted story context and managed inference behind one account, without graph service credentials to configure. Billing choices affect future work across projects and preserve existing media. Local import, browsing, editing, and export remain available without a subscription.
+The Go service bundles hosted story context and managed inference behind one account, without graph service credentials to configure. Billing choices affect future work across projects and preserve existing media. Local import, browsing, editing, and export remain available without a subscription.
 
 ## Troubleshooting
 
 - **Where things live.** Projects, media indexes, and `credentials.env` sit under `~/Library/Application Support/LitScenes Community/` (a development-channel build uses `…/LitScenes/`).
-- **Costs.** Personal-key renders bill your provider accounts. The Go integration requires a server quote and maximum credit approval before generation; subscriptions are not yet available.
+- **Costs.** Personal-key renders bill your provider accounts. The Go integration requires a server quote and maximum credit approval before generation; direct checkout is available when the service reports ready.
 - **Provider errors.** Personal key problems show in setup or Advanced settings; other failures surface on the render's status line.
 - **Setup on launch.** Account & usage reappears each launch until an OpenAI key or confirmed subscription is configured. Dismiss it to explore for that launch, or reopen it from App Settings anytime. The optional Welcome Journey is available from Advanced providers; its dismissal does not finish account setup.
 - **Updates.** There is no auto-update; watch the GitHub Releases page.
@@ -105,7 +105,7 @@ Here is the honest economics of this project.
 
 The code is licensed `AGPL-3.0-only`: you can use, modify, sell, and redistribute LitScenes, but derivatives stay open — the AGPL is what stops a proprietary fork. Separately, trademark policy (not the AGPL) reserves the LitScenes name, icon, and official-build identity, so a modified distribution must rename and re-badge; see `TRADEMARKS.md`. A commercial license is available for organizations that need different terms; see `LICENSING.md`.
 
-The planned Go subscriptions will help fund work on the free app through an optional hosted story and generation service. Self-serve use does not require a LitScenes subscription; your chosen vendors bill their usage separately.
+Go subscriptions help fund work on the free app through an optional hosted story and generation service. Self-serve use does not require a LitScenes subscription; your chosen vendors bill their usage separately.
 
 ## Contributing
 

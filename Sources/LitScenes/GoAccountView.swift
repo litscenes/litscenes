@@ -237,7 +237,12 @@ struct GoAccountView: View {
             if go.account.documents("subscriptions").filter({ $0.string("status") != "expired" }).count > 1 {
                 Text("More than one subscription is active. Manage or cancel one before changing plans.").font(CanonType.interface(12)).foregroundStyle(CanonColor.brass)
             }
-            Text("At your limit? Upgrade, wait for renewal, or use your own API key.").font(CanonType.interface(11)).foregroundStyle(CanonColor.muted)
+            if go.canRefill {
+                refillOptions
+            } else {
+                Text("Manage your plan or use your own API keys to continue.")
+                    .font(CanonType.interface(11)).foregroundStyle(CanonColor.muted)
+            }
             HStack {
                 Button("Manage subscription") { Task { await go.manageSubscription() } }
                 Button("Refresh balance") { Task { await go.refresh() } }
@@ -247,6 +252,22 @@ struct GoAccountView: View {
             Text("This balance is for LitScenes Desktop. SMS and mobile app credits are separate.")
                 .font(CanonType.interface(11)).foregroundStyle(CanonColor.muted)
         }.padding(16).background(CanonColor.mediaCard, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var refillOptions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Divider()
+            Text("Need more credits?").font(CanonType.interface(14, weight: .semibold))
+            ForEach(go.configuration.documents("packs").filter { GoConnection.refillSKUs.contains($0.string("sku")) }, id: \.data) { offer in
+                let price = (Double(offer.int("price_cents")) / 100).formatted(.currency(code: "USD"))
+                Button("Add \(offer.int("credits").formatted()) credits · \(price)") {
+                    Task { await go.purchase(offer.string("sku")) }
+                }.buttonStyle(CanonSecondaryButtonStyle()).disabled(go.busy || go.pendingCheckout)
+            }
+            Text("One-time purchase, plus applicable tax. Refill credits never expire and are used after monthly credits. Your plan and renewal date stay unchanged.")
+                .font(CanonType.interface(11)).foregroundStyle(CanonColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private func creditCount(_ count: Int, label: String) -> some View {

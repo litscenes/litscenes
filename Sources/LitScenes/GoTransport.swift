@@ -62,7 +62,10 @@ enum GoApproval {
     static func waitForCredits(_ maximum: Int) async throws {
         await GoAccountStore.shared.refresh()
         if GoAccountStore.shared.account.int("available_credits") >= maximum { return }
-        guard await ask(title: "Choose how to continue", message: "This action needs up to \(maximum) credits. Upgrade your monthly plan, wait for renewal, or use your own API key. Its approved prompt and settings will wait.", action: "View account & usage") else { throw CancellationError() }
+        let options = GoAccountStore.shared.canRefill
+            ? "Add a one-time credit refill in Account & usage, wait for renewal, or use your own API key."
+            : "Review your plan in Account & usage, wait for renewal, or use your own API key."
+        guard await ask(title: "Choose how to continue", message: "This action needs up to \(maximum) credits. \(options) Its approved prompt and settings will wait.", action: GoAccountStore.shared.canRefill ? "Add credits" : "View account & usage") else { throw CancellationError() }
         NotificationCenter.default.post(name: .goAccountRequested, object: nil)
         while true {
             try Task.checkCancellation()

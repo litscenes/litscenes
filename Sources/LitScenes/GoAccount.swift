@@ -24,6 +24,8 @@ struct GoServiceError: LocalizedError {
 
 enum GoConnection {
     static let offerVersion = "go_monthly_v2"
+    static let refillVersion = "go_refills_v1"
+    static let refillSKUs: Set<String> = ["credits1000", "credits10000"]
     static var baseURL: URL {
         let configured = Bundle.main.object(forInfoDictionaryKey: "LitScenesGoServiceURL") as? String
         let development = LitScenesReleaseIdentity.current.channel == .development
@@ -199,6 +201,12 @@ final class GoAccountStore: ObservableObject {
     var shouldReconnect: Bool { isSignedIn || pendingCheckout || fundingManaged }
     var canPurchase: Bool { configuration.string("offer_version") == GoConnection.offerVersion && configuration.bool(GoConnection.isStoreBuild ? "store_available" : "checkout_available") }
 
+    var canRefill: Bool {
+        !GoConnection.isStoreBuild && isSignedIn && account.bool("refill_eligible")
+            && !account.bool("generation_suspended") && configuration.bool("refills_available")
+            && configuration.string("refill_version") == GoConnection.refillVersion
+    }
+
     func refresh() async {
         let revision = sessionRevision
         do {
@@ -261,7 +269,12 @@ final class GoAccountStore: ObservableObject {
         do {
             await refresh()
             guard revision == sessionRevision, connectionIssue.isEmpty else { return }
-            guard canPurchase else { throw GoServiceError(code: "unavailable", message: "Go is temporarily unavailable. You can use your own API key or explore first.") }
+            let isRefill = GoConnection.refillSKUs.contains(sku)
+            guard isRefill ? canRefill : canPurchase else {
+                throw GoServiceError(code: "unavailable", message: isRefill
+                    ? "Refills require an active paid Go subscription and an available checkout. Refresh Account & usage to try again."
+                    : "Go is temporarily unavailable. You can use your own API key or explore first.")
+            }
             if GoConnection.isStoreBuild {
                 await GoStorePurchaseController.shared.start(configuration: configuration)
                 try await GoStorePurchaseController.shared.purchase(sku, configuration: configuration)
@@ -272,10 +285,20 @@ final class GoAccountStore: ObservableObject {
             if let existing, existing.string("sku") != sku {
                 throw GoServiceError(code: "pending_checkout", message: "Finish your existing checkout before starting another purchase.")
             }
+            if isRefill && existing == nil {
+                guard let offer = configuration.documents("packs").first(where: { $0.string("sku") == sku }),
+                      offer.int("credits") > 0, offer.int("price_cents") > 0 else {
+                    throw GoServiceError(code: "offer_changed", message: "Refresh Account & usage to review available refills.")
+                }
+                let price = (Double(offer.int("price_cents")) / 100).formatted(.currency(code: "USD"))
+                guard await GoApproval.ask(title: "Add \(offer.int("credits").formatted()) credits?",
+                    message: "One-time purchase of \(price), plus applicable tax. These credits do not expire. Your monthly plan and renewal date stay unchanged. Checkout shows the final total before you pay.",
+                    action: "Continue to checkout"), revision == sessionRevision else { return }
+            }
             let draft = try existing ?? GoDocument(["sku": sku, "verifier": GoVault.verifier(), "request_key": UUID().uuidString])
             try GoVault.save("checkout", draft)
             let result = try await GoAPI.call("checkout", method: "POST", body: GoDocument([
-                "sku": sku, "offer_version": GoConnection.offerVersion, "verifier_hash": GoVault.hash(draft.string("verifier")), "request_key": draft.string("request_key")]))
+                "sku": sku, "offer_version": isRefill ? GoConnection.refillVersion : GoConnection.offerVersion, "verifier_hash": GoVault.hash(draft.string("verifier")), "request_key": draft.string("request_key")]))
             guard revision == sessionRevision else { return }
             var saved = draft.object
             saved["checkout_id"] = result.string("checkout_id")
@@ -311,10 +334,13 @@ final class GoAccountStore: ObservableObject {
                 "checkout_id": pending.string("checkout_id"), "verifier": pending.string("verifier")]), authenticated: false)
             guard GoVault.read("checkout")?.string("verifier") == pending.string("verifier") else { return }
             if result.string("status") == "complete" {
-                try acceptSession(result.document("session"))
+                let isRefill = GoConnection.refillSKUs.contains(pending.string("sku"))
+                try acceptSession(result.document("session"), selectGo: !isRefill)
                 GoVault.remove("checkout")
                 pendingCheckout = false
-                message = "You’re connected. Your credits are ready."
+                message = GoConnection.refillSKUs.contains(pending.string("sku"))
+                    ? "Your refill credits are ready. Your subscription is unchanged."
+                    : "You’re connected. Your credits are ready."
                 await refresh()
                 await GoTransport.resumePending()
             } else if result.string("status") == "expired" {
