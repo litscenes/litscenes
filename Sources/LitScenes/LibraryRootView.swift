@@ -256,10 +256,11 @@ struct LibraryRootView: View {
             }
         }
         .background(CanonColor.room)
+        .modifier(GoLifecycleModifier(library: library, showingAccount: $showingAppSettings))
         .onAppear {
             library.reloadProjects()
             library.bootstrapAppNoticesOnLaunch()
-            resolveFirstRunWelcome()
+            resolveLaunchSetup()
         }
         .onChange(of: library.currentProject?.projectId ?? "") { _, _ in
             guard !hasHydratedInitialProject else { return }
@@ -756,6 +757,7 @@ struct LibraryRootView: View {
     private var libraryWorkspace: some View {
         VStack(spacing: 0) {
             workspaceHeader
+            if !isWelcomeActive { GoUpgradeBanner { showingAppSettings = true } }
             Rectangle()
                 .fill(CanonColor.hairlineDark)
                 .frame(height: 1)
@@ -1314,20 +1316,9 @@ struct LibraryRootView: View {
         isWelcomeActive = false
     }
 
-    private func resolveFirstRunWelcome() {
-        let hasAnyCredential = library.videoProviderCredentialStatuses.contains(where: \.isConfigured)
-            || library.lensContextCredentialStatuses.contains(where: \.isConfigured)
-        switch FirstRunWelcomeEligibility.decide(
-            seenVersion: welcomeSeenVersion,
-            hasAnyCredential: hasAnyCredential,
-            hasAnyProject: !library.projects.isEmpty
-        ) {
-        case .showWelcome:
-            isWelcomeActive = true
-        case .markSeenSilently:
-            welcomeSeenVersion = FirstRunWelcomeEligibility.currentVersion
-        case .none:
-            break
+    private func resolveLaunchSetup() {
+        if GoAccountStore.shared.needsSetupOnLaunch() {
+            showingAppSettings = true
         }
     }
 
@@ -1392,7 +1383,8 @@ struct LibraryRootView: View {
 
 private struct AppSettingsView: View {
     private enum SettingsTab: String, CaseIterable, Identifiable {
-        case credentials = "Credentials"
+        case account = "Account & usage"
+        case credentials = "Advanced providers"
         case stacks = "Stacks"
         case prompts = "Prompts"
         case recording = "Recording"
@@ -1400,29 +1392,12 @@ private struct AppSettingsView: View {
         var id: String { rawValue }
     }
 
-    private enum StoryInferenceChoice: String, CaseIterable, Identifiable {
-        case auto
-        case direct
-        case hosted
-
-        var id: String { rawValue }
-
-        var label: String {
-            switch self {
-            case .auto: "Auto"
-            case .direct: "Direct (your key)"
-            case .hosted: "LitScenes Hosted"
-            }
-        }
-    }
-
     @ObservedObject var library: LibraryEngine
     @ObservedObject var sessionRecorder: SessionRecorder
     var onShowWelcome: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedTab: SettingsTab = .credentials
+    @State private var selectedTab: SettingsTab = .account
     @State private var settingsMessage = ""
-    @State private var storyInferenceChoice: StoryInferenceChoice = .auto
     @State private var storyBaseURLDraft = ""
     @State private var storyModelDraft = ""
 
@@ -1465,6 +1440,8 @@ private struct AppSettingsView: View {
                     .frame(height: 1)
 
                 switch selectedTab {
+                case .account:
+                    GoAccountView(library: library)
                 case .credentials:
                     credentialsContent
                 case .stacks:
@@ -1482,6 +1459,8 @@ private struct AppSettingsView: View {
 
     private var settingsSubtitle: String {
         switch selectedTab {
+        case .account:
+            return "Your plan, credits, and account. Changes apply to future creations across your projects."
         case .credentials:
             return "Provider credentials are saved to credentials.env or read from process environment variables."
         case .stacks:
@@ -1497,11 +1476,13 @@ private struct AppSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 credentialsFilePanel
+                Text("Personal provider keys work alongside Go. Direct usage is billed by each provider; adding a key does not change your Go subscription.")
+                    .font(CanonType.interface(12)).foregroundStyle(CanonColor.muted)
+                Text("Text and analysis").font(CanonType.interface(13, weight: .semibold))
+                ProviderBillingControl(target: .text)
+                Text("Stories and frame forms").font(CanonType.interface(13, weight: .semibold))
+                ProviderBillingControl(target: .story)
                 storyInferencePanel
-                if LitScenesReleaseIdentity.current.showsProInterestPromotion {
-                    ProComingSoonCard(face: .card, surface: .dark)
-                }
-                lensContextCredentialsPanel
 
                 ForEach(LitScenesProviderCredential.allCases) { provider in
                     ProviderCredentialSettingsRow(
@@ -1517,7 +1498,7 @@ private struct AppSettingsView: View {
                             ? {
                                 await CredentialProbe().probe(
                                     provider,
-                                    apiKey: LitScenesCredentialStore().resolvedCredential(for: provider)
+                                    apiKey: LitScenesCredentialStore().personalCredential(for: provider)
                                 )
                             }
                             : nil
@@ -1831,29 +1812,8 @@ private struct AppSettingsView: View {
                     .foregroundStyle(CanonColor.muted)
             }
 
-            Text("How the story spine (Frame Context → Stories → Frame Forms) runs. Direct uses your own OpenAI-compatible key with the bundled starter vocabulary — nothing depends on LitScenes servers. LitScenes Hosted adds live meaning-graph retrieval (edges, corpus evidence, curated candidates) with managed inference at a transparent markup. Hosted is invite-only today and optional — Direct is a complete path with a thinner context. Auto prefers Hosted when it is configured below.")
-                .font(CanonType.interface(11))
-                .foregroundStyle(CanonColor.muted)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Picker("Mode", selection: $storyInferenceChoice) {
-                ForEach(StoryInferenceChoice.allCases) { choice in
-                    Text(choice.label).tag(choice)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .onChange(of: storyInferenceChoice) { _, choice in
-                do {
-                    try library.saveStoryInferenceSetting(
-                        key: StoryInferenceMode.preferenceKey,
-                        value: choice == .auto ? "" : choice.rawValue
-                    )
-                    settingsMessage = "Story Inference set to \(choice.label)."
-                } catch {
-                    settingsMessage = "Could not save Story Inference mode: \(error.localizedDescription)"
-                }
-            }
+            Text("Personal provider settings apply to future runs using your own API key. Go uses its included models and connections.")
+                .font(CanonType.interface(11)).foregroundStyle(CanonColor.muted)
 
             Toggle(isOn: Binding(
                 get: { CatalogFetchPolicy.liveCatalogEnabled() },
@@ -1884,7 +1844,7 @@ private struct AppSettingsView: View {
             .toggleStyle(.switch)
 
             storyInferenceFieldRow(
-                title: "OpenAI-compatible base URL (applies to all OpenAI calls: story, text, and images)",
+                title: "OpenAI-compatible base URL (personal-key stories, text, and images)",
                 placeholder: "https://api.openai.com (or an OpenRouter-style /v1 base)",
                 draft: $storyBaseURLDraft,
                 key: "OPENAI_BASE_URL"
@@ -1901,8 +1861,6 @@ private struct AppSettingsView: View {
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(CanonColor.hairlineDark.opacity(0.70)))
         .onAppear {
             let store = LitScenesCredentialStore()
-            let raw = store.resolvedCredentialValue(forKey: StoryInferenceMode.preferenceKey).trimmed.lowercased()
-            storyInferenceChoice = StoryInferenceChoice(rawValue: raw) ?? .auto
             storyBaseURLDraft = store.resolvedCredentialValue(forKeys: OpenAITextEndpointSettings.baseURLKeys)
             storyModelDraft = store.resolvedCredentialValue(forKey: OpenAITextEndpointSettings.storyModelKey)
         }
@@ -1935,44 +1893,10 @@ private struct AppSettingsView: View {
         }
     }
 
-    private var lensContextCredentialsPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Label("Frame Context Retrieval", systemImage: "point.3.connected.trianglepath.dotted")
-                    .font(CanonType.interface(13, weight: .semibold))
-                    .foregroundStyle(CanonColor.bone)
-                Spacer()
-                Text("Hosted Service")
-                    .font(CanonType.archive(10, weight: .semibold))
-                    .foregroundStyle(CanonColor.muted)
-            }
-
-            Text("Used after GOAL saves to hydrate FRAMES with hosted meaning graph and aesthetic context. Optional: Direct mode plans Frames from the bundled starter vocabulary; the hosted service is invite-only today.")
-                .font(CanonType.interface(11))
-                .foregroundStyle(CanonColor.muted)
-                .fixedSize(horizontal: false, vertical: true)
-
-            ForEach(LensContextCredential.allCases) { credential in
-                LensContextCredentialSettingsRow(
-                    credential: credential,
-                    status: status(for: credential),
-                    onSave: { value in
-                        try library.saveLensContextCredential(credential, value: value)
-                    },
-                    onRemove: {
-                        try library.removeLensContextCredential(credential)
-                    }
-                )
-            }
-        }
-        .padding(12)
-        .background(CanonColor.mediaCard, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(CanonColor.hairlineDark.opacity(0.70)))
-    }
 
     private func status(for provider: LitScenesProviderCredential) -> CredentialStatus {
-        library.videoProviderCredentialStatuses.first { $0.provider == provider }
-            ?? CredentialStatus(provider: provider, source: .missing, isConfigured: false, message: "\(provider.label) credential missing")
+        _ = library.videoProviderCredentialStatuses
+        return LitScenesCredentialStore().personalCredentialStatus(for: provider)
     }
 
     private func status(for credential: LensContextCredential) -> LensContextCredentialStatus {

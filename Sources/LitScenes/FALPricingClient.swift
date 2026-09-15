@@ -26,9 +26,13 @@ struct FALPricingSnapshot: Codable, Hashable, Sendable {
     var fetchedAt: Date
     /// Keyed by endpoint id (e.g. "fal-ai/kling-video/v3/pro/image-to-video").
     var prices: [String: FALModelPrice]
+    // Separate rate sources: Go's quote rates must never enter direct USD totals.
+    var goPrices: [String: FALModelPrice]? = nil
+    var goFetchedAt: Date? = nil
 
     var ageSeconds: TimeInterval {
-        max(0, Date().timeIntervalSince(fetchedAt))
+        let dates = [prices.isEmpty ? nil : fetchedAt, goPrices?.isEmpty == false ? goFetchedAt : nil].compactMap { $0 }
+        return max(0, Date().timeIntervalSince(dates.min() ?? fetchedAt))
     }
 
     /// "just now" / "3h ago" / "2d ago" — the header's honesty caption.
@@ -65,6 +69,11 @@ struct FALPricingClient {
 
     func fetchPrices(endpointIds: [String], apiKey: String) async throws -> [FALModelPrice] {
         let key = apiKey.trimmed
+        if key == GoConnection.marker {
+            let configuration = try await GoAPI.call("config", authenticated: false)
+            let data = try JSONSerialization.data(withJSONObject: ["prices": configuration.object["managed_prices"] ?? []])
+            return try JSONDecoder().decode(PricingResponse.self, from: data).prices
+        }
         guard !key.isEmpty else { throw FALPricingClientError.missingAPIKey }
         var components = URLComponents(string: "https://api.fal.ai/v1/models/pricing")!
         components.queryItems = [URLQueryItem(name: "endpoint_id", value: endpointIds.joined(separator: ","))]
@@ -89,6 +98,7 @@ typealias FALVideoPricingSnapshot = FALPricingSnapshot
 /// "≥" and names what's missing.
 struct ShotRenderCostEstimate: Equatable {
     var totalUSD: Double = 0
+    var totalGoCredits: Int = 0
     var pricedSegmentCount: Int = 0
     var totalGeneratedCount: Int = 0
     var unpricedModelLabels: [String] = []
@@ -99,6 +109,11 @@ struct ShotRenderCostEstimate: Equatable {
 
     var headlineLabel: String? {
         guard pricedSegmentCount > 0 else { return nil }
+        if totalGoCredits > 0 {
+            let go = "up to \(totalGoCredits) Go credits"
+            let direct = totalUSD > 0 ? String(format: "$%.2f direct + ", totalUSD) : ""
+            return "EST. " + (isComplete ? "" : "≥ ") + direct + go
+        }
         let amount = totalUSD < 0.01 && totalUSD > 0
             ? String(format: "$%.3f", totalUSD)
             : String(format: "$%.2f", totalUSD)
@@ -152,7 +167,7 @@ struct ShotRenderCostEstimate: Equatable {
     /// — the render bills regardless of what the pricing API claims — and so
     /// is a unit whose dimension we cannot convert.
     static func segmentUSD(stack: ShotRenderStack, pricing: FALPricingSnapshot?) -> Double? {
-        guard !stack.isNativeFootageExtend else { return nil }
+        guard ProviderBilling.source(for: .video(stack.model)) == .personal, !stack.isNativeFootageExtend else { return nil }
         guard let endpointId = falEndpointId(for: stack),
               let price = pricing?.prices[endpointId],
               price.currency.uppercased() == "USD",
@@ -160,7 +175,16 @@ struct ShotRenderCostEstimate: Equatable {
               let units = billedUnits(stack: stack, unit: price.unit) else {
             return nil
         }
-        return price.unitPrice * units
+        let amount = price.unitPrice * units
+        return amount
+    }
+
+    static func segmentGoCredits(stack: ShotRenderStack, pricing: FALPricingSnapshot?) -> Int? {
+        guard ProviderBilling.source(for: .video(stack.model)) == .go,
+              let endpoint = falEndpointId(for: stack), let price = pricing?.goPrices?[endpoint],
+              price.currency.uppercased() == "USD", price.unitPrice > 0,
+              let units = billedUnits(stack: stack, unit: price.unit) else { return nil }
+        return Int(ceil(price.unitPrice * units * 100 - 0.000001))
     }
 
     /// Published LTX Extend rate for 1920×1080: $0.10 per generated plus
@@ -220,7 +244,10 @@ struct ShotRenderCostEstimate: Equatable {
         value.totalGeneratedCount = items.count
         var unpriced: [String] = []
         for item in items {
-            if let usd = segmentUSD(item: item, pricing: pricing) {
+            if let credits = segmentGoCredits(stack: item.renderStack, pricing: pricing) {
+                value.totalGoCredits += credits
+                value.pricedSegmentCount += 1
+            } else if let usd = segmentUSD(item: item, pricing: pricing) {
                 value.totalUSD += usd
                 value.pricedSegmentCount += 1
                 value.includesPublishedRateEstimate = value.includesPublishedRateEstimate

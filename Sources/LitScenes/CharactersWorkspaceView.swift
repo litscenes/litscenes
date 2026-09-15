@@ -287,7 +287,7 @@ struct CharactersWorkspaceView: View {
         inputs.lastFailureIsDraft = note?.lane == .draft
         inputs.stackLabel = stack.map(characterImageModelLabel) ?? ""
         inputs.priceNote = stack.map { library.priceNote(for: $0, attachesReferences: !picks.isEmpty) } ?? ""
-        inputs.stackIsTextOnly = stack.map { !$0.reframeCapable } ?? false
+        inputs.stackIsTextOnly = stack.map { !$0.supportsPromptImages } ?? false
         inputs.attachesSheet = picks.contains(where: \.isSheet)
         inputs.attachedSourceCount = picks.filter { !$0.isSheet }.count
         inputs.blocker = renderBlocker(for: stack, characterId: characterId)
@@ -375,7 +375,7 @@ struct CharactersWorkspaceView: View {
             candidates: imageCandidates,
             attachedMediaIds: picks.filter { !$0.isSheet }.map(\.item.mediaId),
             stackLabel: stack.map(characterImageModelLabel) ?? "",
-            stackIsTextOnly: stack.map { !$0.reframeCapable } ?? false,
+            stackIsTextOnly: stack.map { !$0.supportsPromptImages } ?? false,
             sheetOrdinalLabel: sheetOrdinal(for: characterId).map(characterSheetOrdinalLabel),
             generatingShotLabel: isGeneratingStudy(for: characterId) ? "CHARACTER IMAGE" : nil,
             suggestions: library.suggestedSourceImages(for: characterId),

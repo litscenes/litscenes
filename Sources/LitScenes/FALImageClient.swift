@@ -100,7 +100,7 @@ struct FALImageClient {
     private let terminalStates: Set<String> = ["COMPLETED", "FAILED", "CANCELLED", "CANCELED"]
 
     func generateImage(from request: FALImageGenerationRequest) async throws -> FALImageGenerationResult {
-        let apiKey = credentialStore.resolvedCredential(for: .fal)
+        let apiKey = ProviderBilling.credential(for: .fal(request.stack.falModelId(styleMode: request.styleMode)), store: credentialStore)
         guard !apiKey.trimmed.isEmpty else {
             throw ScreenGraphError.credentials("FAL_API_KEY or FAL_KEY is required to generate FAL Lens images.")
         }
@@ -289,13 +289,14 @@ struct FALImageClient {
             throw error
         }
         let seed = firstSeed(in: result.object)
-        let parameters = recipeParameters(
+        var parameters = recipeParameters(
             modelId: modelId,
             styleMode: request.styleMode,
             input: input,
             seed: seed,
             output: downloaded
         )
+        parameters.append(LensRenderRecipeParameter(key: "billing_source", value: apiKey == GoConnection.marker ? "go" : "personal"))
         return FALImageGenerationResult(
             imageData: downloaded.data,
             providerJobId: jobId,

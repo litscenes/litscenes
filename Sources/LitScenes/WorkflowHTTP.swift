@@ -36,7 +36,10 @@ enum WorkflowHTTP {
 
     private static func refreshedCredential(in request: URLRequest, provider: String) -> URLRequest {
         guard let provider = LitScenesProviderCredential(rawValue: provider) else { return request }
-        let credential = LitScenesCredentialStore().resolvedCredential(for: provider)
+        // This stage was submitted directly. A later billing preference change
+        // must never replace its credential with a managed routing marker.
+        guard !GoConnection.selectsManaged(request) else { return request }
+        let credential = LitScenesCredentialStore().personalCredential(for: provider)
         guard !credential.isEmpty else { return request }
         var updated = request
         // Replace only the authentication scheme the original client selected.

@@ -706,14 +706,15 @@ struct OpenAIClient: Sendable {
     var imageEndpoint: URL = URL(string: "https://api.openai.com/v1/images/generations")!
     var imageEditEndpoint: URL = URL(string: "https://api.openai.com/v1/images/edits")!
 
-    static func fromEnvironment() throws -> OpenAIClient {
-        guard let key = OpenAIKeyStore.resolvedAPIKey(), !key.isEmpty else {
+    static func fromEnvironment(billingTarget: ProviderBillingTarget = .text) throws -> OpenAIClient {
+        let key = ProviderBilling.credential(for: billingTarget)
+        guard !key.isEmpty else {
             throw ScreenGraphError.missingAPIKey
         }
         var client = OpenAIClient(apiKey: key)
         // OPENAI_BASE_URL points every environment-constructed call at an
         // OpenAI-compatible service (OpenRouter-style gateways, local servers).
-        if let base = try OpenAITextEndpointSettings.baseURL() {
+        if key != GoConnection.marker, let base = try OpenAITextEndpointSettings.baseURL() {
             client.endpoint = OpenAITextEndpointSettings.endpoint(base: base, path: "responses")
             client.imageEndpoint = OpenAITextEndpointSettings.endpoint(base: base, path: "images/generations")
             client.imageEditEndpoint = OpenAITextEndpointSettings.endpoint(base: base, path: "images/edits")
@@ -737,6 +738,11 @@ struct OpenAIClient: Sendable {
         traceArtifactType: String = "proof_image",
         traceArtifactId: String? = nil
     ) async throws -> OpenAIImageGenerationResult {
+        if apiKey == GoConnection.marker {
+            return try await GoManagedImage.generate(prompt: prompt, size: size, background: background,
+                projectId: projectId, runId: runId, workflowName: traceWorkflowName, workflowStep: traceWorkflowStep,
+                artifactType: traceArtifactType, artifactId: traceArtifactId ?? runId)
+        }
         var body: [String: Any] = [
             "model": model,
             "prompt": prompt,
@@ -906,6 +912,12 @@ struct OpenAIClient: Sendable {
         traceArtifactType: String = "image_edit",
         traceArtifactId: String = ""
     ) async throws -> OpenAIImageGenerationResult {
+        if apiKey == GoConnection.marker {
+            guard mask == nil else { throw GoServiceError(code: "unsupported_mask", message: "Exact mask edits require your own OpenAI key.") }
+            return try await GoManagedImage.generate(prompt: prompt, sources: sources, size: size, background: background,
+                projectId: projectId, runId: runId, workflowName: traceWorkflowName, workflowStep: traceWorkflowStep,
+                artifactType: traceArtifactType, artifactId: traceArtifactId)
+        }
         let boundary = "Boundary-\(UUID().uuidString)"
         let sourceImages = sources.filter { !$0.data.isEmpty }
         var fields: [(String, String)] = [
@@ -1100,6 +1112,12 @@ struct OpenAIClient: Sendable {
         traceArtifactType: String = "image_responses",
         traceArtifactId: String = ""
     ) async throws -> OpenAIImageGenerationResult {
+        if apiKey == GoConnection.marker {
+            return try await GoManagedImage.generate(prompt: prompt, instructions: instructions, sources: sources,
+                size: size, background: background, projectId: projectId, runId: runId,
+                workflowName: traceWorkflowName, workflowStep: traceWorkflowStep,
+                artifactType: traceArtifactType, artifactId: traceArtifactId)
+        }
         let sourceImages = sources.filter { !$0.data.isEmpty }
         var tool: [String: Any] = [
             "type": "image_generation",

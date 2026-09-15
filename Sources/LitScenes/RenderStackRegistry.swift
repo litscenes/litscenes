@@ -79,10 +79,9 @@ enum RenderStackWorkflow: String, Hashable, Sendable {
 }
 
 /// What the Frame Creator can deliver to a stack as prompt-image references —
-/// the app-level truth with engine compositing included. The reframe gate is
-/// the outer door (a non-reframe stack renders from text alone); behind it,
-/// `nativePromptImageLimit` counts the provider's slots, and Stability's single
-/// slot is served by the engine's labeled composite sheet.
+/// the app-level truth with engine compositing included. Prompt-image support
+/// is independent of camera reframing; single-input variant operations use
+/// the engine's labeled composite sheet for multiple references.
 enum FrameReferenceCapacity: Hashable, Sendable {
     /// Text-only: no prompt-image attachments ride. (Named `textOnly`, not
     /// `none`, so comparisons against optional capacities can't silently mean
@@ -114,6 +113,11 @@ enum FrameReferenceCapacity: Hashable, Sendable {
 
 /// How a CivitAI stack seeds: a fixed integer, or the app-random seed the
 /// engine supplies per render.
+enum CivitAIImageInputMode: String, Hashable, Sendable {
+    case editImages = "edit_images"
+    case variantImage = "variant_image"
+}
+
 enum RenderStackSeed: Hashable, Sendable {
     case random
     case fixed(Int)
@@ -180,6 +184,7 @@ struct RenderStack: Hashable, Sendable, Identifiable {
     let civitaiStepPriority: String?
     let civitaiSeed: RenderStackSeed
     let civitaiRecipe: [LensRenderRecipeParameter]
+    var civitaiImageInputMode: CivitAIImageInputMode? = nil
 
     var isOpenAI: Bool { kind == .openai }
     var isFAL: Bool { kind == .fal }
@@ -213,16 +218,21 @@ struct RenderStack: Hashable, Sendable, Identifiable {
         case .civitai: return 0
         }
     }
-    /// The reframe gate composed with the slot count above; Stability's
-    /// one slot carries a composite sheet, so it plans like a budget stack.
+    /// Prompt-image capability composed with native slots and sheet support.
     var frameReferenceCapacity: FrameReferenceCapacity {
-        guard reframeCapable else { return .textOnly }
+        guard supportsPromptImages else { return .textOnly }
         switch nativePromptImageLimit {
         case .some(0): return .textOnly
-        case .some(let count): return isStability && count == 1 ? .compositeSheet : .slots(count)
+        case .some(let count): return (isStability || usesCivitaiStrength) && count == 1 ? .compositeSheet : .slots(count)
         case .none: return .budget
         }
     }
+    var supportsPromptImages: Bool {
+        if isCivitai { return civitaiImageInputMode != nil && (nativePromptImageLimit ?? 0) > 0 }
+        return reframeCapable && nativePromptImageLimit != 0
+    }
+    var usesReferenceComposite: Bool { frameReferenceCapacity == .compositeSheet }
+    var usesCivitaiStrength: Bool { isCivitai && civitaiImageInputMode == .variantImage }
     var usesPNGOutput: Bool { outputFormat == "png" }
     /// Replaces `stack == .openAIBase || stack.canAttachStyleImage`: OpenAI
     /// takes style references natively; others must declare the capability.
@@ -290,12 +300,26 @@ struct RenderStack: Hashable, Sendable, Identifiable {
         requestSeed: Int?,
         negativePrompt: String,
         widthOverride: Int? = nil,
-        heightOverride: Int? = nil
+        heightOverride: Int? = nil,
+        images: [String] = [],
+        strength: Double? = nil
     ) -> (payload: [String: Any], seed: Int) {
         var input = civitaiInput.mapValues(\.anyValue)
         input["prompt"] = prompt
         let seed = civitaiSeed.resolve(requestSeed)
         input["seed"] = seed
+        if !images.isEmpty {
+            switch civitaiImageInputMode {
+            case .editImages:
+                input["operation"] = "editImage"
+                input["images"] = images
+            case .variantImage:
+                input["operation"] = "createVariant"
+                input["image"] = images[0]
+                input["strength"] = strength.map { $0.isFinite ? min(max($0, 0), 1) : 0.7 } ?? 0.7
+            case nil: break
+            }
+        }
         // Roster character studies reorient the stack's declared pixel budget
         // (portrait/square shots must not render the FRAMES 16:9 landscape).
         if let widthOverride, let heightOverride, input["width"] != nil, input["height"] != nil {
@@ -400,18 +424,18 @@ struct RenderStack: Hashable, Sendable, Identifiable {
             ).normalized()
         case .civitai:
             let seedText = seed.map(String.init) ?? "random"
-            let parameters = civitaiRecipe.map { parameter in
+            let parameters = generatedParameters.isEmpty ? civitaiRecipe.map { parameter in
                 parameter.value == "$runtime_seed"
                     ? LensRenderRecipeParameter(key: parameter.key, value: seedText, valueType: parameter.valueType)
                     : parameter
-            }
+            } : generatedParameters
             return LensRenderRecipeSnapshot(
                 label: label,
                 provider: kind.rawValue,
                 model: model,
                 stackId: stackId,
                 parameters: parameters,
-                capabilities: ["textToImage"]
+                capabilities: sourceImageCount > 0 ? ["imageToImage"] : ["textToImage"]
             ).normalized()
         case .stability:
             var parameters = stabilityInput
@@ -542,7 +566,7 @@ final class RenderStackRegistry: @unchecked Sendable {
     /// Historical public surface: stacks available to create a frame. Workflow-
     /// only providers such as Outpaint stay out of every ordinary stack picker.
     func stacks() -> [RenderStack] {
-        registeredStacks().filter(\.frameCreatorCapable)
+        registeredStacks().filter { $0.frameCreatorCapable }
     }
 
     private func registeredStacks() -> [RenderStack] {
@@ -565,7 +589,7 @@ final class RenderStackRegistry: @unchecked Sendable {
     }
 
     func reframeStacks() -> [RenderStack] {
-        registeredStacks().filter(\.reframeCapable)
+        registeredStacks().filter { $0.reframeCapable }
     }
 
     func frameCreatorStacks() -> [RenderStack] {
@@ -579,7 +603,9 @@ final class RenderStackRegistry: @unchecked Sendable {
     /// The first stack (in order) whose credential is satisfied — reproduces
     /// the old seeded-default chain (openai → civitai WAN → nil).
     func defaultStack(hasOpenAI: Bool, hasCivitai: Bool, hasFAL: Bool, hasStability: Bool = false) -> RenderStack? {
-        frameCreatorStacks().first { stack in
+        if GoConnection.isManaged, hasFAL,
+           let managed = stack(id: RenderStackID.falNanoBanana2), ProviderBilling.isConfigured(.image(managed)) { return managed }
+        return frameCreatorStacks().first { stack in
             switch stack.credentialProvider {
             case .openAI: return hasOpenAI
             case .civitai: return hasCivitai
@@ -591,7 +617,8 @@ final class RenderStackRegistry: @unchecked Sendable {
     }
 
     var fallback: RenderStack {
-        stack(id: RenderStackID.openAIBase) ?? RenderStack.builtInOpenAIFallback
+        if GoConnection.isManaged, let included = stack(id: RenderStackID.falNanoBanana2) { return included }
+        return stack(id: RenderStackID.openAIBase) ?? RenderStack.builtInOpenAIFallback
     }
 
     func reload() {
@@ -771,7 +798,8 @@ final class RenderStackRegistry: @unchecked Sendable {
             civitaiTags: civitaiTags,
             civitaiStepPriority: civitaiStepPriority,
             civitaiSeed: civitaiSeed,
-            civitaiRecipe: civitaiRecipe
+            civitaiRecipe: civitaiRecipe,
+            civitaiImageInputMode: ((raw["civitai"] as? [String: Any])?["image_input"] as? String).flatMap(CivitAIImageInputMode.init(rawValue:))
         )
     }
 }

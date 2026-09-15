@@ -3091,6 +3091,8 @@ struct LensNewTakeRenderRequest: Codable, Hashable, Sendable {
     /// rewrite (the deterministic segments still ride). nil/false = enabled.
     /// Optional for tolerant decode of pre-field request blobs.
     var promptEnrichmentDisabled: Bool?
+    /// SDXL image-change strength, restored by retries; nil uses 0.7.
+    var civitaiStrength: Double?
     /// Per-render Stability reference fidelity (0 ≈ identical to the input
     /// image, 1 ≈ prompt only); nil = the stack default. Clamped on
     /// normalize; ignored by non-Stability stacks.
@@ -3122,6 +3124,7 @@ struct LensNewTakeRenderRequest: Codable, Hashable, Sendable {
         value.reframe = value.reframe?.normalized()
         value.reframeFocusCropPath = value.reframeFocusCropPath?.trimmed.nilIfEmpty
         value.reframeCameraMapPath = value.reframeCameraMapPath?.trimmed.nilIfEmpty
+        value.civitaiStrength = value.civitaiStrength.flatMap { $0.isFinite ? min(max($0, 0), 1) : nil }
         value.stabilityStrength = value.stabilityStrength.flatMap {
             $0.isFinite ? min(max($0, 0.05), 0.95) : nil
         }
@@ -3343,6 +3346,8 @@ struct ProjectLensHeroImage: Codable, Hashable, Identifiable {
     /// The operator turned the prompt transform OFF for this frame — retries,
     /// siblings, and regenerates must stay verbatim too.
     var promptEnrichmentDisabled: Bool = false
+    /// The SDXL image-change strength this frame rendered with.
+    var civitaiStrength: Double?
     /// The Stability reference-fidelity strength this frame rendered with —
     /// retries and siblings reuse it. nil on non-Stability frames.
     var stabilityStrength: Double?
@@ -3619,6 +3624,7 @@ struct ProjectLensHeroImage: Codable, Hashable, Identifiable {
         case promptEnrichmentTraceId
         case promptEnrichmentSummary
         case promptEnrichmentDisabled
+        case civitaiStrength
         case stabilityStrength
         case status
         case requestId
@@ -3668,6 +3674,7 @@ struct ProjectLensHeroImage: Codable, Hashable, Identifiable {
         promptEnrichmentTraceId = try container.decodeIfPresent(String.self, forKey: .promptEnrichmentTraceId) ?? ""
         promptEnrichmentSummary = try container.decodeIfPresent(String.self, forKey: .promptEnrichmentSummary) ?? ""
         promptEnrichmentDisabled = try container.decodeIfPresent(Bool.self, forKey: .promptEnrichmentDisabled) ?? false
+        civitaiStrength = try container.decodeIfPresent(Double.self, forKey: .civitaiStrength)
         stabilityStrength = try container.decodeIfPresent(Double.self, forKey: .stabilityStrength)
         status = try container.decodeIfPresent(String.self, forKey: .status) ?? "idle"
         requestId = try container.decodeIfPresent(String.self, forKey: .requestId) ?? ""
@@ -3717,6 +3724,7 @@ struct ProjectLensHeroImage: Codable, Hashable, Identifiable {
         try container.encode(promptEnrichmentTraceId, forKey: .promptEnrichmentTraceId)
         try container.encode(promptEnrichmentSummary, forKey: .promptEnrichmentSummary)
         try container.encode(promptEnrichmentDisabled, forKey: .promptEnrichmentDisabled)
+        try container.encodeIfPresent(civitaiStrength, forKey: .civitaiStrength)
         try container.encodeIfPresent(stabilityStrength, forKey: .stabilityStrength)
         try container.encode(status, forKey: .status)
         try container.encode(requestId, forKey: .requestId)

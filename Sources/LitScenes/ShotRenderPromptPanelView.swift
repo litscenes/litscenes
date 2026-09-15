@@ -172,6 +172,7 @@ struct ShotRenderPromptPanel: View {
         // Saved results remain visible when narration becomes the next recipe.
         VStack(spacing: 0) {
             panelHeader
+            GoProviderSetupHint(provider: .fal)
             Rectangle().fill(PlateColor.hairline).frame(height: 1)
             if let version = historyVersion {
                 historyContents(version)
@@ -495,12 +496,8 @@ struct ShotRenderPromptPanel: View {
                 $0.pair.placementKey != segmentKey && activeClip($0) == nil
             }
             let billedItems = [item] + missingOthers
-            let billedUSDs = billedItems.compactMap {
-                ShotRenderCostEstimate.segmentUSD(item: $0, pricing: falPricing)
-            }
-            let billedUSD: Double? = billedUSDs.count == billedItems.count
-                ? billedUSDs.reduce(0, +)
-                : nil
+            let billedEstimate = ShotRenderCostEstimate.estimate(items: billedItems, pricing: falPricing)
+            let billedLabel = billedEstimate.headlineLabel.map { " · " + $0 } ?? ""
             let extraSuffix = missingOthers.isEmpty
                 ? ""
                 : " +\(missingOthers.count) unsaved"
@@ -511,8 +508,8 @@ struct ShotRenderPromptPanel: View {
                 (shot.renderVersions.map(\.versionNumber).max() ?? 0) + 1
             )
             Button(isTakeOperation ? (shotPendingEndingEntryIds(shot).contains(item.pair.endPlacementEntryId) ? "Render ending…" : (activeClip(item) == nil ? "Retry · Review price" : "Render new take…")) : (isArmed
-                ? "Confirm\(extraSuffix)\(billedUSD.map { " · \(usdLabel($0))" } ?? "")"
-                : "Render segment\(extraSuffix)\(billedUSD.map { " · \(usdLabel($0))" } ?? "")")) {
+                ? "Confirm\(extraSuffix)\(billedLabel)"
+                : "Render segment\(extraSuffix)\(billedLabel)")) {
                 if isArmed || isTakeOperation {
                     armedRenderKey = nil
                     guard saveDirectionPlansForConfirm() else { return }
@@ -950,6 +947,7 @@ struct ShotRenderPromptPanel: View {
         availableModels: [ShotRenderModel] = ShotRenderModel.shotDefaultCases,
         onSelect: @escaping (ShotRenderModel) -> Void
     ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
         Menu {
             ForEach(availableModels) { model in
                 let canLeadIn = shape != .leadIn
@@ -984,6 +982,8 @@ struct ShotRenderPromptPanel: View {
             case .leadIn: return "Lead-in model used on the next render — needs one that accepts a tail frame alone"
             }
         }())
+            ProviderBillingControl(target: .video(stack.model))
+        }
     }
 
     /// Standalone resolution menu (beside Length/Audio) for the Hailuo

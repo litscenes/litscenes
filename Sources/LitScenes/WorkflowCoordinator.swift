@@ -63,11 +63,12 @@ final class WorkflowCoordinator: ObservableObject {
             if stopped.contains(inherited.jobId) { return failure }
             return await operation()
         }
+        let billing = ProviderBilling.snapshot ?? ProviderBillingSnapshot.capture()
         await bootstrap()
         guard initialized, !terminating else { return failure }
         var job = WorkflowJob(projectId: project?.projectId ?? "", projectName: project?.name ?? "App",
             workflow: workflow, artifactType: artifactType, artifactId: artifactId, lane: lane)
-        job.recipeJSON = WorkflowPrivacy.json(recipeJSON)
+        job.recipeJSON = WorkflowPrivacy.json(billing.including(in: recipeJSON))
         job.submissionKey = sha256Hex(Data("\(job.projectId):\(workflow):\(artifactId):\(job.recipeJSON)".utf8))
         // Repeated clicks on an in-flight request do not create a second paid run.
         guard !jobs.contains(where: { live.contains($0.id) && !$0.state.isTerminal
@@ -84,7 +85,9 @@ final class WorkflowCoordinator: ObservableObject {
                 let allowed = await self.waitForAdmission(id)
                 guard allowed else { return failure }
             }
-            let result = await WorkflowContext.$current.withValue(context) { await operation() }
+            let result = await ProviderBilling.$snapshot.withValue(billing) {
+                await WorkflowContext.$current.withValue(context) { await operation() }
+            }
             let success: Bool
             if let value = result as? any WorkflowOutcomeReporting { success = value.workflowSucceeded }
             else if let value = result as? Bool { success = value }

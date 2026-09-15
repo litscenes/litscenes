@@ -273,8 +273,8 @@ private func mergeTestAttachment(_ id: String, label: String) -> LensPromptImage
     #expect(merge.notes[0].contains("first 6"))
 }
 
-@Test func combinedAttachmentsNonReframeStackDropsAll() {
-    let stack = RenderStackRegistry.shared.stack(id: RenderStackID.wan)!
+@Test func combinedAttachmentsTextOnlyStackDropsAll() {
+    let stack = RenderStackRegistry.shared.stack(id: RenderStackID.falFluxSchnell)!
     #expect(!stack.reframeCapable)
     let withSeedAndDirect = frameCreatorCombinedAttachments(
         seed: mergeTestAttachment("seed", label: "Clip seed"),
@@ -367,12 +367,12 @@ private func mergeTestAttachment(_ id: String, label: String) -> LensPromptImage
     #expect(overBudget.ridingCount == 6)
     #expect(overBudget.notes.contains { $0.contains("first 6") })
 
-    let wan = RenderStackRegistry.shared.stack(id: RenderStackID.wan)!
+    let textStack = RenderStackRegistry.shared.stack(id: RenderStackID.falFluxSchnell)!
     let textOnly = frameCreatorAttachmentPlan(
         seed: mergeTestAttachment("seed", label: "Clip seed"),
         direct: [],
         mention: [mergeTestAttachment("m1", label: "Kai")],
-        stack: wan
+        stack: textStack
     )
     #expect(textOnly.capacity == .textOnly)
     #expect(textOnly.entries.map(\.fate) == [.droppedTextOnly, .droppedTextOnly])

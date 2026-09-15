@@ -19,8 +19,8 @@
 #   style_model            fal only — the /edit or /redux variant used when a style
 #                          image is attached ("" = none)
 #   can_attach_style_image whether the model accepts a style-reference image
-#   reframe_capable        whether the stack can take prompt-image attachments
-#                          (drives the Reframe stack menu and the engine gate)
+#   reframe_capable        legacy camera-reframe capability. CivitAI prompt
+#                          images use civitai.image_input independently.
 #   workflows              executable product workflows. When omitted, existing
 #                          stacks default to frame_creator and reframe_capable
 #                          maps to reframe_zoom_in + reframe_viewpoint.
@@ -38,6 +38,7 @@
 #                          box may override
 #   stability:             Stability multipart fields. `strength` is sent only
 #                          when an input image is attached.
+#   civitai.image_input    edit_images (native slots) or variant_image (composite sheet)
 #   civitai:               civitai workflow: `input` = the exact imageGen step input
 #                          (prompt/seed/negativePrompt injected), `tags`,
 #                          `step_priority` (omit for none), `seed` (integer for a
@@ -105,7 +106,7 @@ stacks:
   - id: civitai_wan_2_7
     stack_id: civitai.wan_image_27.v0
     label: WAN 2.7
-    detail: "CivitAI · WAN still · 1280×720 · app random seed"
+    detail: "CivitAI · WAN still · 16:9 · app random seed"
     kind: civitai
     credential_provider: civitai
     order: 2
@@ -113,13 +114,15 @@ stacks:
     style_model: ""
     can_attach_style_image: false
     reframe_capable: false
+    prompt_image_limit: 4
     prompt_limit: 1800
     output_format: jpeg
     prompt_instructions: >-
-      Civitai WAN 2.7 prompts should be self-contained text-to-image requests.
-      Keep the style in text as a concise one-line visual direction and avoid
-      relying on image attachments.
+      Civitai WAN 2.7 prompts describe the desired frame and requested changes.
+      When references are attached, use their ordered labels as visual context.
+      Keep style direction concise and explicit.
     civitai:
+      image_input: edit_images
       tags: [litscenes, lens, wan-2-7, image]
       step_priority: low
       seed: random
@@ -128,33 +131,22 @@ stacks:
         version: v2.7
         provider: fal
         operation: createImage
-        cfgScale: 0
-        sampler: "WAN-2.7"
-        workflow: txt2img
-        width: 1280
-        height: 720
-        priority: low
+        guidanceScale: 3.5
+        enablePromptExpansion: false
         quantity: 1
         imageSize: landscape_16_9
-        ecosystem: WanImage27
         outputFormat: jpeg
-        resources: []
-        enablePromptEnhancer: false
         enableSafetyChecker: true
         usePro: false
       recipe:
-        - { key: workflow, value: txt2img, value_type: string }
-        - { key: ecosystem, value: WanImage27, value_type: string }
+        - { key: guidance_scale, value: "3.5", value_type: number }
+        - { key: enable_prompt_expansion, value: "false", value_type: boolean }
         - { key: operation, value: createImage, value_type: string }
         - { key: version, value: v2.7, value_type: string }
         - { key: provider, value: fal, value_type: string }
-        - { key: width, value: "1280", value_type: string }
-        - { key: height, value: "720", value_type: string }
         - { key: image_size, value: landscape_16_9, value_type: string }
-        - { key: priority, value: low, value_type: string }
         - { key: quantity, value: "1", value_type: string }
         - { key: output_format, value: jpeg, value_type: string }
-        - { key: enable_prompt_enhancer, value: "false", value_type: boolean }
         - { key: enable_safety_checker, value: "true", value_type: boolean }
         - { key: use_pro, value: "false", value_type: boolean }
         - { key: seed, value: "$runtime_seed", value_type: string }
@@ -170,7 +162,8 @@ stacks:
     style_model: ""
     can_attach_style_image: false
     reframe_capable: false
-    prompt_limit: 1800
+    prompt_image_limit: 2
+    prompt_limit: 1000
     output_format: jpeg
     prompt_instructions: >-
       Civitai FLUX.2 Klein portrait prompts should describe one clearly framed
@@ -179,6 +172,7 @@ stacks:
       language over quality-token piles. Keep the detailed-skin LoRA implicit;
       do not repeat LoRA syntax or request waxy, airbrushed skin.
     civitai:
+      image_input: edit_images
       tags: [litscenes, lens, realistic-portrait, image]
       # no step_priority — the flux2 step wrapper carries none
       seed: 292181528
@@ -223,6 +217,7 @@ stacks:
     style_model: ""
     can_attach_style_image: false
     reframe_capable: false
+    prompt_image_limit: 1
     prompt_limit: 1800
     output_format: jpeg
     prompt_instructions: >-
@@ -233,6 +228,7 @@ stacks:
       preserve ordinary imperfections; avoid long quality-token chains, CGI,
       game-engine language, excessive HDR, and contradictory camera terms.
     civitai:
+      image_input: variant_image
       tags: [litscenes, lens, juggernaut-xl-v9, cinematic, image]
       step_priority: low
       seed: random
@@ -241,23 +237,23 @@ stacks:
         ecosystem: sdxl
         operation: createImage
         model: "urn:air:sdxl:checkpoint:civitai:133005@348913"
-        scheduler: DPM2Karras
+        sampleMethod: dpm2
+        schedule: karras
         steps: 35
         cfgScale: 5
-        clipSkip: 1
         width: 1280
         height: 720
         quantity: 1
         outputFormat: jpeg
       recipe:
+        - { key: sample_method, value: dpm2, value_type: string }
+        - { key: schedule, value: karras, value_type: string }
         - { key: engine, value: sdcpp, value_type: string }
         - { key: ecosystem, value: sdxl, value_type: string }
         - { key: operation, value: createImage, value_type: string }
         - { key: model, value: "urn:air:sdxl:checkpoint:civitai:133005@348913", value_type: string }
-        - { key: scheduler, value: DPM2Karras, value_type: string }
         - { key: steps, value: "35", value_type: number }
         - { key: cfg_scale, value: "5", value_type: number }
-        - { key: clip_skip, value: "1", value_type: number }
         - { key: width, value: "1280", value_type: string }
         - { key: height, value: "720", value_type: string }
         - { key: quantity, value: "1", value_type: string }
@@ -278,6 +274,7 @@ stacks:
     style_model: ""
     can_attach_style_image: false
     reframe_capable: false
+    prompt_image_limit: 1
     prompt_limit: 1800
     output_format: jpeg
     prompt_instructions: >-
@@ -289,6 +286,7 @@ stacks:
       photorealistic RAW-camera tokens with cartoon language, or asking for flat
       vector graphics.
     civitai:
+      image_input: variant_image
       tags: [litscenes, lens, realcartoon-xl-v6, animated, image]
       step_priority: low
       seed: random
@@ -297,23 +295,23 @@ stacks:
         ecosystem: sdxl
         operation: createImage
         model: "urn:air:sdxl:checkpoint:civitai:125907@254091"
-        scheduler: EulerA
+        sampleMethod: euler_a
+        schedule: discrete
         steps: 48
         cfgScale: 9
-        clipSkip: 2
         width: 1280
         height: 720
         quantity: 1
         outputFormat: jpeg
       recipe:
+        - { key: sample_method, value: euler_a, value_type: string }
+        - { key: schedule, value: discrete, value_type: string }
         - { key: engine, value: sdcpp, value_type: string }
         - { key: ecosystem, value: sdxl, value_type: string }
         - { key: operation, value: createImage, value_type: string }
         - { key: model, value: "urn:air:sdxl:checkpoint:civitai:125907@254091", value_type: string }
-        - { key: scheduler, value: EulerA, value_type: string }
         - { key: steps, value: "48", value_type: number }
         - { key: cfg_scale, value: "9", value_type: number }
-        - { key: clip_skip, value: "2", value_type: number }
         - { key: width, value: "1280", value_type: string }
         - { key: height, value: "720", value_type: string }
         - { key: quantity, value: "1", value_type: string }
@@ -334,6 +332,7 @@ stacks:
     style_model: ""
     can_attach_style_image: false
     reframe_capable: false
+    prompt_image_limit: 1
     prompt_limit: 1800
     output_format: jpeg
     prompt_instructions: >-
@@ -345,6 +344,7 @@ stacks:
       many media, and automatic neon or fantasy cues unless the scene asks for
       them.
     civitai:
+      image_input: variant_image
       tags: [litscenes, lens, zavychroma-xl-v7, editorial, image]
       step_priority: low
       seed: random
@@ -353,23 +353,23 @@ stacks:
         ecosystem: sdxl
         operation: createImage
         model: "urn:air:sdxl:checkpoint:civitai:119229@490254"
-        scheduler: DPM2Karras
+        sampleMethod: dpm2
+        schedule: karras
         steps: 30
         cfgScale: 6.5
-        clipSkip: 2
         width: 1280
         height: 720
         quantity: 1
         outputFormat: jpeg
       recipe:
+        - { key: sample_method, value: dpm2, value_type: string }
+        - { key: schedule, value: karras, value_type: string }
         - { key: engine, value: sdcpp, value_type: string }
         - { key: ecosystem, value: sdxl, value_type: string }
         - { key: operation, value: createImage, value_type: string }
         - { key: model, value: "urn:air:sdxl:checkpoint:civitai:119229@490254", value_type: string }
-        - { key: scheduler, value: DPM2Karras, value_type: string }
         - { key: steps, value: "30", value_type: number }
         - { key: cfg_scale, value: "6.5", value_type: number }
-        - { key: clip_skip, value: "2", value_type: number }
         - { key: width, value: "1280", value_type: string }
         - { key: height, value: "720", value_type: string }
         - { key: quantity, value: "1", value_type: string }
@@ -390,6 +390,7 @@ stacks:
     style_model: ""
     can_attach_style_image: false
     reframe_capable: false
+    prompt_image_limit: 1
     prompt_limit: 1800
     output_format: jpeg
     prompt_instructions: >-
@@ -401,6 +402,7 @@ stacks:
       explicitly supplies one. Avoid prose paragraphs, contradictory quality
       tags, uncontrolled franchise names, and photorealistic camera jargon.
     civitai:
+      image_input: variant_image
       tags: [litscenes, lens, animagine-xl-3-1, anime, image]
       step_priority: low
       seed: random
@@ -409,23 +411,23 @@ stacks:
         ecosystem: sdxl
         operation: createImage
         model: "urn:air:sdxl:checkpoint:civitai:260267@403131"
-        scheduler: EulerA
+        sampleMethod: euler_a
+        schedule: discrete
         steps: 28
         cfgScale: 6
-        clipSkip: 2
         width: 1280
         height: 720
         quantity: 1
         outputFormat: jpeg
       recipe:
+        - { key: sample_method, value: euler_a, value_type: string }
+        - { key: schedule, value: discrete, value_type: string }
         - { key: engine, value: sdcpp, value_type: string }
         - { key: ecosystem, value: sdxl, value_type: string }
         - { key: operation, value: createImage, value_type: string }
         - { key: model, value: "urn:air:sdxl:checkpoint:civitai:260267@403131", value_type: string }
-        - { key: scheduler, value: EulerA, value_type: string }
         - { key: steps, value: "28", value_type: number }
         - { key: cfg_scale, value: "6", value_type: number }
-        - { key: clip_skip, value: "2", value_type: number }
         - { key: width, value: "1280", value_type: string }
         - { key: height, value: "720", value_type: string }
         - { key: quantity, value: "1", value_type: string }

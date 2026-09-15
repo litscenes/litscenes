@@ -34,6 +34,9 @@ enum StoryInferenceMode: String, CaseIterable, Identifiable, Sendable {
     static let preferenceKey = "LITSCENES_STORY_INFERENCE"
 
     static func resolved() -> StoryInferenceMode {
+        if ProviderBilling.source(for: .story) == .go { return .hosted }
+        if GoConnection.isManaged { return .direct }
+        if UserDefaults.standard.string(forKey: "LitScenesFundingMode") == "personal" { return .direct }
         let raw = LitScenesCredentialStore()
             .resolvedCredentialValue(forKey: preferenceKey)
             .trimmed
@@ -219,7 +222,8 @@ struct LocalStoryInferenceClient: Sendable {
     private static let localUserID = "local"
 
     static func fromEnvironment() throws -> LocalStoryInferenceClient {
-        guard let key = OpenAIKeyStore.resolvedAPIKey(), !key.isEmpty else {
+        let key = LitScenesCredentialStore().personalCredential(for: .openAI)
+        guard !key.isEmpty else {
             throw ScreenGraphError.credentials(
                 "Direct Story Inference needs an OpenAI-compatible key. Add OPENAI_API_KEY (and optionally OPENAI_BASE_URL) in Settings."
             )

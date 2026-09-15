@@ -25,26 +25,24 @@ private func redactedLTXTracePayload(_ payload: [String: Any]) -> [String: Any] 
 /// Preserve prompts, parameters, ids, and statuses while keeping every remote
 /// media capability out of the durable trace database.
 private func redactedCivitAITraceValue(_ value: Any, key: String = "") -> Any {
-    let normalizedKey = key.lowercased()
-    let mediaCapabilityKeys: Set<String> = [
-        "startimage", "endimage", "url", "publicurl", "video", "videos",
-        "outputs", "media", "blob", "source_url", "start_blob_url", "end_blob_url"
-    ]
-    if mediaCapabilityKeys.contains(normalizedKey) {
-        return "[redacted-provider-media-capability]"
-    }
+    let mediaKeys: Set<String> = ["image", "images", "startimage", "endimage", "url", "publicurl",
+        "previewurl", "video", "videos", "outputs", "media", "blob", "source_url", "start_blob_url", "end_blob_url"]
     if let object = value as? [String: Any] {
-        return object.reduce(into: [String: Any]()) { result, field in
-            result[field.key] = redactedCivitAITraceValue(field.value, key: field.key)
+        return object.reduce(into: [String: Any]()) { result, pair in
+            result[pair.key] = redactedCivitAITraceValue(pair.value, key: pair.key)
         }
     }
-    if let array = value as? [Any] {
-        return array.map { redactedCivitAITraceValue($0) }
+    if let array = value as? [Any] { return array.map { redactedCivitAITraceValue($0, key: key) } }
+    if let text = value as? String {
+        if mediaKeys.contains(key.lowercased()) || text.hasPrefix("data:") {
+            return "[redacted-provider-media-capability]"
+        }
+        return WorkflowPrivacy.text(text)
     }
     return value
 }
 
-private func redactedCivitAITracePayload(_ payload: [String: Any]) -> [String: Any] {
+func redactedCivitAITracePayload(_ payload: [String: Any]) -> [String: Any] {
     redactedCivitAITraceValue(payload) as? [String: Any] ?? [:]
 }
 
@@ -1115,13 +1113,18 @@ struct CivitAIWANImageRequest {
     var prompt: String
     var negativePrompt: String = ""
     var seed: Int?
-    /// The CivitAI stack whose YAML `input` map becomes this workflow's body.
     var stack: RenderStack
-    /// Reorients the stack's declared canvas (roster character studies render
-    /// portrait/square, never the FRAMES 16:9 policy). Both or neither.
     var widthOverride: Int? = nil
     var heightOverride: Int? = nil
     var traceGroupId: String
+    var sources: [OpenAIImageEditSource] = []
+    var strength: Double? = nil
+    var sourceImageCount: Int = 0
+    var usesCompositeImage: Bool = false
+    var operatorPrompt: String = ""
+    var projectId: String = ""
+    var runId: String = ""
+    var workflowName: String = "lenses"
 }
 
 struct CivitAIWANImageResult {
@@ -1129,206 +1132,172 @@ struct CivitAIWANImageResult {
     var providerJobId: String
     var traceId: String
     var responseSnapshot: [String: String]
+    var transmittedPrompt: String
+    var renderRecipe: LensRenderRecipeSnapshot
 }
 
 struct CivitAIWorkflowFailure: LocalizedError {
     var jobId: String
     var traceId: String
     var message: String
-
     var errorDescription: String? { message }
 }
 
 struct CivitAIWANImageProvider {
     let credentialStore: LitScenesCredentialResolving
-
     private let workflowsURL = URL(string: "https://orchestration-new.civitai.com/v2/consumer/workflows")!
     private let terminalStates: Set<String> = ["succeeded", "failed", "canceled", "cancelled", "expired", "rejected"]
 
     func generateImage(from request: CivitAIWANImageRequest) async throws -> CivitAIWANImageResult {
         let stack = request.stack
         let apiKey = credentialStore.resolvedCredential(for: .civitai)
-        guard !apiKey.isEmpty else { throw ScreenGraphError.credentials("CivitAI API key is missing.") }
+        guard !apiKey.isEmpty, apiKey != GoConnection.marker else {
+            throw ScreenGraphError.credentials("Connect your personal CivitAI key in Advanced provider connections.")
+        }
+        if !request.sources.isEmpty {
+            guard stack.supportsPromptImages, request.sources.count <= (stack.nativePromptImageLimit ?? 0),
+                  request.sources.allSatisfy({ imagePixelSize(from: $0.data) != nil }) else {
+                throw ScreenGraphError.capture("The planned references exceed this stack's executable image capacity. Review the references before rendering.")
+            }
+        }
         let prompt = providerPromptLimited(request.prompt, maxCharacters: stack.promptLimit ?? 1_800)
-        let (payload, seed) = stack.civitaiPayload(
-            prompt: prompt,
-            requestSeed: request.seed,
-            negativePrompt: request.negativePrompt,
-            widthOverride: request.widthOverride,
-            heightOverride: request.heightOverride
-        )
-        let submitted = try await postJSON(
-            apiKey: apiKey,
-            url: workflowsURL,
-            payload: payload,
-            traceGroupId: request.traceGroupId,
-            artifactId: request.artifactId,
-            model: stack.model
-        )
-        let jobId = firstString(in: submitted.object, keys: ["id", "workflowId", "jobId"])
-        guard !jobId.isEmpty else {
-            throw ScreenGraphError.capture("CivitAI \(stack.label) image submit returned no job id.")
+        let images = request.sources.map { "data:" + $0.mimeType + ";base64," + $0.data.base64EncodedString() }
+        let (payload, seed) = stack.civitaiPayload(prompt: prompt, requestSeed: request.seed,
+            negativePrompt: request.negativePrompt, widthOverride: request.widthOverride,
+            heightOverride: request.heightOverride, images: images, strength: request.strength)
+        let input = (payload["steps"] as? [[String: Any]])?.first?["input"] as? [String: Any] ?? [:]
+        var jobId = ""
+        var parentId = ""
+        do {
+            let submitted = try await postJSON(apiKey: apiKey, payload: payload, context: request)
+            parentId = submitted.traceId
+            jobId = firstString(in: submitted.object, keys: ["id", "workflowId", "jobId"])
+            guard !jobId.isEmpty else { throw ScreenGraphError.capture("CivitAI image submission returned no workflow identifier. Review provider acceptance before retrying.") }
+            let final = try await pollWorkflow(apiKey: apiKey, jobId: jobId, context: request, parentId: parentId)
+            parentId = final.traceId
+            let status = (final.object["status"] as? String ?? "").lowercased()
+            guard status == "succeeded" else {
+                throw CivitAIWorkflowFailure(jobId: jobId, traceId: parentId,
+                    message: "CivitAI \(stack.label) workflow \(jobId) ended with status \(status). " + workflowFailureSummary(from: redactedCivitAITracePayload(final.object)))
+            }
+            guard let imageURL = outputImageURLs(from: final.object).first else {
+                throw ScreenGraphError.capture("CivitAI completed without a downloadable output image.")
+            }
+            var downloadMetadata = metadata(context: request, operation: "image_output_download", parentId: parentId)
+            downloadMetadata.apiFamily = "media_transfer"
+            downloadMetadata.responseBodyFormatHint = "binary"
+            let download = try await TracedHTTPTransport.send(request: URLRequest(url: imageURL), metadata: downloadMetadata)
+            guard let http = download.response, (200..<300).contains(http.statusCode), imagePixelSize(from: download.data) != nil else {
+                throw ScreenGraphError.capture("CivitAI output could not be downloaded as a valid image. The existing workflow can be checked without submitting again.")
+            }
+            let sourceCount = max(request.sourceImageCount, request.sources.count)
+            var parameters = input.filter { !["prompt", "negativePrompt", "image", "images"].contains($0.key) }
+                .compactMap { key, value -> LensRenderRecipeParameter? in
+                    guard let scalar = JSONScalar(any: value) else { return nil }
+                    let type: String
+                    switch scalar {
+                    case .bool: type = "boolean"
+                    case .int, .double: type = "number"
+                    case .array, .object: type = "json"
+                    case .string: type = "string"
+                    }
+                    return LensRenderRecipeParameter(key: key, value: renderStackTraceValue(scalar), valueType: type)
+                }
+            parameters += [
+                LensRenderRecipeParameter(key: "billing_source", value: "personal"),
+                LensRenderRecipeParameter(key: "native_image_count", value: String(request.sources.count), valueType: "number"),
+                LensRenderRecipeParameter(key: "source_image_count", value: String(sourceCount), valueType: "number"),
+                LensRenderRecipeParameter(key: "attachment_mode", value: request.sources.isEmpty ? "none" : request.usesCompositeImage ? "composite" : "direct")
+            ]
+            await InferenceTraceStore.shared.enrich(traceId: download.traceId,
+                parsedOutputJSON: inferenceTraceJSONString(["job_id": jobId, "status": status, "sha256": sha256Hex(download.data)]))
+            return CivitAIWANImageResult(imageData: download.data, providerJobId: jobId, traceId: download.traceId,
+                responseSnapshot: ["job_id": jobId, "status": status, "model": stack.model, "seed": String(seed)],
+                transmittedPrompt: prompt,
+                renderRecipe: stack.renderRecipeSnapshot(mediaPlan: nil, styleMode: .none, seed: seed,
+                    generatedParameters: parameters, sourceImageCount: sourceCount, usesCompositeImage: request.usesCompositeImage))
+        } catch {
+            var failure = metadata(context: request, operation: Task.isCancelled ? "image_polling_interrupted" : "image_workflow_error", parentId: parentId)
+            failure.requestTextJSON = inferenceTraceJSONString(["prompt": prompt, "billing_source": "personal", "job_id": jobId,
+                "remote_cancellation_requested": false])
+            let traceId = await InferenceTraceStore.shared.record(request: URLRequest(url: workflowsURL), metadata: failure,
+                response: nil, responseBody: nil, latencyMs: 0, error: error)
+            if error is CancellationError || Task.isCancelled { throw CancellationError() }
+            throw CivitAIWorkflowFailure(jobId: jobId, traceId: traceId, message: error.localizedDescription)
         }
-        let final = try await pollWorkflow(
-            apiKey: apiKey,
-            jobId: jobId,
-            traceGroupId: request.traceGroupId,
-            artifactId: request.artifactId,
-            model: stack.model
-        )
-        let status = (final.object["status"] as? String ?? "").lowercased()
-        guard status == "succeeded" else {
-            let traceId = final.traceId.isEmpty ? submitted.traceId : final.traceId
-            let statusText = status.isEmpty ? "unknown" : status
-            let detail = workflowFailureSummary(from: final.object)
-            let message = uniqueNonEmpty([
-                "CivitAI \(stack.label) workflow \(jobId) ended with status \(statusText).",
-                detail
-            ]).joined(separator: " ")
-            throw CivitAIWorkflowFailure(jobId: jobId, traceId: traceId, message: message)
-        }
-        guard let imageURL = outputImageURLs(from: final.object).first else {
-            throw ScreenGraphError.capture("CivitAI \(stack.label) workflow \(jobId) produced no downloadable image.")
-        }
-        let imageData = try await downloadData(url: imageURL)
-        var snapshot: [String: String] = [
-            "job_id": jobId,
-            "status": status,
-            "model": stack.model,
-            "stack_id": stack.stackId,
-            "source_url": imageURL.absoluteString,
-            "seed": "\(seed)",
-            "prompt_characters": "\(prompt.count)",
-            "prompt_truncated": "\(prompt != request.prompt)"
-        ]
-        // Echo the stack's own input map (minus the prompt) for the trace log.
-        for (key, value) in stack.civitaiInput {
-            snapshot["input_\(key)"] = renderStackTraceValue(value)
-        }
-        if let width = request.widthOverride, let height = request.heightOverride {
-            snapshot["input_width"] = "\(width)"
-            snapshot["input_height"] = "\(height)"
-        }
-        return CivitAIWANImageResult(
-            imageData: imageData,
-            providerJobId: jobId,
-            traceId: final.traceId.isEmpty ? submitted.traceId : final.traceId,
-            responseSnapshot: snapshot
-        )
     }
 
-    private func postJSON(
-        apiKey: String,
-        url: URL,
-        payload: [String: Any],
-        traceGroupId: String,
-        artifactId: String,
-        model: String
-    ) async throws -> CivitAIJSONResponse {
-        var request = URLRequest(url: url)
+    private func metadata(context: CivitAIWANImageRequest, operation: String, parentId: String = "") -> InferenceTraceRequestMetadata {
+        let refs: [[String: Any]] = context.sources.enumerated().map { index, source in
+            ["index": index, "role": source.role, "mime_type": source.mimeType,
+             "byte_count": source.data.count, "sha256": sha256Hex(source.data)]
+        }
+        return InferenceTraceRequestMetadata(provider: "civitai", apiFamily: "image", operation: operation,
+            projectId: context.projectId, runId: context.runId, traceGroupId: context.traceGroupId,
+            parentTraceId: parentId, workflowName: context.workflowName, workflowStep: "civitai_" + operation,
+            artifactType: "lens_hero", artifactId: context.artifactId, model: context.stack.model,
+            requestBodyFormat: "application/json", responseBodyFormatHint: "application/json",
+            mediaRefsJSON: inferenceTraceJSONString(["images": refs, "source_image_count": context.sourceImageCount,
+                "composite": context.usesCompositeImage]),
+            providerRequestIDHeaderCandidates: ["x-request-id", "request-id", "x-correlation-id"],
+            captureRequestBody: false, captureResponseBody: false)
+    }
+
+    private func postJSON(apiKey: String, payload: [String: Any], context: CivitAIWANImageRequest) async throws -> CivitAIJSONResponse {
+        var request = URLRequest(url: workflowsURL)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("LitScenes/1.0", forHTTPHeaderField: "User-Agent")
         request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
-        let traced = try await TracedHTTPTransport.send(
-            request: request,
-            metadata: InferenceTraceRequestMetadata(
-                provider: "civitai",
-                apiFamily: "image",
-                operation: "workflow_submit",
-                traceGroupId: traceGroupId,
-                workflowName: "lenses",
-                workflowStep: "civitai_wan_image_submit",
-                artifactType: "lens_hero",
-                artifactId: artifactId,
-                model: model,
-                requestBodyFormat: "application/json",
-                responseBodyFormatHint: "application/json",
-                requestTextJSON: inferenceTraceJSONString(payload),
-                providerRequestIDHeaderCandidates: ["x-request-id", "request-id", "x-correlation-id"],
-                captureRequestBody: false
-            )
-        )
-        let data = traced.data
-        guard let http = traced.response, (200..<300).contains(http.statusCode) else {
-            let body = String(data: data.prefix(1200), encoding: .utf8) ?? ""
-            throw ScreenGraphError.capture("CivitAI WAN image submit failed: \(body)")
-        }
-        guard let body = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw ScreenGraphError.capture("CivitAI WAN image submit response was not JSON.")
-        }
-        return CivitAIJSONResponse(object: body, traceId: traced.traceId)
+        var trace = metadata(context: context, operation: "image_submit")
+        trace.requestTextJSON = inferenceTraceJSONString(redactedCivitAITracePayload(payload).merging(["billing_source": "personal", "operator_prompt": context.operatorPrompt]) { _, new in new })
+        let result = try await TracedHTTPTransport.send(request: request, metadata: trace)
+        return try await decoded(result, stage: "submission")
     }
 
-    private func pollWorkflow(
-        apiKey: String,
-        jobId: String,
-        traceGroupId: String,
-        artifactId: String,
-        model: String
-    ) async throws -> CivitAIJSONResponse {
-        let url = workflowsURL.appendingPathComponent(jobId)
+    private func decoded(_ result: TracedHTTPResult, stage: String) async throws -> CivitAIJSONResponse {
+        let body = (try? JSONSerialization.jsonObject(with: result.data)) as? [String: Any]
+        if let body {
+            await InferenceTraceStore.shared.enrichContext(traceId: result.traceId,
+                responseTextJSON: inferenceTraceJSONString(redactedCivitAITracePayload(body)))
+        }
+        guard let http = result.response, (200..<300).contains(http.statusCode) else {
+            throw ScreenGraphError.capture("CivitAI image \(stage) failed with HTTP \(result.response?.statusCode ?? 0).")
+        }
+        guard let body else { throw ScreenGraphError.capture("CivitAI image \(stage) returned invalid JSON.") }
+        return CivitAIJSONResponse(object: body, traceId: result.traceId)
+    }
+
+    private func pollWorkflow(apiKey: String, jobId: String, context: CivitAIWANImageRequest, parentId: String) async throws -> CivitAIJSONResponse {
         let started = Date()
         var delay: UInt64 = 4
         while true {
-            var request = URLRequest(url: url)
+            try Task.checkCancellation()
+            var request = URLRequest(url: workflowsURL.appendingPathComponent(jobId))
             request.httpMethod = "GET"
             request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
             request.setValue("application/json", forHTTPHeaderField: "Accept")
-            request.setValue("LitScenes/1.0", forHTTPHeaderField: "User-Agent")
-            let traced = try await TracedHTTPTransport.send(
-                request: request,
-                metadata: InferenceTraceRequestMetadata(
-                    provider: "civitai",
-                    apiFamily: "image",
-                    operation: "workflow_poll",
-                    traceGroupId: traceGroupId,
-                    workflowName: "lenses",
-                    workflowStep: "civitai_wan_image_poll",
-                    artifactType: "lens_hero",
-                    artifactId: artifactId,
-                    model: model,
-                    requestBodyFormat: "none",
-                    responseBodyFormatHint: "application/json",
-                    providerRequestIDHeaderCandidates: ["x-request-id", "request-id", "x-correlation-id"],
-                    captureRequestBody: false
-                )
-            )
-            let data = traced.data
-            guard let http = traced.response, (200..<300).contains(http.statusCode) else {
-                let body = String(data: data.prefix(800), encoding: .utf8) ?? ""
-                throw ScreenGraphError.capture("CivitAI WAN image poll failed: \(body)")
-            }
-            guard let body = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                throw ScreenGraphError.capture("CivitAI WAN image poll response was not JSON.")
-            }
-            let status = (body["status"] as? String ?? "").lowercased()
-            if terminalStates.contains(status) {
-                return CivitAIJSONResponse(object: body, traceId: traced.traceId)
-            }
-            if Date().timeIntervalSince(started) > 900 {
-                throw ScreenGraphError.capture("CivitAI WAN image workflow \(jobId) did not finish within 15 minutes.")
+            let result = try await TracedHTTPTransport.send(request: request,
+                metadata: metadata(context: context, operation: "image_poll", parentId: parentId))
+            let response = try await decoded(result, stage: "poll")
+            let status = (response.object["status"] as? String ?? "").lowercased()
+            if terminalStates.contains(status) { return response }
+            guard Date().timeIntervalSince(started) <= 900 else {
+                throw ScreenGraphError.capture("CivitAI workflow \(jobId) is still pending after 15 minutes. Check its status before starting another render.")
             }
             try await Task.sleep(nanoseconds: delay * 1_000_000_000)
             delay = min(UInt64(Double(delay) * 1.5), 20)
         }
     }
 
-    private func downloadData(url: URL) async throws -> Data {
-        let transfer = try await TracedHTTPTransport.send(request: URLRequest(url: url),
-            metadata: InferenceTraceRequestMetadata(provider: "civitai", apiFamily: "media_transfer", operation: "image_output_download", captureResponseBody: false))
-        let data = transfer.data
-        guard let http = transfer.response, (200..<300).contains(http.statusCode) else {
-            throw ScreenGraphError.capture("CivitAI WAN image download failed.")
-        }
-        return data
-    }
-
-    private func outputImageURLs(from body: [String: Any]) -> [URL] {
+    func outputImageURLs(from body: [String: Any]) -> [URL] {
         var urls: [URL] = []
-        collectImageURLs(from: body, into: &urls)
+        for step in body["steps"] as? [[String: Any]] ?? [] {
+            guard (step["status"] as? String)?.lowercased() == "succeeded",
+                  let output = step["output"] as? [String: Any] else { continue }
+            collectImageURLs(from: output["images"] ?? [], key: "url", into: &urls)
+        }
         var seen = Set<String>()
         return urls.filter { url in
             let value = url.absoluteString
@@ -1364,6 +1333,7 @@ struct CivitAIWANImageProvider {
     }
 
     private func isLikelyImageURL(_ url: URL, key: String) -> Bool {
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return false }
         if ["png", "jpg", "jpeg", "webp"].contains(url.pathExtension.lowercased()) {
             return true
         }

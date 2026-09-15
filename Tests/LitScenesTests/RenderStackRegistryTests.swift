@@ -107,7 +107,7 @@ private let bundledRegistry = RenderStackRegistry(includeUserOverlay: false)
     // Prompt limits: fal 2400/2400/3500, civitai 1800, openai none.
     #expect(openai.promptLimit == nil)
     #expect(stability.promptLimit == 10_000)
-    #expect(wan.promptLimit == 1_800 && portrait.promptLimit == 1_800)
+    #expect(wan.promptLimit == 1_800 && portrait.promptLimit == 1_000)
     #expect(schnell.falPromptLimit == 2_400 && flux2.falPromptLimit == 2_400 && nano.falPromptLimit == 3_500)
     #expect(reve.falPromptLimit == 2_400 && mai.falPromptLimit == 2_400 && seedream.falPromptLimit == 2_400)
 
@@ -146,12 +146,12 @@ private let bundledRegistry = RenderStackRegistry(includeUserOverlay: false)
     #expect(try capacity(RenderStackID.falReve21) == .textOnly)
     #expect(try capacity(RenderStackID.falMAIImage25) == .textOnly)
     #expect(try capacity(RenderStackID.falSeedreamV5Pro) == .textOnly)
-    #expect(try capacity(RenderStackID.wan) == .textOnly)
-    #expect(try capacity(RenderStackID.realisticPortrait) == .textOnly)
-    #expect(try capacity("civitai_cinematic_juggernaut_xl") == .textOnly)
-    #expect(try capacity("civitai_realcartoon_xl") == .textOnly)
-    #expect(try capacity("civitai_zavychroma_xl") == .textOnly)
-    #expect(try capacity("civitai_animagine_xl") == .textOnly)
+    #expect(try capacity(RenderStackID.wan) == .slots(4))
+    #expect(try capacity(RenderStackID.realisticPortrait) == .slots(2))
+    #expect(try capacity("civitai_cinematic_juggernaut_xl") == .compositeSheet)
+    #expect(try capacity("civitai_realcartoon_xl") == .compositeSheet)
+    #expect(try capacity("civitai_zavychroma_xl") == .compositeSheet)
+    #expect(try capacity("civitai_animagine_xl") == .compositeSheet)
 
     #expect(FrameReferenceCapacity.textOnly.planningCap == 0)
     #expect(FrameReferenceCapacity.slots(1).planningCap == 1)
@@ -172,12 +172,12 @@ private let bundledRegistry = RenderStackRegistry(includeUserOverlay: false)
     let expected: [(id: String, declared: Int?, effective: Int?)] = [
         (RenderStackID.openAIBase, nil, nil), // unbounded — app budget applies
         (RenderStackID.stabilityUltra, nil, 1),
-        (RenderStackID.wan, nil, 0),
-        (RenderStackID.realisticPortrait, nil, 0),
-        ("civitai_cinematic_juggernaut_xl", nil, 0),
-        ("civitai_realcartoon_xl", nil, 0),
-        ("civitai_zavychroma_xl", nil, 0),
-        ("civitai_animagine_xl", nil, 0),
+        (RenderStackID.wan, 4, 4),
+        (RenderStackID.realisticPortrait, 2, 2),
+        ("civitai_cinematic_juggernaut_xl", 1, 1),
+        ("civitai_realcartoon_xl", 1, 1),
+        ("civitai_zavychroma_xl", 1, 1),
+        ("civitai_animagine_xl", 1, 1),
         (RenderStackID.falFluxSchnell, nil, 1),
         (RenderStackID.falFlux2Pro, 9, 9),
         (RenderStackID.falNanoBanana2, 14, 14),
@@ -322,19 +322,19 @@ private let bundledRegistry = RenderStackRegistry(includeUserOverlay: false)
     let wanInput = try #require(wanSteps[0]["input"] as? [String: Any])
     #expect(wanInput["engine"] as? String == "wan")
     #expect(wanInput["version"] as? String == "v2.7")
-    #expect(wanInput["sampler"] as? String == "WAN-2.7")
-    #expect(wanInput["cfgScale"] as? Int == 0)
-    #expect(wanInput["workflow"] as? String == "txt2img")
-    #expect(wanInput["width"] as? Int == 1_280)
-    #expect(wanInput["height"] as? Int == 720)
+    #expect(wanInput["sampler"] == nil)
+    #expect(wanInput["cfgScale"] == nil)
+    #expect(wanInput["workflow"] == nil)
+    #expect(wanInput["width"] == nil)
+    #expect(wanInput["height"] == nil)
     #expect(wanInput["imageSize"] as? String == "landscape_16_9")
-    #expect(wanInput["ecosystem"] as? String == "WanImage27")
+    #expect(wanInput["ecosystem"] == nil)
     #expect(wanInput["quantity"] as? Int == 1)
     #expect(wanInput["seed"] as? Int == 42)
     #expect(wanInput["prompt"] as? String == "a harbor")
     #expect(wanInput["negativePrompt"] as? String == "blurry")
-    #expect((wanInput["resources"] as? [Any])?.isEmpty == true)
-    #expect(wanInput["enablePromptEnhancer"] as? Bool == false)
+    #expect(wanInput["resources"] == nil)
+    #expect(wanInput["enablePromptEnhancer"] == nil)
     #expect(wanInput["usePro"] as? Bool == false)
 
     // Random seed resolves when no request seed is provided.
@@ -519,10 +519,12 @@ private func bundledYAMLText() throws -> String {
     #expect(input["engine"] as? String == "sdcpp")
     #expect(input["ecosystem"] as? String == "sdxl")
     #expect(input["model"] as? String == "urn:air:sdxl:checkpoint:civitai:133005@348913")
-    #expect(input["scheduler"] as? String == "DPM2Karras")
+    #expect(input["sampleMethod"] as? String == "dpm2")
+    #expect(input["schedule"] as? String == "karras")
+    #expect(input["scheduler"] == nil)
     #expect(input["steps"] as? Int == 35)
     #expect(input["cfgScale"] as? Int == 5)
-    #expect(input["clipSkip"] as? Int == 1)
+    #expect(input["clipSkip"] == nil)
     #expect(input["width"] as? Int == 1_280)
     #expect(input["height"] as? Int == 720)
     #expect(input["prompt"] as? String == "a rain-slick alley")
@@ -536,4 +538,94 @@ private func bundledYAMLText() throws -> String {
     let zavySteps = try #require(zavyPayload["steps"] as? [[String: Any]])
     let zavyInput = try #require(zavySteps[0]["input"] as? [String: Any])
     #expect(zavyInput["cfgScale"] as? Double == 6.5)
+}
+
+@Test func civitaiImageInputsUseNativeOperationsAndPersistStrength() throws {
+    let references = ["data:image/jpeg;base64,reference-a", "data:image/jpeg;base64,reference-b"]
+    for (id, limit) in [(RenderStackID.wan, 4), (RenderStackID.realisticPortrait, 2)] {
+        let stack = try #require(bundledRegistry.stack(id: id))
+        for prompt in ["A ceramic bowl on a workbench", "A basalt specimen beneath a microscope"] {
+            let (payload, _) = stack.civitaiPayload(prompt: prompt, requestSeed: 11, negativePrompt: "", images: references)
+            let steps = try #require(payload["steps"] as? [[String: Any]])
+            let input = try #require(steps.first?["input"] as? [String: Any])
+            #expect(input["operation"] as? String == "editImage")
+            #expect(input["images"] as? [String] == references)
+            #expect(input["prompt"] as? String == prompt)
+            #expect(stack.nativePromptImageLimit == limit)
+            #expect(!stack.reframeCapable)
+        }
+    }
+    let stack = try #require(bundledRegistry.stack(id: "civitai_zavychroma_xl"))
+    let (payload, _) = stack.civitaiPayload(prompt: "A specimen", requestSeed: 11, negativePrompt: "", images: [references[0]], strength: 0.25)
+    let input = try #require((payload["steps"] as? [[String: Any]])?.first?["input"] as? [String: Any])
+    #expect(input["operation"] as? String == "createVariant")
+    #expect(input["strength"] as? Double == 0.25)
+    #expect(input["image"] as? String == references[0])
+    let request = LensNewTakeRenderRequest(stack: stack, prompt: "A specimen", civitaiStrength: 0.25)
+    let restored = try JSONDecoder().decode(LensNewTakeRenderRequest.self, from: JSONEncoder().encode(request))
+    #expect(restored.civitaiStrength == 0.25)
+}
+
+@Test func civitaiOutputSelectionCannotReturnReferenceInputsOrFailedOutputs() throws {
+    let provider = CivitAIWANImageProvider(credentialStore: LitScenesCredentialStore())
+    let body: [String: Any] = ["steps": [
+        ["status": "succeeded", "input": ["images": ["https://example.invalid/reference.jpg"]], "output": ["images": [["url": "https://example.invalid/output?capability=private"]]]],
+        ["status": "failed", "output": ["images": ["https://example.invalid/failed.jpg"]]]
+    ]]
+    #expect(provider.outputImageURLs(from: body).map(\.path) == ["/output"])
+    let safe = inferenceTraceJSONString(redactedCivitAITracePayload(body))
+    #expect(safe.contains("succeeded"))
+    #expect(!safe.contains("capability=private"))
+    #expect(!safe.contains("reference.jpg"))
+    let safePrompt = redactedCivitAITracePayload(["input": ["prompt": "A basalt specimen", "images": ["data:image/png;base64,private"]]])
+    #expect((safePrompt["input"] as? [String: Any])?["prompt"] as? String == "A basalt specimen")
+}
+
+@Test func billingSnapshotKeepsAdvancedProvidersPersonalAndGoOverridesExplicit() async throws {
+    let managed = ProviderBillingSnapshot(defaultSource: .go, overrides: [:])
+    let nano = ProviderBillingTarget.fal("fal-ai/nano-banana-2")
+    #expect(managed.source(for: nano) == .go)
+    #expect(managed.source(for: .fal("fal-ai/nano-banana-2/edit")) == .go)
+    #expect(managed.source(for: .fal("fal-ai/flux-2-pro")) == .personal)
+    #expect(managed.source(for: .personal(.civitai)) == .personal)
+    #expect(managed.source(for: .personal(.openAI)) == .personal)
+    let personal = ProviderBillingSnapshot(defaultSource: .go, overrides: [nano.id: .personal, "civitai": .go])
+    #expect(personal.source(for: nano) == .personal)
+    #expect(personal.source(for: .personal(.civitai)) == .personal)
+    await ProviderBilling.$snapshot.withValue(managed) {
+        #expect(ProviderBilling.source(for: nano) == .go)
+        await ProviderBilling.$snapshot.withValue(personal) { #expect(ProviderBilling.source(for: nano) == .personal) }
+        #expect(ProviderBilling.source(for: nano) == .go)
+    }
+    let encoded = managed.including(in: #"{"prompt":"A specimen"}"#)
+    #expect(encoded.contains("billing_snapshot"))
+    #expect(encoded.contains("A specimen"))
+    #expect(!encoded.contains(GoConnection.marker))
+}
+
+@Test func civitaiSafeLifecyclePersistsForTraceInspection() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("litscenes-civitai-trace-validation", isDirectory: true)
+    let store = InferenceTraceStore(databaseURL: directory.appendingPathComponent("inference_traces.sqlite"))
+    var request = URLRequest(url: URL(string: "https://example.invalid/workflows")!)
+    request.httpMethod = "POST"
+    let prompt = "A basalt specimen beneath a microscope"
+    var metadata = InferenceTraceRequestMetadata(provider: "civitai", apiFamily: "image", operation: "image_edit",
+        projectId: "contract-validation", runId: "contract-validation", traceGroupId: "contract-validation",
+        workflowName: "provider_contract_validation", workflowStep: "offline_response_fixture",
+        artifactType: "lens_hero", artifactId: "specimen-fixture", model: "flux2.klein")
+    metadata.captureRequestBody = false
+    metadata.captureResponseBody = false
+    metadata.requestTextJSON = inferenceTraceJSONString(redactedCivitAITracePayload([
+        "steps": [["input": ["prompt": prompt, "operation": "editImage", "images": ["data:image/png;base64,private"]]]]
+    ]))
+    metadata.mediaRefsJSON = inferenceTraceJSONString(["sources": [["sha256": sha256Hex(Data("reference".utf8)), "mime_type": "image/png"]]])
+    for state in ["succeeded", "failed", "canceled"] {
+        metadata.responseTextJSON = inferenceTraceJSONString(["status": state, "fixture": true])
+        let error: Error? = state == "succeeded" ? nil : (state == "canceled" ? CancellationError() as Error : URLError(.cannotParseResponse) as Error)
+        let traceId = await store.record(request: request, metadata: metadata,
+            response: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil),
+            responseBody: nil, latencyMs: 1, error: error, traceId: "itrace_contract_" + state)
+        #expect(traceId == "itrace_contract_" + state)
+    }
+    #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("inference_traces.sqlite").path))
 }

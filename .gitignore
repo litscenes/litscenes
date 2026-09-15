@@ -4,3 +4,8 @@ dist/
 credentials.env
 *.xcodeproj
 .swiftpm/
+
+.env
+.env.*
+!.env.example
+!.env.sample

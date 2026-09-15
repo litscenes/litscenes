@@ -378,6 +378,8 @@ struct FrameCreatorModal: View {
     @State private var isPromptTransformEnabled: Bool
     /// Stability reference fidelity (strength override); seeded from the
     /// template frame so retakes reuse the choice.
+    @State private var billingRevision = 0
+    @State private var civitaiStrengthByStack: [String: Double] = [:]
     @State private var stabilityReferenceStrength: Double?
     /// Once the user touches the stack picker, reference-aware routing may
     /// only SUGGEST a capable stack — never auto-switch.
@@ -559,6 +561,11 @@ struct FrameCreatorModal: View {
         _prompt = State(initialValue: seededPrompt)
         _isPromptTransformEnabled = State(initialValue: !(context.templateImage?.promptEnrichmentDisabled ?? false))
         _stabilityReferenceStrength = State(initialValue: context.templateImage?.stabilityStrength)
+        if let template = context.templateImage, let strength = template.civitaiStrength,
+           let recipeId = template.renderRecipe?.stackId,
+           let stack = RenderStackRegistry.shared.stack(stackId: recipeId) {
+            _civitaiStrengthByStack = State(initialValue: [stack.id: strength])
+        }
         _stylePickerCatalogVersion = State(initialValue: context.templateImage?.sourceRecipeVersion ?? lens.body.styleTreatment?.catalogVersion ?? "")
         let seededStack = RenderStackRegistry.shared.defaultStack(
             hasOpenAI: hasOpenAICredential,
@@ -571,6 +578,9 @@ struct FrameCreatorModal: View {
         // default is text-only, open on the first capable stack instead —
         // a default, not a substitution: no user choice existed yet.
         var resolvedSeed = seededStack
+        if let seed = resolvedSeed, !ProviderBilling.isConfigured(.image(seed)) {
+            resolvedSeed = RenderStackRegistry.shared.stacks().first { ProviderBilling.isConfigured(.image($0)) }
+        }
         let contextCarriesSeed: Bool
         switch context {
         case .clipMoment, .variation, .restyle: contextCarriesSeed = true
@@ -618,6 +628,7 @@ struct FrameCreatorModal: View {
         hasFAL: Bool,
         hasStability: Bool
     ) -> Bool {
+        guard ProviderBilling.isConfigured(.image(stack)) else { return false }
         switch stack.credentialProvider {
         case .openAI: return hasOpenAI
         case .civitai: return hasCivitai
@@ -1771,7 +1782,7 @@ struct FrameCreatorModal: View {
         sheetOverrides: [String: MediaItemRecord] = [:]
     ) -> (attachments: [LensPromptImageAttachment], notes: [String]) {
         guard !resolution.mentions.isEmpty else { return ([], []) }
-        guard stack.reframeCapable else {
+        guard stack.supportsPromptImages else {
             return ([], ["\(stack.label) can't attach reference images — @mentions render as text only."])
         }
         var attachments: [LensPromptImageAttachment] = []
@@ -2503,6 +2514,7 @@ struct FrameCreatorModal: View {
         detail: String,
         stack: RenderStack
     ) -> some View {
+        let _ = billingRevision
         let isSelected = selectedStackIds.contains(stack.id)
         let credentialBlocker = credentialBlocker(for: stack)
         return VStack(alignment: .leading, spacing: 6) {
@@ -2553,11 +2565,28 @@ struct FrameCreatorModal: View {
                     ? "\(stack.label) renders one of this submit's frames — click to drop it"
                     : "Add \(stack.label) — every checked stack renders its own frame in parallel")
             }
+            if isSelected || ProviderBillingTarget.image(stack).supportsGo {
+                ProviderBillingControl(target: .image(stack)).padding(.horizontal, 10)
+            }
             if isSelected && credentialBlocker == nil {
+                if stack.usesCivitaiStrength, plannedReferenceCount > 0 {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Image change · " + String(format: "%.2f", civitaiStrengthByStack[stack.id] ?? 0.7))
+                            .font(PlateType.label(9))
+                        Slider(value: Binding(get: { civitaiStrengthByStack[stack.id] ?? 0.7 },
+                            set: { civitaiStrengthByStack[stack.id] = $0 }), in: 0...1, step: 0.01)
+                        HStack { Text("Keep source"); Spacer(); Text("More change") }
+                            .font(PlateType.label(8))
+                        if plannedReferenceCount > 1 {
+                            Text("References are combined into one labeled sheet. Its layout may influence the result.")
+                                .font(PlateType.label(8)).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }.padding(10)
+                }
                 stackControls(stack)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
-        }
+        }.onReceive(NotificationCenter.default.publisher(for: .goFundingChanged)) { _ in billingRevision += 1 }
     }
 
     private func toggleStackSelection(_ stack: RenderStack) {
@@ -2829,28 +2858,13 @@ struct FrameCreatorModal: View {
     // MARK: - Stack helpers (ported from the retired composer)
 
     private func credentialBlocker(for stack: RenderStack) -> String? {
-        switch stack.credentialProvider {
-        case .openAI:
-            return hasOpenAICredential ? nil : "Add an OpenAI API key in App Settings."
-        case .civitai:
-            return hasCivitaiCredential ? nil : "Add a CivitAI API key in App Settings."
-        case .fal:
-            if !hasFALCredential { return "Add a FAL API key in App Settings." }
-            // The OpenAI key only serves the prompt rewrite — verbatim mode
-            // removes the requirement (the engine gate consults the same flag).
-            if isPromptTransformEnabled, !hasOpenAICredential {
-                return "Add an OpenAI API key for prompt writing — or turn off Transform prompt."
-            }
-            return nil
-        case .stability:
-            if !hasStabilityCredential { return "Add a Stability AI API key in App Settings." }
-            if isPromptTransformEnabled, !hasOpenAICredential {
-                return "Add an OpenAI API key for prompt writing — or turn off Transform prompt."
-            }
-            return nil
-        default:
-            return "\(stack.credentialProvider.label) key gating is not supported for render stacks."
+        guard ProviderBilling.isConfigured(.image(stack)) else {
+            return "Add a \(stack.credentialProvider.label) API key in Advanced providers."
         }
+        if !stack.isCivitai, isPromptTransformEnabled, !hasOpenAICredential {
+            return "Connect text and analysis in Advanced providers — or turn off Transform prompt."
+        }
+        return nil
     }
 
     private func startBlocker(for stack: RenderStack) -> String? {
@@ -2927,7 +2941,7 @@ struct FrameCreatorModal: View {
         isPreparingAttachments = true
         Task {
             var sheetOverrides: [String: MediaItemRecord] = [:]
-            if let onEnsureMentionSheet, stacks.contains(where: \.reframeCapable) {
+            if let onEnsureMentionSheet, stacks.contains(where: \.supportsPromptImages) {
                 for entry in mentionResolution.mentions {
                     let plan = mentionAttachmentPlan(for: entry)
                     guard !plan.usesSheet, plan.items.count >= 2 else { continue }
@@ -2987,6 +3001,7 @@ struct FrameCreatorModal: View {
             styleOverrideSlot: submittedStyleSlot,
             styleOverrideCatalogVersion: submittedStyleSlot == nil ? "" : submittedStyleCatalogVersion,
             promptEnrichmentDisabled: isPromptTransformEnabled ? nil : true,
+            civitaiStrength: stack.usesCivitaiStrength ? civitaiStrengthByStack[stack.id] ?? 0.7 : nil,
             stabilityStrength: stack.isStability ? stabilityReferenceStrength : nil
         )
     }

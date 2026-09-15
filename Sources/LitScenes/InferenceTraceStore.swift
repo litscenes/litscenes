@@ -65,6 +65,11 @@ actor InferenceTraceStore {
 
     var connection: OpaquePointer?
     private var initialized = false
+    private let databaseURL: URL
+
+    init(databaseURL: URL = InferenceTraceSettings.databaseURL) {
+        self.databaseURL = databaseURL
+    }
 
     func record(
         request: URLRequest,
@@ -75,6 +80,16 @@ actor InferenceTraceStore {
         error: Error? = nil,
         traceId existingTraceId: String? = nil
     ) -> String {
+        var metadata = metadata
+        if LitScenesProviderCredential(rawValue: metadata.provider) != nil || metadata.provider == "litscenes" {
+            var fields = (try? JSONSerialization.jsonObject(with: Data(metadata.requestTextJSON.utf8))) as? [String: Any] ?? [:]
+            if fields.isEmpty, metadata.captureRequestBody, let body = request.httpBody,
+               let safe = try? JSONSerialization.jsonObject(with: WorkflowPrivacy.body(body)) as? [String: Any] {
+                fields = safe
+            }
+            fields["billing_source"] = metadata.provider == "litscenes" || GoConnection.selectsManaged(request) ? "go" : "personal"
+            metadata.requestTextJSON = inferenceTraceJSONString(fields)
+        }
         let traceId = existingTraceId ?? "itrace_\(UUID().uuidString.lowercased())"
         guard InferenceTraceSettings.isEnabled() else { return traceId }
         do {
@@ -199,7 +214,6 @@ actor InferenceTraceStore {
 
     func ensureReady() throws {
         if initialized { return }
-        let databaseURL = InferenceTraceSettings.databaseURL
         try ensureDirectory(databaseURL.deletingLastPathComponent())
         var db: OpaquePointer?
         guard sqlite3_open_v2(
@@ -518,6 +532,9 @@ actor InferenceTraceStore {
 
 enum TracedHTTPTransport {
     static func send(request: URLRequest, recordedRequest: URLRequest? = nil, metadata: InferenceTraceRequestMetadata) async throws -> TracedHTTPResult {
+        if GoConnection.selectsManaged(request) {
+            return try await GoTransport.send(request, metadata: WorkflowHTTP.scoped(metadata))
+        }
         return try await WorkflowHTTP.owned(metadata: metadata) {
             let metadata = WorkflowHTTP.scoped(metadata)
             var prepared = metadata
@@ -568,6 +585,14 @@ enum TracedHTTPTransport {
     }
 
     static func download(request: URLRequest, recordedRequest: URLRequest? = nil, metadata: InferenceTraceRequestMetadata) async throws -> TracedHTTPDownloadResult {
+        if var cached = try await GoOutputStore.shared.transfer(request) {
+            var local = metadata
+            local.captureRequestBody = false
+            local.captureResponseBody = false
+            local.workflowStep = "Validated local output recovered"
+            cached.traceId = await InferenceTraceStore.shared.record(request: request, metadata: local, response: cached.response, responseBody: nil, latencyMs: 0)
+            return cached
+        }
         return try await WorkflowHTTP.owned(metadata: metadata) {
             let metadata = WorkflowHTTP.scoped(metadata)
             var prepared = metadata

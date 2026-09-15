@@ -40,11 +40,12 @@ enum ElevenLabsSettingsStore {
     }
 
     static func resolvedVoiceId() -> String? {
+        if ProviderBilling.source(for: .audio) == .go { return "JBFqnCBsd6RMkjVDRZzb" }
         let values = loadDotEnv(from: OpenAIKeyStore.savedKeyURL)
         if let voiceId = firstValue(in: values, keys: ["ELEVEN_LABS_VOICE_ID", "ELEVENLABS_VOICE_ID"]) {
             return voiceId
         }
-        return firstEnvironmentValue(keys: ["ELEVEN_LABS_VOICE_ID", "ELEVENLABS_VOICE_ID"])
+        return firstEnvironmentValue(keys: ["ELEVEN_LABS_VOICE_ID", "ELEVENLABS_VOICE_ID"]) ?? "JBFqnCBsd6RMkjVDRZzb"
     }
 
     static func resolvedCustomVoiceId() -> String? {
@@ -127,6 +128,7 @@ enum ElevenLabsSettingsStore {
     // MARK: Default narration voice (Voices tab)
 
     static func resolvedDefaultNarrationVoice() -> (voiceId: String, name: String)? {
+        if ProviderBilling.source(for: .audio) == .go { return ("JBFqnCBsd6RMkjVDRZzb", "George") }
         let values = loadDotEnv(from: OpenAIKeyStore.savedKeyURL)
         guard let voiceId = firstValue(in: values, keys: ["LITSCENES_DEFAULT_NARRATION_VOICE_ID"])
             ?? firstEnvironmentValue(keys: ["LITSCENES_DEFAULT_NARRATION_VOICE_ID"]) else {

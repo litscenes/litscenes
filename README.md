@@ -26,8 +26,8 @@ Kevin Riggen - kevin@oahu.ai
 - **Story spine.** A Goal interview establishes what the story is for, Frame Context grounds it in your material, Scene Stories break it into scenes, and Frame Forms turn each scene into concrete frames. Structure comes before pixels. In the app this runs through the MEDIA, STORY, and SCENES workspaces.
 - **Scenes, shots, and cuts.** Compose scenes into shots, edit at the cut layer — trims, skips, seams, loops — and assemble the result locally. The preview is the export.
 - **Renders through your own providers.** Bring your own keys. OpenAI drives story and text; optional providers cover image, video, and voice.
-- **Local-first projects.** Your projects, media, and renders live on your Mac. Network traffic is the provider calls you configure, plus the style catalog only if you turn the live catalog on or refresh it (see below).
-- **No telemetry.** Zero analytics, zero tracking. An unconfigured install makes no network requests: the bundled style catalog serves until you turn on the live catalog or explicitly refresh it from catalog.litscenes.ai. The CI test suite runs under a network-deny sandbox to keep this true.
+- **Local-first projects.** Your projects, media, and renders live on your Mac. Network requests serve configured providers, the Go service when you choose to use it, and the style catalog when you enable or refresh it (see below).
+- **No telemetry.** Zero analytics, zero tracking. An unconfigured install makes no background network requests. Opening Account & usage or choosing Go contacts the account service; connected accounts refresh payment and job status. The bundled style catalog serves until you turn on the live catalog or explicitly refresh it from catalog.litscenes.ai. The CI test suite runs under a network-deny sandbox to keep this true.
 
 ## Where LitScenes sits
 
@@ -37,7 +37,7 @@ Velorn, OpenScene, and SynthCut are excellent AI-native timeline editors and age
 
 LitScenes is in beta. It works, and it has rough edges:
 
-- First launch offers a guided key setup; past it, the app still assumes you will explore.
+- First launch offers Go, guided personal-key setup, account recovery, and Explore first. Go availability depends on the account service.
 - Documentation trails the app.
 - Some editing flows are unpolished.
 - Provider errors are sometimes surfaced tersely.
@@ -67,7 +67,7 @@ GitHub Releases page; until then, build from source.
 
 ## Providers and keys
 
-LitScenes is fully bring-your-own-key. The app ships with no keys and makes no calls you did not configure.
+Personal-key mode starts with one OpenAI key. Go provides managed generation and hosted story context through a paid account when the service is available. The app ships with no provider secrets.
 
 | Provider | Used for | Required |
 | --- | --- | --- |
@@ -82,22 +82,19 @@ LitScenes is fully bring-your-own-key. The app ships with no keys and makes no c
 
 Keys live in a `credentials.env` file with `600` permissions, or in the process environment. They never leave your machine except in calls to the provider they belong to.
 
-First launch offers a guided setup for the OpenAI key (with FAL and ElevenLabs as clearly optional extras), including a zero-spend key test. Everything can also be entered later in App Settings → Credentials, which can reopen the welcome at any time.
+Personal-key setup offers OpenAI Save & Test. Video and narration request additional provider setup when needed. Account & usage is the default Settings tab; additional provider keys, custom endpoints, and model overrides live in Advanced.
 
-## Story Inference modes
+## Story inference
 
-Story and text work runs in one of two modes, chosen in the app's settings:
+Personal-key mode uses an OpenAI-compatible provider with the bundled starter meaning vocabulary. Advanced settings support compatible endpoint and model overrides.
 
-- **Direct (your key)** — the default. Everything runs against any OpenAI-compatible Responses endpoint; an `OPENAI_BASE_URL` override points the app at your own gateway or a compatible server. A bundled starter meaning vocabulary ships with the app, so Direct mode is complete on its own.
-- **LitScenes Hosted** — optional. Configure the hosted endpoint and token (the `LITSCENES_LENS_CONTEXT_URL` / `LITSCENES_LENS_CONTEXT_TOKEN` rows in App Settings → Credentials) to add live meaning-graph retrieval — curated nodes, edges, and evidence, plus aesthetic and style candidates — with managed inference billed at a transparent markup on inference cost.
-
-Direct mode is not a trial and Hosted is not a wall. The app is complete without any hosted service.
+Go includes hosted story context and managed inference. Users connect a Go account; they do not configure a graph service endpoint or token. Choosing a funding mode affects future work across projects and preserves existing media. Local import, browsing, editing, and export remain available without a subscription.
 
 ## Troubleshooting
 
 - **Where things live.** Projects, media indexes, and `credentials.env` sit under `~/Library/Application Support/LitScenes Community/` (a development-channel build uses `…/LitScenes/`).
-- **Costs.** Renders bill your own provider accounts; the in-app spend ledger estimates per-render cost and never pretends unpriced work is free.
-- **Provider errors.** Key problems show in App Settings → Credentials — the first-run providers each have a zero-spend Test button; other failures surface on the render's status line.
+- **Costs.** Personal-key renders bill your provider accounts. Go shows a server quote and asks for maximum credit approval before generation; a purchase alone does not start a render.
+- **Provider errors.** Personal key problems show in setup or Advanced settings; other failures surface on the render's status line.
 - **Reset the first-run welcome.** `defaults delete ai.litscenes.community litscenes.welcome.seen_version` (use your channel's suite).
 - **Updates.** There is no auto-update; watch the GitHub Releases page.
 
@@ -107,7 +104,7 @@ Here is the honest economics of this project.
 
 The code is licensed `AGPL-3.0-only`: you can use, modify, sell, and redistribute LitScenes, but derivatives stay open — the AGPL is what stops a proprietary fork. Separately, trademark policy (not the AGPL) reserves the LitScenes name, icon, and official-build identity, so a modified distribution must rename and re-badge; see `TRADEMARKS.md`. A commercial license is available for organizations that need different terms; see `LICENSING.md`.
 
-The hosted meaning-graph service is paid, at a transparent markup on inference cost, and it funds work on the free app. Other paid products may follow. The free app stays free, and stays complete.
+Optional paid services fund work on the free app. Go bundles hosted story context with a monthly generation allowance; availability and the current offer appear in Account & usage. The free app stays free, and stays complete.
 
 ## Contributing
 

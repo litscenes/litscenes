@@ -5,14 +5,19 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 CHANNEL="development"
+DISTRIBUTION="direct"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --channel)
       CHANNEL="${2:-}"
       shift 2
       ;;
+    --distribution)
+      DISTRIBUTION="${2:-}"
+      shift 2
+      ;;
     --help)
-      echo "usage: $0 [--channel development|community-release|official-commercial-release]"
+      echo "usage: $0 [--channel development|community-release|official-commercial-release] [--distribution direct|app-store]"
       exit 0
       ;;
     *)
@@ -21,6 +26,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$DISTRIBUTION" != "direct" && "$DISTRIBUTION" != "app-store" ]]; then
+  echo "Unknown distribution: $DISTRIBUTION" >&2
+  exit 64
+fi
 
 PUBLIC_REPOSITORY_HTTPS="https://github.com/litscenes/litscenes"
 PUBLIC_REPOSITORY_SSH="git@github.com:litscenes/litscenes.git"
@@ -81,7 +91,9 @@ case "$CHANNEL" in
     SIGNING_IDENTITY="${LITSCENES_OFFICIAL_SIGNING_IDENTITY:-}"
     UPDATE_FEED_URL="${LITSCENES_OFFICIAL_UPDATE_FEED_URL:-}"
 
-    for REQUIRED_NAME in BUNDLE_ID ICON_SOURCE LICENSE_SOURCE SIGNING_IDENTITY UPDATE_FEED_URL; do
+    REQUIRED_NAMES=(BUNDLE_ID ICON_SOURCE LICENSE_SOURCE SIGNING_IDENTITY)
+    if [[ "$DISTRIBUTION" == "direct" ]]; then REQUIRED_NAMES+=(UPDATE_FEED_URL); fi
+    for REQUIRED_NAME in "${REQUIRED_NAMES[@]}"; do
       if [[ -z "${!REQUIRED_NAME}" ]]; then
         echo "Official commercial release refused: $REQUIRED_NAME is missing from the rights-holder release configuration." >&2
         exit 65
@@ -102,6 +114,14 @@ fi
 if [[ -n "$LICENSE_SOURCE" && ! -f "$LICENSE_SOURCE" ]]; then
   echo "Missing release license/EULA: $LICENSE_SOURCE" >&2
   exit 66
+fi
+
+if [[ "$DISTRIBUTION" == "app-store" && "$CHANNEL" != "development" ]]; then
+  if [[ -z "${LITSCENES_STORE_PROVISIONING_PROFILE:-}" || ! -f "$LITSCENES_STORE_PROVISIONING_PROFILE" ]]; then
+    echo "App Store packaging requires LITSCENES_STORE_PROVISIONING_PROFILE and an App Store signing identity." >&2
+    exit 65
+  fi
+  UPDATE_FEED_URL=""
 fi
 
 swift build --product LitScenes
@@ -196,6 +216,12 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <string>1</string>
   <key>LSMinimumSystemVersion</key>
   <string>15.0</string>
+  <key>SKIncludeConsumableInAppPurchaseHistory</key>
+  <true/>
+  <key>LitScenesDistribution</key>
+  <string>$DISTRIBUTION</string>
+  <key>LitScenesGoServiceURL</key>
+  <string>https://api.litscenes.ai/v1/desktop</string>
   <key>LitScenesReleaseChannel</key>
   <string>$CHANNEL</string>
   <key>LitScenesCorrespondingSourceURL</key>
@@ -271,8 +297,15 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign \
-  --force \
+SIGNING_OPTIONS=(--force)
+if [[ "$DISTRIBUTION" == "app-store" ]]; then
+  SIGNING_OPTIONS+=(--entitlements "$ROOT/config/macos-app-store.entitlements")
+  if [[ -n "${LITSCENES_STORE_PROVISIONING_PROFILE:-}" ]]; then
+    cp "$LITSCENES_STORE_PROVISIONING_PROFILE" "$APP_DIR/Contents/embedded.provisionprofile"
+  fi
+fi
+
+codesign "${SIGNING_OPTIONS[@]}" \
   --sign "$SIGNING_IDENTITY" \
   --requirements "=designated => identifier \"$BUNDLE_ID\"" \
   "$APP_DIR" >/dev/null

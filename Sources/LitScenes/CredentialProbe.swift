@@ -25,6 +25,7 @@ struct CredentialProbe: Sendable {
     }
 
     static func request(for provider: LitScenesProviderCredential, apiKey: String) throws -> URLRequest {
+        if apiKey == GoConnection.marker { throw GoServiceError(code: "managed", message: "Check Go in Account & usage.") }
         switch provider {
         case .openAI:
             let base = try OpenAITextEndpointSettings.baseURL()

@@ -3,6 +3,7 @@ import Foundation
 enum OpenAIKeySource: String {
     case savedLocal = "Saved Locally"
     case environment = "Environment"
+    case managed = "LitScenes Go"
     case missing = "Missing"
 }
 
@@ -23,6 +24,7 @@ enum OpenAIKeyStore {
 
     static func currentSource() -> OpenAIKeySource {
         let status = LitScenesCredentialStore().credentialStatus(for: .openAI)
+        if status.source == .managed { return .managed }
         if status.source == .credentialsFile {
             return .savedLocal
         }

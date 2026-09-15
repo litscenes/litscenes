@@ -642,6 +642,7 @@ struct ProjectRosterView: View {
     }
 
     private func generateCredentialBlocker(for stack: RenderStack) -> String? {
+        if let blocker = library.renderStackCredentialBlocker(for: stack) { return blocker }
         switch stack.credentialProvider {
         case .openAI:
             return hasOpenAICredential ? nil : "Add an OpenAI API key in App Settings."
@@ -682,7 +683,7 @@ struct ProjectRosterView: View {
         guard let stack = selectedGenerateStack else {
             return ("Add an API key in App Settings to enable rendering.", false)
         }
-        guard stack.reframeCapable else {
+        guard stack.supportsPromptImages else {
             if entry.referenceMediaIds.isEmpty {
                 return ("\(stack.label) renders from text only — the prompt carries the identity.", false)
             }
@@ -788,6 +789,7 @@ struct ProjectRosterView: View {
                     }
                 }
             }
+            if let stack = selectedGenerateStack { ProviderBillingControl(target: .image(stack)) }
             HStack(alignment: .center, spacing: 10) {
                 Button {
                     guard let stack = selectedGenerateStack else { return }
@@ -874,7 +876,7 @@ struct ProjectRosterView: View {
         }
         .buttonStyle(.plain)
         .disabled(blocker != nil)
-        .help(blocker ?? (stack.reframeCapable
+        .help(blocker ?? (stack.supportsPromptImages
             ? "\(stack.label) — can anchor identity on reference images"
             : "\(stack.label) — renders from text only"))
     }

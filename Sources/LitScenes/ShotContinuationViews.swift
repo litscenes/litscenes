@@ -69,7 +69,13 @@ struct ShotContinuationReviewView: View {
         return ShotRenderCostEstimate.segmentUSD(stack: stack, pricing: pricing)
     }
 
+    private var usesGo: Bool { ProviderBilling.source(for: .video(stack.model)) == .go }
+
     private var priceLabel: String {
+        if usesGo {
+            return ShotRenderCostEstimate.segmentGoCredits(stack: stack, pricing: pricing)
+                .map { "UP TO \($0) GO CREDITS" } ?? "REVIEW GO QUOTE"
+        }
         guard let price else { return "RATE UNAVAILABLE" }
         return price > 0 && price < 0.01
             ? String(format: "EST. $%.3f", price)
@@ -80,8 +86,8 @@ struct ShotContinuationReviewView: View {
         !isPreparing && availability.canContinue
             && !prompt.trimmed.isEmpty
             && availability.anchor != nil
-            && price != nil
-            && configuredModels.contains(stack.model)
+            && (usesGo || price != nil)
+            && configuredModels.contains(stack.model) && ProviderBilling.isConfigured(.video(stack.model))
             && (availability.targetFrame == nil || stack.model.supportsShotEnding)
     }
 
@@ -165,6 +171,8 @@ struct ShotContinuationReviewView: View {
                     .foregroundStyle(ShotReviewPalette.ink.opacity(0.65))
             }
 
+            ProviderBillingControl(target: .video(stack.model))
+
             Text("DIRECTION")
                 .font(CanonType.archive(7.5, weight: .semibold))
                 .kerning(0.8)
@@ -200,7 +208,7 @@ struct ShotContinuationReviewView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSubmit)
-                .help(price == nil
+                .help(!usesGo && price == nil
                     ? "Wait for a complete provider-rate estimate before rendering"
                     : "Generate one new immutable continuation take. This is the only action in this review that can spend.")
             }
@@ -211,6 +219,7 @@ struct ShotContinuationReviewView: View {
         .foregroundStyle(ShotReviewPalette.ink)
         .environment(\.colorScheme, .light)
         .preferredColorScheme(.light)
+        .onReceive(NotificationCenter.default.publisher(for: .goFundingChanged)) { _ in onRefresh() }
         .onChange(of: isPreparing) { _, preparing in
             if !preparing && !hasLoadedRecipe {
                 mode = availability.preferredMode

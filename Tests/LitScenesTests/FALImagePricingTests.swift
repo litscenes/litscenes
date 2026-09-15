@@ -87,3 +87,20 @@ struct FALImagePricingTests {
         #expect(decoded.ageSeconds > 0)
     }
 }
+
+@Test func hybridPricingNeverMixesManagedRatesIntoPersonalDollars() async throws {
+    let stack = ShotRenderStack.recipe(model: .falKlingV3Pro, durationSeconds: 5)
+    let endpoint = stack.pairedModelSelection.providerModelId
+    var prices = snapshot([price(endpoint, 0.10, "seconds")])
+    prices.goPrices = [endpoint: price(endpoint, 0.15, "seconds")]
+    await ProviderBilling.$snapshot.withValue(ProviderBillingSnapshot(defaultSource: .go, overrides: [:])) {
+        #expect(ShotRenderCostEstimate.segmentUSD(stack: stack, pricing: prices) == nil)
+        #expect(ShotRenderCostEstimate.segmentGoCredits(stack: stack, pricing: prices) == 75)
+    }
+    await ProviderBilling.$snapshot.withValue(ProviderBillingSnapshot(defaultSource: .personal, overrides: [:])) {
+        #expect(ShotRenderCostEstimate.segmentUSD(stack: stack, pricing: prices) == 0.50)
+        #expect(ShotRenderCostEstimate.segmentGoCredits(stack: stack, pricing: prices) == nil)
+    }
+    let mixed = ShotRenderCostEstimate(totalUSD: 0.50, totalGoCredits: 75, pricedSegmentCount: 2, totalGeneratedCount: 2)
+    #expect(mixed.headlineLabel == "EST. $0.50 direct + up to 75 Go credits")
+}

@@ -483,7 +483,8 @@ struct VideoProviderCapability: Codable, Hashable, Identifiable {
             if ![.landscape16x9, .portrait9x16].contains(outputProfile.aspectRatio) {
                 blockers.append("aspect_not_supported_by_fal_image_to_video")
             }
-            if credentialStore.resolvedCredential(for: .fal).trimmed.isEmpty {
+            if credentialStore.personalCredential(for: .fal).trimmed.isEmpty
+                && ProviderBilling.source(for: .fal("fal-ai/kling-video/v3/pro/image-to-video")) != .go {
                 blockers.append("FAL_API_KEY_missing")
             }
             return VideoProviderCapability(
@@ -510,7 +511,7 @@ struct VideoProviderCapability: Codable, Hashable, Identifiable {
             if outputProfile.aspectRatio != .landscape16x9 {
                 blockers.append("aspect_not_supported_by_shot_ltx_audio_to_video")
             }
-            if credentialStore.resolvedCredential(for: .fal).trimmed.isEmpty {
+            if credentialStore.personalCredential(for: .fal).trimmed.isEmpty {
                 blockers.append("FAL_API_KEY_missing")
             }
             return VideoProviderCapability(

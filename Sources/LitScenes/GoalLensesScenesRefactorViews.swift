@@ -20,13 +20,7 @@ struct GoalV2WorkspaceView: View {
     @State private var selectedMediaIds: [String] = []
     @State private var attachmentStatus = ""
     @State private var viewedVersionId: String?
-    /// Which story service the next turn will use. Resolved on appearance and
-    /// whenever hosted credentials change, so the Direct-mode note under the
-    /// composer disappears the moment Hosted is configured.
-    @State private var storyInferenceMode = StoryInferenceMode.resolved()
     @FocusState private var isFieldEditorFocused: Bool
-
-    private static let proInterestDismissKey = "pro-interest"
 
     private enum GoalV2Field: String, CaseIterable, Identifiable {
         case contentType
@@ -247,24 +241,7 @@ struct GoalV2WorkspaceView: View {
             if hasSavedGoalVersion {
                 goalGoodEnoughCTA
             }
-            if showsProInterestLine {
-                ProComingSoonCard(face: .line, surface: .paper) {
-                    dismissedReadinessBannerKeys.insert(Self.proInterestDismissKey)
-                }
-            }
         }
-        .onAppear { storyInferenceMode = StoryInferenceMode.resolved() }
-        .onChange(of: library.lensContextCredentialStatuses) { _, _ in
-            storyInferenceMode = StoryInferenceMode.resolved()
-        }
-    }
-
-    /// The Pro note shows only where the gap is real: Direct mode, in builds
-    /// that carry the promotion, until dismissed for this launch.
-    private var showsProInterestLine: Bool {
-        LitScenesReleaseIdentity.current.showsProInterestPromotion
-            && storyInferenceMode == .direct
-            && !dismissedReadinessBannerKeys.contains(Self.proInterestDismissKey)
     }
 
     private var goalGoodEnoughCTA: some View {

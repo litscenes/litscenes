@@ -1,6 +1,6 @@
 import Foundation
 
-enum LitScenesProviderCredential: String, CaseIterable, Identifiable {
+enum LitScenesProviderCredential: String, CaseIterable, Identifiable, Sendable {
     case openAI = "openai"
     case elevenLabs = "elevenlabs"
     case ltx = "ltx"
@@ -55,12 +55,14 @@ enum LitScenesProviderCredential: String, CaseIterable, Identifiable {
 enum CredentialSource: String, Codable, Hashable {
     case credentialsFile = "credentials_file"
     case environment
+    case managed
     case missing
 
     var label: String {
         switch self {
         case .credentialsFile: "credentials.env"
         case .environment: "Environment"
+        case .managed: "LitScenes Go"
         case .missing: "Missing"
         }
     }
@@ -115,6 +117,8 @@ struct LensContextCredentialStatus: Hashable, Identifiable {
 }
 
 protocol LitScenesCredentialResolving {
+    func personalCredential(for provider: LitScenesProviderCredential) -> String
+    func personalCredentialStatus(for provider: LitScenesProviderCredential) -> CredentialStatus
     func resolvedCredential(for provider: LitScenesProviderCredential) -> String
     func resolvedCredentialValue(forKey key: String) -> String
     func resolvedCredentialValue(forKeys keys: [String]) -> String
@@ -122,8 +126,24 @@ protocol LitScenesCredentialResolving {
     func lensContextCredentialStatus(for credential: LensContextCredential) -> LensContextCredentialStatus
 }
 
+extension LitScenesCredentialResolving {
+    func personalCredential(for provider: LitScenesProviderCredential) -> String {
+        let key = resolvedCredential(for: provider)
+        return key == GoConnection.marker ? "" : key
+    }
+    func personalCredentialStatus(for provider: LitScenesProviderCredential) -> CredentialStatus {
+        let status = credentialStatus(for: provider)
+        return status.source == .managed ? CredentialStatus(provider: provider, source: .missing, isConfigured: false,
+            message: "Add your own API key.") : status
+    }
+}
+
 struct LitScenesCredentialStore: LitScenesCredentialResolving {
     func resolvedCredential(for provider: LitScenesProviderCredential) -> String {
+        ProviderBilling.credential(for: ProviderBilling.defaultTarget(for: provider), store: self)
+    }
+
+    func personalCredential(for provider: LitScenesProviderCredential) -> String {
         if provider == .kling {
             return resolvedKlingCredential()
         }
@@ -154,6 +174,13 @@ struct LitScenesCredentialStore: LitScenesCredentialResolving {
     }
 
     func credentialStatus(for provider: LitScenesProviderCredential) -> CredentialStatus {
+        if ProviderBilling.source(for: ProviderBilling.defaultTarget(for: provider)) == .go {
+            return CredentialStatus(provider: provider, source: .managed, isConfigured: true, message: "LitScenes Go")
+        }
+        return personalCredentialStatus(for: provider)
+    }
+
+    func personalCredentialStatus(for provider: LitScenesProviderCredential) -> CredentialStatus {
         if provider == .kling {
             return klingCredentialStatus()
         }

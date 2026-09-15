@@ -343,6 +343,8 @@ private struct LensHeroGenerationJob: Sendable {
     var imageSize: String = "1024x1024"
     /// Stability aspect ratio ("1:1", "3:2", "2:3") from the lens media plan.
     var stabilityAspectRatio: String = "1:1"
+    /// SDXL image-change strength; nil uses the provider default.
+    var civitaiStrength: Double? = nil
     /// Per-render Stability reference fidelity (0 ≈ identical to the input
     /// image); nil = the stack's declared strength.
     var stabilityStrength: Double? = nil
@@ -473,7 +475,8 @@ private enum LensHeroImageRunner {
                 let civitaiSource = [sourcePrompt, job.mediumBlock.trimmed, job.moodInfluenceBlock.trimmed, job.allowsMultiPanelLayout ? "" : lensSingleFrameGuard]
                     .filter { !$0.isEmpty }
                     .joined(separator: "\n\n")
-                let finalPrompt = civitaiWANPrompt(sourcePrompt: civitaiSource, styleSummary: job.styleSummary)
+                let finalPrompt = [civitaiWANPrompt(sourcePrompt: civitaiSource, styleSummary: job.styleSummary), job.attachmentManifest.trimmed]
+                    .filter { !$0.isEmpty }.joined(separator: "\n\n")
                 let result = try await generateImageData(
                     job: job,
                     prompt: finalPrompt,
@@ -706,6 +709,8 @@ private enum LensHeroImageRunner {
         civitaiImageProvider: CivitAIWANImageProvider?,
         falImageClient: FALImageClient?
     ) async throws -> (imageData: Data, requestId: String, traceId: String, renderRecipe: LensRenderRecipeSnapshot?, transmittedPrompt: String?) {
+        let openAIClient = job.provider == .openAI && job.stack != nil
+            ? try OpenAIClient.fromEnvironment(billingTarget: .personal(.openAI)) : openAIClient
         if let reframe = job.reframe?.normalized(), reframe.isZoomOut {
             return try await generateZoomOutImageData(
                 job: job,
@@ -854,18 +859,31 @@ private enum LensHeroImageRunner {
             guard let civitaiImageProvider else {
                 throw ScreenGraphError.credentials("CivitAI image provider is unavailable.")
             }
+            let stack = job.stack ?? RenderStackRegistry.shared.stack(id: RenderStackID.wan) ?? RenderStackRegistry.shared.fallback
+            let sources = try await attachmentEditSources(job.attachments)
+            guard sources.count == job.attachments.count else {
+                throw ScreenGraphError.capture("A selected reference image is unavailable. Repair it before rendering.")
+            }
+            let providerPrompt = providerAttachmentText(prompt, entries: job.attachments, sources: sources)
             let result = try await civitaiImageProvider.generateImage(from: CivitAIWANImageRequest(
                 artifactId: job.imageId,
-                prompt: prompt,
+                prompt: providerPrompt,
                 negativePrompt: negativePrompt,
                 seed: job.civitaiSeed,
-                stack: job.stack ?? RenderStackRegistry.shared.stack(id: RenderStackID.wan) ?? RenderStackRegistry.shared.fallback,
+                stack: stack,
                 widthOverride: job.civitaiWidthOverride,
                 heightOverride: job.civitaiHeightOverride,
-                traceGroupId: job.runId
+                traceGroupId: job.runId,
+                sources: sources,
+                strength: job.civitaiStrength,
+                sourceImageCount: job.sourceImageCount,
+                usesCompositeImage: job.usesCompositeImage,
+                operatorPrompt: job.sourcePrompt,
+                projectId: job.projectId,
+                runId: job.runId,
+                workflowName: job.workflowName
             ))
-            // CivitAI sends `prompt` verbatim — the composed text is faithful.
-            return (result.imageData, result.providerJobId, result.traceId, nil, nil)
+            return (result.imageData, result.providerJobId, result.traceId, result.renderRecipe, result.transmittedPrompt)
         case .fal:
             guard let falImageClient else {
                 throw ScreenGraphError.credentials("FAL_API_KEY or FAL_KEY is required to generate FAL frames.")
@@ -3832,6 +3850,7 @@ final class LibraryEngine: ObservableObject {
                     attachmentStylePolicy: provider == .openAI ? plan.manifestPolicyText : "",
                     imageSize: theme.body.resolvedMediaPlan.imageSize,
                     stabilityAspectRatio: theme.body.resolvedMediaPlan.stabilityAspectRatio,
+                    civitaiStrength: heroImage.civitaiStrength,
                     stabilityStrength: heroImage.stabilityStrength,
                     mediaPlan: theme.body.resolvedMediaPlan,
                     transparentBackground: isCharacterStudy,
@@ -4812,6 +4831,7 @@ final class LibraryEngine: ObservableObject {
                         attachmentStylePolicy: plan.manifestPolicyText,
                         imageSize: generatedLens.body.resolvedMediaPlan.imageSize,
                         stabilityAspectRatio: generatedLens.body.resolvedMediaPlan.stabilityAspectRatio,
+                        civitaiStrength: heroImage.civitaiStrength,
                         stabilityStrength: heroImage.stabilityStrength,
                         mediaPlan: generatedLens.body.resolvedMediaPlan,
                         transparentBackground: isCharacterStudy,
@@ -5073,6 +5093,7 @@ final class LibraryEngine: ObservableObject {
             // Retries route through the sibling path — a verbatim frame's sibling
             // stays verbatim (the job below reads this same flag).
             sibling.promptEnrichmentDisabled = sourceImage.promptEnrichmentDisabled
+            sibling.civitaiStrength = sourceImage.civitaiStrength
             sibling.stabilityStrength = sourceImage.stabilityStrength
             heroImages.append(sibling)
 
@@ -5157,6 +5178,7 @@ final class LibraryEngine: ObservableObject {
                 attachmentStylePolicy: provider == .fal || provider == .stability ? "" : plan.manifestPolicyText,
                 imageSize: stack.imageSize ?? lens.body.resolvedMediaPlan.imageSize,
                 stabilityAspectRatio: stack.isStability ? stack.stabilityAspectRatio : lens.body.resolvedMediaPlan.stabilityAspectRatio,
+                civitaiStrength: sibling.civitaiStrength,
                 stabilityStrength: sibling.stabilityStrength,
                 mediaPlan: lens.body.resolvedMediaPlan,
                 transparentBackground: isCharacterStudy,
@@ -6354,7 +6376,7 @@ final class LibraryEngine: ObservableObject {
                 throw ScreenGraphError.capture("The selected continuation model is not configured")
             }
             let request = ShotContinuationRequest(mode: take.continuationMode, stack: stack, prompt: take.prompt, preparedAnchor: take.anchor)
-            guard shotContinuationEstimatedUSD(request: request) != nil else {
+            guard ProviderBilling.source(for: .video(stack.model)) == .go || shotContinuationEstimatedUSD(request: request) != nil else {
                 throw ScreenGraphError.capture("A complete provider price is required — review this take again")
             }
             guard (take.continuationMode == .nativeExtend) == stack.isNativeFootageExtend else {
@@ -6932,7 +6954,10 @@ final class LibraryEngine: ObservableObject {
             } else {
                 usd = ShotRenderCostEstimate.segmentUSD(stack: take.renderStack, pricing: falPricing)
             }
-            if let usd {
+            if let credits = ShotRenderCostEstimate.segmentGoCredits(stack: take.renderStack, pricing: falPricing) {
+                estimate.totalGoCredits += credits
+                estimate.pricedSegmentCount += 1
+            } else if let usd {
                 estimate.totalUSD += usd
                 estimate.pricedSegmentCount += 1
             } else {
@@ -7234,7 +7259,7 @@ final class LibraryEngine: ObservableObject {
             }
             let promptAttachments = lensPromptImageAttachments(for: renderRequest)
             if !promptAttachments.isEmpty {
-                if !stack.reframeCapable {
+                if !stack.supportsPromptImages {
                     aestheticStatus = "\(stack.label) does not support prompt image attachments yet"
                     lastError = aestheticStatus
                     return false
@@ -7369,11 +7394,11 @@ final class LibraryEngine: ObservableObject {
             let civitaiSeed = provider == .civitaiWan27 ? Int.random(in: 1...Int(Int32.max)) : nil
             let newImageId = fulfilledPlan?.imageId
                 ?? "lens_hero_\(shortHash("\(project.projectId):\(lensId):\(newRouteKey):\(stack.id):\(now)", length: 14))"
-            let usesCompositePromptImage = stack.isStability && promptAttachments.count > 1
+            let usesCompositePromptImage = stack.usesReferenceComposite && promptAttachments.count > 1
             let providerPromptAttachments: [LensPromptImageAttachment]
             if usesCompositePromptImage {
                 let compositeURL = contextStore.aestheticProofDirectory(for: project)
-                    .appendingPathComponent("stability_reference_\(safeIdentifier(newImageId)).jpg")
+                    .appendingPathComponent("render_reference_\(safeIdentifier(newImageId)).jpg")
                 let cells = promptAttachments.compactMap { attachment -> (image: NSImage, caption: String)? in
                     guard let image = NSImage(contentsOfFile: attachment.imagePath) else { return nil }
                     let caption = attachment.label.trimmed.isEmpty ? attachment.detail : attachment.label
@@ -7381,7 +7406,7 @@ final class LibraryEngine: ObservableObject {
                 }
                 guard cells.count == promptAttachments.count,
                       let jpeg = RenderReferenceComposite.renderJPEG(title: "Frame references", cells: cells) else {
-                    aestheticStatus = "Could not compose the Stability reference input"
+                    aestheticStatus = "Could not compose the reference input"
                     lastError = aestheticStatus
                     return false
                 }
@@ -7389,7 +7414,7 @@ final class LibraryEngine: ObservableObject {
                     try ensureDirectory(contextStore.aestheticProofDirectory(for: project))
                     try jpeg.write(to: compositeURL, options: [.atomic])
                 } catch {
-                    aestheticStatus = "Could not save the Stability reference input"
+                    aestheticStatus = "Could not save the reference input"
                     lastError = error.localizedDescription
                     return false
                 }
@@ -7400,9 +7425,9 @@ final class LibraryEngine: ObservableObject {
                 }
                 providerPromptAttachments = [
                     LensPromptImageAttachment(
-                        attachmentId: "stability_composite_\(newImageId)",
+                        attachmentId: "render_composite_\(newImageId)",
                         source: .moodboardImage,
-                        sourceId: "stability_composite_\(newImageId)",
+                        sourceId: "render_composite_\(newImageId)",
                         label: "Labeled composite · \(promptAttachments.count) references",
                         detail: "COMPOSITE REFERENCE INPUT. Read each labeled cell as a separate source; render one continuous final frame, not a collage.\n" + sourceLines.joined(separator: "\n"),
                         imagePath: compositeURL.path
@@ -7550,6 +7575,7 @@ final class LibraryEngine: ObservableObject {
             // The per-frame verbatim choice persists on the row so retries and
             // siblings stay verbatim.
             newTake.promptEnrichmentDisabled = renderRequest.promptEnrichmentDisabled == true
+            newTake.civitaiStrength = stack.usesCivitaiStrength ? renderRequest.civitaiStrength ?? 0.7 : nil
             newTake.stabilityStrength = renderRequest.stabilityStrength
             if !gateOwnedByCaller {
                 // The authoritative lane claim. The top-of-function check was a
@@ -7726,6 +7752,7 @@ final class LibraryEngine: ObservableObject {
                 attachmentStylePolicy: attachmentStylePolicy,
                 imageSize: stack.imageSize ?? lens.body.resolvedMediaPlan.imageSize,
                 stabilityAspectRatio: stack.isStability ? stack.stabilityAspectRatio : lens.body.resolvedMediaPlan.stabilityAspectRatio,
+                civitaiStrength: renderRequest.civitaiStrength,
                 stabilityStrength: renderRequest.stabilityStrength,
                 mediaPlan: lens.body.resolvedMediaPlan,
                 transparentBackground: isCharacterStudy,
@@ -8832,6 +8859,7 @@ final class LibraryEngine: ObservableObject {
                         attachmentStylePolicy: plan.manifestPolicyText,
                         imageSize: lens.body.resolvedMediaPlan.imageSize,
                         stabilityAspectRatio: lens.body.resolvedMediaPlan.stabilityAspectRatio,
+                        civitaiStrength: heroImage.civitaiStrength,
                         stabilityStrength: heroImage.stabilityStrength,
                         mediaPlan: lens.body.resolvedMediaPlan,
                         transparentBackground: isCharacterStudy,
@@ -9473,7 +9501,7 @@ final class LibraryEngine: ObservableObject {
     }
 
     func characterImageStackBlocker(for stack: RenderStack, requiresReferences: Bool, isStudy: Bool = false) -> String? {
-        if requiresReferences && !stack.reframeCapable {
+        if requiresReferences && !stack.supportsPromptImages {
             return "This model cannot use reference images. Choose an image-editing model."
         }
         if requiresReferences && stack.isFAL && (!stack.canAttachStyleImage || stack.styleModel.trimmed.isEmpty) {
@@ -9495,7 +9523,7 @@ final class LibraryEngine: ObservableObject {
         }
         return CharacterStudyPrompt.plan(
             name: character.name, references: offered, look: references.look,
-            capacity: stack.frameReferenceCapacity.planningCap, isStability: stack.isStability
+            capacity: stack.frameReferenceCapacity.planningCap, isStability: stack.usesReferenceComposite
         )
     }
 
@@ -9692,9 +9720,8 @@ final class LibraryEngine: ObservableObject {
     /// Why a stack cannot render a sheet right now, in words — nil when it can. Sheets
     /// ship the template verbatim, so only the provider's own key gates them.
     func renderStackCredentialBlocker(for stack: RenderStack) -> String? {
-        let configured = videoProviderCredentialStatuses
-            .first { $0.provider == stack.credentialProvider }?.isConfigured == true
-        return configured ? nil : "Add a \(stack.credentialProvider.label) key in App Settings."
+        ProviderBilling.isConfigured(.image(stack), store: videoCredentialStore)
+            ? nil : "Add a \(stack.credentialProvider.label) key in Advanced providers."
     }
 
     /// The stack a sheet renders on when the operator picked none: Nano Banana 2
@@ -12394,7 +12421,7 @@ final class LibraryEngine: ObservableObject {
                 let referenced = character.referenceMediaIds.filter(isMediaAvailableForSelection).compactMap { mediaId in
                     items.first { $0.mediaId == mediaId }
                 }
-                let picks = stack.reframeCapable
+                let picks = stack.supportsPromptImages
                     ? RosterCharacterRenderPrompt.identityAnchorPicks(
                         referenced: referenced,
                         referenceLabels: character.referenceLabels,
@@ -12418,18 +12445,18 @@ final class LibraryEngine: ObservableObject {
             let provider = stack.heroProvider
             let now = DateFormats.now()
             let runId = "roster_char_render_\(shortHash("\(project.projectId):\(characterId):\(now)", length: 14))"
-            let usesCompositeImage = stack.isStability && attachments.count > 1
+            let usesCompositeImage = stack.usesReferenceComposite && attachments.count > 1
             let providerAttachments: [LensPromptImageAttachment]
             if usesCompositeImage {
                 let compositeURL = contextStore.aestheticProofDirectory(for: project)
-                    .appendingPathComponent("stability_reference_\(safeIdentifier(runId)).jpg")
+                    .appendingPathComponent("render_reference_\(safeIdentifier(runId)).jpg")
                 let cells = attachments.compactMap { attachment -> (image: NSImage, caption: String)? in
                     guard let image = NSImage(contentsOfFile: attachment.imagePath) else { return nil }
                     return (image, attachment.label)
                 }
                 guard cells.count == attachments.count,
                       let jpeg = RenderReferenceComposite.renderJPEG(title: "\(character.name) identity", cells: cells) else {
-                    aestheticStatus = "Could not compose \(character.name)'s Stability reference input"
+                    aestheticStatus = "Could not compose \(character.name)'s reference input"
                     characterRenderNotes[characterId] = CharacterRenderNote(lane: .study, message: aestheticStatus)
                     return false
                 }
@@ -12438,13 +12465,13 @@ final class LibraryEngine: ObservableObject {
                     try jpeg.write(to: compositeURL, options: [.atomic])
                 } catch {
                     lastError = error.localizedDescription
-                    aestheticStatus = "Could not save \(character.name)'s Stability reference input"
+                    aestheticStatus = "Could not save \(character.name)'s reference input"
                     characterRenderNotes[characterId] = CharacterRenderNote(lane: .study, message: aestheticStatus)
                     return false
                 }
                 providerAttachments = [
                     LensPromptImageAttachment(
-                        attachmentId: "stability_composite_\(runId)",
+                        attachmentId: "render_composite_\(runId)",
                         source: .moodboardImage,
                         sourceId: characterId,
                         label: "\(character.name) · labeled identity sheet",
@@ -12726,18 +12753,18 @@ final class LibraryEngine: ObservableObject {
             let provider = stack.heroProvider
             let now = DateFormats.now()
             let runId = "character_sheet_\(shortHash("\(project.projectId):\(characterId):\(now)", length: 14))"
-            let usesCompositeImage = stack.isStability && attachments.count > 1
+            let usesCompositeImage = stack.usesReferenceComposite && attachments.count > 1
             let providerAttachments: [LensPromptImageAttachment]
             if usesCompositeImage {
                 let compositeURL = contextStore.aestheticProofDirectory(for: project)
-                    .appendingPathComponent("stability_reference_\(safeIdentifier(runId)).jpg")
+                    .appendingPathComponent("render_reference_\(safeIdentifier(runId)).jpg")
                 let cells = attachments.compactMap { attachment -> (image: NSImage, caption: String)? in
                     guard let image = NSImage(contentsOfFile: attachment.imagePath) else { return nil }
                     return (image, attachment.label)
                 }
                 guard cells.count == attachments.count,
                       let jpeg = RenderReferenceComposite.renderJPEG(title: "\(character.name) identity", cells: cells) else {
-                    aestheticStatus = "Could not compose \(character.name)'s Stability reference input"
+                    aestheticStatus = "Could not compose \(character.name)'s reference input"
                     characterRenderNotes[characterId] = CharacterRenderNote(lane: .sheet, message: aestheticStatus)
                     return false
                 }
@@ -12746,13 +12773,13 @@ final class LibraryEngine: ObservableObject {
                     try jpeg.write(to: compositeURL, options: [.atomic])
                 } catch {
                     lastError = error.localizedDescription
-                    aestheticStatus = "Could not save \(character.name)'s Stability reference input"
+                    aestheticStatus = "Could not save \(character.name)'s reference input"
                     characterRenderNotes[characterId] = CharacterRenderNote(lane: .sheet, message: aestheticStatus)
                     return false
                 }
                 providerAttachments = [
                     LensPromptImageAttachment(
-                        attachmentId: "stability_composite_\(runId)",
+                        attachmentId: "render_composite_\(runId)",
                         source: .moodboardImage,
                         sourceId: characterId,
                         label: "\(character.name) · labeled identity sheet",
@@ -13301,6 +13328,7 @@ final class LibraryEngine: ObservableObject {
                 attachmentStylePolicy: plan.manifestPolicyText,
                 imageSize: stack?.imageSize ?? theme.body.resolvedMediaPlan.imageSize,
                 stabilityAspectRatio: theme.body.resolvedMediaPlan.stabilityAspectRatio,
+                civitaiStrength: retryImage.civitaiStrength,
                 stabilityStrength: retryImage.stabilityStrength,
                 mediaPlan: theme.body.resolvedMediaPlan,
                 transparentBackground: retryIsCharacterStudy,
@@ -18001,6 +18029,7 @@ final class LibraryEngine: ObservableObject {
     }
 
     func canExecuteShotRenderModel(_ model: ShotRenderModel) -> Bool {
+        guard ProviderBilling.isConfigured(.video(model), store: videoCredentialStore) else { return false }
         _ = providerCredentialsRevision
         return VideoProviderCapability.capability(
             for: model.providerSelection,
@@ -18038,9 +18067,10 @@ final class LibraryEngine: ObservableObject {
     }
 
     func reloadProviderCredentials() {
+        falPricing = nil
         providerCredentialsRevision += 1
-        refreshVideoChainAfterCredentialChange(status: "Credentials reloaded from credentials.env")
-        queueInitialStoryGenerationIfEligible()
+        refreshVideoChainAfterCredentialChange(status: GoConnection.isManaged ? "LitScenes Go connected" : "Credentials reloaded from credentials.env")
+        if StoryInferenceMode.resolved() == .direct { queueInitialStoryGenerationIfEligible() }
     }
 
     func saveProjectPromptSettings(_ settings: ProjectPromptSettingsDocument) throws {
@@ -28199,8 +28229,8 @@ final class LibraryEngine: ObservableObject {
 
     private static let falPricingCacheMaxAge: TimeInterval = 86_400
 
-    private var falPricingCacheURL: URL {
-        litScenesApplicationSupportDirectory().appendingPathComponent("fal_video_pricing.json")
+    private func falPricingCacheURL(managed: Bool) -> URL {
+        litScenesApplicationSupportDirectory().appendingPathComponent(managed ? "go_video_pricing.json" : "fal_video_pricing.json")
     }
 
     /// Every endpoint the app can bill through FAL: the video segment models and
@@ -28221,13 +28251,16 @@ final class LibraryEngine: ObservableObject {
     /// THE IMAGE PRICE LAW's stated note for a stack: the live FAL rate when the
     /// snapshot can read it, else the stack's own note, else "" (unpriced).
     func priceNote(for stack: RenderStack, attachesReferences: Bool) -> String {
-        FALImagePricing.displayNote(stack: stack, attachesReferences: attachesReferences, snapshot: falPricing)
+        if ProviderBilling.source(for: .image(stack)) == .go {
+            return "Go · credit quote before generation"
+        }
+        return FALImagePricing.displayNote(stack: stack, attachesReferences: attachesReferences, snapshot: falPricing)
     }
 
     /// A finished image render's estimate from the endpoint that was actually
     /// called and the file's pixels; nil when the rate cannot be read.
     func estimatedImageUSD(endpointId: String, outputPath: String) -> Double? {
-        guard !endpointId.trimmed.isEmpty else { return nil }
+        guard !endpointId.trimmed.isEmpty, ProviderBilling.source(for: .fal(endpointId)) == .personal else { return nil }
         let pixels = (try? Data(contentsOf: URL(fileURLWithPath: outputPath)))
             .flatMap(imagePixelSize(from:))
             .map { $0.width * $0.height }
@@ -28237,6 +28270,7 @@ final class LibraryEngine: ObservableObject {
     /// The ledger's pricing note for a finished render: the live rate note for the
     /// endpoint that was called, else the recipe's provider note.
     func ledgerPricingNote(endpointId: String, fallback: String) -> String {
+        if ProviderBilling.source(for: .fal(endpointId)) == .go { return "Go credits · see the saved quote and trace" }
         if let price = falPricing?.prices[endpointId.trimmed], let note = FALImagePricing.rateNote(price: price) {
             return note
         }
@@ -28247,40 +28281,34 @@ final class LibraryEngine: ObservableObject {
     /// ~a day old or missing endpoints. Failures keep whatever we had — the
     /// strip shows the snapshot's age, and rendering never waits on this.
     func refreshFALPricingIfStale(maxAge: TimeInterval = LibraryEngine.falPricingCacheMaxAge) async {
-        if falPricing == nil,
-           let data = try? Data(contentsOf: falPricingCacheURL),
-           let cached = try? JSONDecoder().decode(FALPricingSnapshot.self, from: data) {
-            falPricing = cached
-        }
-        let wantedIds = Set(falPricingEndpointIds)
-        if let snapshot = falPricing,
-           snapshot.ageSeconds < maxAge,
-           wantedIds.isSubset(of: Set(snapshot.prices.keys)) {
-            return
-        }
         guard !isFetchingFALPricing else { return }
-        let apiKey = videoCredentialStore.resolvedCredential(for: .fal).trimmed
-        guard !apiKey.isEmpty else { return }
         isFetchingFALPricing = true
         defer { isFetchingFALPricing = false }
-        do {
-            let prices = try await FALPricingClient().fetchPrices(
-                endpointIds: Array(wantedIds).sorted(),
-                apiKey: apiKey
-            )
-            let snapshot = FALPricingSnapshot(
-                fetchedAt: Date(),
-                prices: Dictionary(prices.map { ($0.endpointId, $0) }, uniquingKeysWith: { first, _ in first })
-            )
-            falPricing = snapshot
-            try? ensureDirectory(litScenesApplicationSupportDirectory())
-            if let data = try? JSONEncoder().encode(snapshot) {
-                try? data.write(to: falPricingCacheURL, options: .atomic)
+        var combined = falPricing ?? FALPricingSnapshot(fetchedAt: .distantPast, prices: [:])
+        for managed in [false, true] {
+            let cacheURL = falPricingCacheURL(managed: managed)
+            var cached = (try? Data(contentsOf: cacheURL)).flatMap { try? JSONDecoder().decode(FALPricingSnapshot.self, from: $0) }
+            let wanted = managed
+                ? ["fal-ai/nano-banana-2", "fal-ai/nano-banana-2/edit", "fal-ai/kling-video/v3/pro/image-to-video"]
+                : falPricingEndpointIds
+            let billing = ProviderBillingSnapshot.capture()
+            let mayContactGo = billing.defaultSource == .go || billing.overrides.values.contains(.go)
+                || GoVault.read("session") != nil
+            let key = managed ? (mayContactGo ? GoConnection.marker : "") : videoCredentialStore.personalCredential(for: .fal).trimmed
+            if !key.isEmpty && (cached == nil || cached!.ageSeconds >= maxAge || !Set(wanted).isSubset(of: Set(cached!.prices.keys))) {
+                do {
+                    let prices = try await FALPricingClient().fetchPrices(endpointIds: wanted, apiKey: key)
+                    cached = FALPricingSnapshot(fetchedAt: Date(), prices: Dictionary(prices.map { ($0.endpointId, $0) }, uniquingKeysWith: { first, _ in first }))
+                    try? ensureDirectory(litScenesApplicationSupportDirectory())
+                    if let data = try? JSONEncoder().encode(cached) { try? data.write(to: cacheURL, options: .atomic) }
+                } catch { /* Retain the last rate from this same billing source. */ }
             }
-        } catch {
-            // Stale-or-nothing is acceptable: the strip labels the age or
-            // shows "rates unavailable"; never surface this as a hard error.
+            if let cached {
+                if managed { combined.goPrices = cached.prices; combined.goFetchedAt = cached.fetchedAt }
+                else { combined.prices = cached.prices; combined.fetchedAt = cached.fetchedAt }
+            }
         }
+        falPricing = combined
     }
 
     /// Momentum rule: a frame derived from a staged frame (sibling, variation,

@@ -492,7 +492,7 @@ struct FALVideoClient: @unchecked Sendable {
     }
 
     private func restyleAPIKey() throws -> String {
-        let apiKey = credentialStore.resolvedCredential(for: .fal)
+        let apiKey = credentialStore.personalCredential(for: .fal)
         guard !apiKey.trimmed.isEmpty else {
             throw ScreenGraphError.credentials("Add a FAL API key in App Settings to create a Shot Look.")
         }
@@ -563,7 +563,7 @@ struct FALVideoClient: @unchecked Sendable {
     func generateImageToVideo(
         from request: FALImageToVideoRequest
     ) async throws -> FALImageToVideoResult {
-        let apiKey = credentialStore.resolvedCredential(for: .fal).trimmed
+        let apiKey = ProviderBilling.credential(for: .fal(request.modelSelection.providerModelId), store: credentialStore).trimmed
         guard !apiKey.isEmpty else {
             throw ScreenGraphError.credentials(
                 "Add a FAL API key in App Settings to render this Shot model."
@@ -915,7 +915,7 @@ struct FALVideoClient: @unchecked Sendable {
     func generateAudioToVideo(
         from request: FALAudioToVideoRequest
     ) async throws -> FALAudioToVideoResult {
-        let apiKey = credentialStore.resolvedCredential(for: .fal).trimmed
+        let apiKey = ProviderBilling.credential(for: .fal(request.modelSelection.providerModelId), store: credentialStore).trimmed
         guard !apiKey.isEmpty else {
             throw ScreenGraphError.credentials(
                 "Add a FAL API key in App Settings to render LTX 2.3."
@@ -1537,7 +1537,7 @@ struct FALVideoClient: @unchecked Sendable {
     }
 
     func generateJoinBridge(from request: FALJoinBridgeRequest) async throws -> FALJoinBridgeResult {
-        let apiKey = credentialStore.resolvedCredential(for: .fal)
+        let apiKey = credentialStore.personalCredential(for: .fal)
         guard !apiKey.trimmed.isEmpty else {
             throw ScreenGraphError.credentials("Add a FAL API key in App Settings to render this join.")
         }

@@ -25,9 +25,11 @@ Commercial licensing and support inquiries: <https://litscenes.ai/commercial/>
 Unless expressly identified otherwise, the Desktop license does not grant rights to:
 
 - hosted generation, SMS, billing, orchestration, accounts, support, or update services;
-- curated prompts, private style graphs, premium workflows, model routing, telemetry, or private catalogs;
+- separately hosted or unpublished curated prompts, private style graphs, premium workflows, model routing, telemetry, or private catalogs;
 - signing certificates, notarization credentials, customer data, or operational infrastructure;
 - the LitScenes marks or official-build identity; or
 - third-party material, which remains under its identified license.
+
+Prompt templates and routing code actually included in this repository remain covered by their identified source license. The exclusions above do not remove rights granted for that included source.
 
 The preferred source for a specific AGPL binary is the exact source revision or archive linked from that binary's **Licensing & Source** window—not an arbitrary newer monorepo or website snapshot.

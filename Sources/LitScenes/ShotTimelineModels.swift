@@ -2486,10 +2486,14 @@ enum ShotRenderModel: String, Codable, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
 
     static var allCases: [ShotRenderModel] {
-        shotDefaultCases + [.ltx23NativeExtend]
+        supportedDefaultCases + [.ltx23NativeExtend]
     }
 
     static var shotDefaultCases: [ShotRenderModel] {
+        supportedDefaultCases
+    }
+
+    private static var supportedDefaultCases: [ShotRenderModel] {
         [.wan27, .falKlingV3Pro, .falSeedance20, .falSeedance25, .falHailuo3, .falHailuo3Max, .falLTX23Narration]
     }
 
@@ -2660,7 +2664,7 @@ struct ShotRenderStack: RawRepresentable, Codable, Hashable, Sendable {
     let segmentSeconds: Int
     let generateAudio: Bool
 
-    static let fallback: ShotRenderStack = .wan27Eight
+    static var fallback: ShotRenderStack { GoConnection.isManaged ? recipe(model: .falKlingV3Pro, durationSeconds: 5) : .wan27Eight }
     static let wan27Five = recipe(model: .wan27, durationSeconds: 5)
     static let wan27Six = recipe(model: .wan27, durationSeconds: 6)
     static let wan27Eight = recipe(model: .wan27, durationSeconds: 8)

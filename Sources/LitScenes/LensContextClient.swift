@@ -17,6 +17,9 @@ struct LensContextClient: Sendable {
     }
 
     static func fromEnvironment() throws -> LensContextClient {
+        if ProviderBilling.source(for: .story) == .go {
+            return LensContextClient(endpointURL: URL(string: "https://go.litscenes.invalid")!, token: GoConnection.marker)
+        }
         let credentialStore = LitScenesCredentialStore()
         let rawURL = credentialStore
             .resolvedCredentialValue(forKeys: LensContextCredential.endpointURL.keyCandidates)
@@ -40,6 +43,20 @@ struct LensContextClient: Sendable {
         return LensContextClient(endpointURL: url, token: rawToken)
     }
 
+    private func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        if GoConnection.selectsManaged(request) {
+            let object = GoDocument(data: request.httpBody ?? Data()).object
+            let projectId = object["project_id"] as? String ?? ""
+            let result = try await GoTransport.send(request, metadata: InferenceTraceRequestMetadata(
+                provider: "litscenes", apiFamily: "story", operation: request.url?.lastPathComponent ?? "story",
+                projectId: projectId, runId: request.value(forHTTPHeaderField: "X-Request-Id") ?? "",
+                workflowName: "story", workflowStep: request.url?.path ?? ""))
+            guard let response = result.response else { throw URLError(.badServerResponse) }
+            return (result.data, response)
+        }
+        return try await session.data(for: request)
+    }
+
     func resolve(_ payload: LensContextResolveRequest) async throws -> LensContextResolveResponse {
         var request = URLRequest(url: resolveURL)
         let requestId = "desktop_\(UUID().uuidString.lowercased())"
@@ -50,7 +67,7 @@ struct LensContextClient: Sendable {
         request.setValue(requestId, forHTTPHeaderField: "X-Request-Id")
         request.httpBody = try JSONCoding.encoder.encode(payload)
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await send(request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ScreenGraphError.openAI("Frame Context response was not HTTP. request_id=\(requestId)")
         }
@@ -84,7 +101,7 @@ struct LensContextClient: Sendable {
         request.setValue(requestId, forHTTPHeaderField: "X-Request-Id")
         request.httpBody = try JSONCoding.encoder.encode(payload)
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await send(request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ScreenGraphError.openAI("SceneStory response was not HTTP. request_id=\(requestId)")
         }
@@ -130,7 +147,7 @@ struct LensContextClient: Sendable {
         request.setValue(requestId, forHTTPHeaderField: "X-Request-Id")
         request.httpBody = try JSONCoding.encoder.encode(payload)
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await send(request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ScreenGraphError.openAI("Frame Forms response was not HTTP. request_id=\(requestId)")
         }
