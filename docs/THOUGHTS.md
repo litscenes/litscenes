@@ -92,3 +92,5 @@
 2026-09-12T18:39:28Z The Story card combines tuple enumeration, string interpolation, Text overload resolution and chip styling inside a larger ViewBuilder; typed helper boundaries reduce the compiler inference burden without changing the UI.
 
 2026-09-12T18:42:24Z Separating the Story scene row and chip compiled successfully while retaining the original four-title cap and styling; the complete existing suite passed, but the remote toolchain still needs its own rebuild.
+
+2026-09-15T00:37:44Z Provider credentials and billing selection are independent; queued work keeps its captured payer, and retries preserve job identity. Cached setup confirmation can suppress onboarding offline but never authorizes spending. Client capability and public subscription availability must be described separately.

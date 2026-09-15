@@ -85,3 +85,5 @@
 2026-09-12T18:39:28Z story-scene-typecheck: begin the requested build repair. Split the nested Story scene-title chips into independently checked row and chip helpers; preserve visible labels, ordering, four-title cap, and appearance. The provided fatal diagnostic is a SwiftUI type-check timeout; the accompanying deprecation/trailing-closure diagnostics are warnings.
 
 2026-09-12T18:42:24Z story-scene-typecheck: completed uncommitted. Extracted scene-title row and chip helpers with explicit String labels and index iteration. Local Apple Swift 6.1.2 arm64 build succeeds; all 1,287 existing tests pass. Public source hygiene, private hygiene on canonical/pinned source, and whitespace checks pass. The remote M5 toolchain was not available for direct reproduction. No new tests, commit, branch, push, provider call, installation, or submodule update.
+
+2026-09-15T00:37:44Z Go setup and provider integration: documented self-serve onboarding, planned subscriptions, explicit billing choices, and durable recovery. Public subscriptions are not yet available. See [Desktop Go integration](desktop-go-integration.md).
