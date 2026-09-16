@@ -71,6 +71,7 @@ enum ShotTransportKeymap {
     static let audioScope = "Audio lanes"
     static let zoomScope = "Zoom"
     static let generalScope = "General"
+    static let takesScope = "Takes"
 
     /// Every keyboard affordance in the shot player, one table. Audio-lane
     /// keys apply to the selected region on the focused lane; transport keys
@@ -96,7 +97,11 @@ enum ShotTransportKeymap {
         ShotShortcutRow(keys: "⌘0", action: "Zoom to fit", scope: zoomScope),
         ShotShortcutRow(keys: "Pinch / ⇄ scroll", action: "Zoom at the cursor / pan the window (sound editor)", scope: zoomScope),
         ShotShortcutRow(keys: "E", action: "Open the sound editor — all lanes, large", scope: generalScope),
-        ShotShortcutRow(keys: "⎋", action: "Blade mark → razor → cut selection → region selection → close", scope: generalScope),
-        ShotShortcutRow(keys: "?", action: "This keyboard reference", scope: generalScope)
+        ShotShortcutRow(keys: "⎋", action: "Compare or take preview → full shot → blade mark → razor → cut selection → region selection → close", scope: generalScope),
+        ShotShortcutRow(keys: "?", action: "This keyboard reference", scope: generalScope),
+        ShotShortcutRow(keys: "← / →", action: "Previous / next take of the previewed segment", scope: takesScope),
+        ShotShortcutRow(keys: "↩ / U", action: "Use the previewed take in the film", scope: takesScope),
+        ShotShortcutRow(keys: "1 / 2", action: "Compare: use the left / right take", scope: takesScope),
+        ShotShortcutRow(keys: "Space", action: "Compare: pause / resume both takes", scope: takesScope)
     ]
 }

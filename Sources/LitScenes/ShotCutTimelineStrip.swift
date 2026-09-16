@@ -416,19 +416,11 @@ func shotCutAssembly(
         startFrameImageId: String,
         endFrameImageId: String
     ) -> ShotRenderSegmentClip? {
-        if !placementStartEntryId.isEmpty || !placementEndEntryId.isEmpty,
-           let exact = shot.seedSegmentClips.first(where: {
-               $0.placementStartEntryId == placementStartEntryId
-                   && $0.placementEndEntryId == placementEndEntryId
-           }) {
-            return exact
-        }
-        return shot.seedSegmentClips.first {
-            $0.placementStartEntryId.isEmpty
-                && $0.placementEndEntryId.isEmpty
-                && $0.startFrameImageId == startFrameImageId
-                && $0.endFrameImageId == endFrameImageId
-        }
+        shotSeedSegmentClip(
+            shot: shot,
+            startEntryId: placementStartEntryId, endEntryId: placementEndEntryId,
+            startFrameId: startFrameImageId, endFrameId: endFrameImageId
+        )
     }
 
     var bands: [ShotStripBand] = []
@@ -480,7 +472,9 @@ func shotCutAssembly(
             let selectedContinuation = item.isAIExtension
                 ? shot.continuationRecord(entryId: item.pair.endPlacementEntryId)?.selectedTake?.segmentClip
                 : nil
-            let saved = selectedContinuation ?? version?.segmentClip(
+            let saved = selectedContinuation
+                ?? shotSelectedSegmentTakeClip(shot: shot, placementKey: item.pair.placementKey)
+                ?? version?.segmentClip(
                 placementStartEntryId: item.pair.startPlacementEntryId,
                 placementEndEntryId: item.pair.endPlacementEntryId,
                 forStart: item.pair.start?.imageId ?? "",

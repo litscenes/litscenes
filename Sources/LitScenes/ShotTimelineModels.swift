@@ -767,6 +767,11 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
     /// combined CUT immediately playable without pretending it has a ready
     /// render version.
     var seedSegmentClips: [ShotRenderSegmentClip] = []
+    /// The operator's per-placement take choice for ordinary generated pair
+    /// segments, keyed by the immutable clip file. Continuation markers keep
+    /// their own `selectedTakeId`; the take universe itself is derived from
+    /// `renderVersions` and `seedSegmentClips`, never stored twice.
+    var segmentTakeSelections: [ShotSegmentTakeSelection] = []
     /// Multiple independently editable placements per audio lane. Empty on
     /// legacy and ordinary CUTs, which continue using the singleton mirrors.
     var audioRegions: [ShotAudioRegion] = []
@@ -874,6 +879,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         case combinedSources, branchedFromShotId
         case sourceBoundaries
         case seedSegmentClips
+        case segmentTakeSelections
         case audioRegions
         case sourceSegmentAudio
         case pictureInsertions
@@ -975,6 +981,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         branchedFromShotId = try container.decodeIfPresent(String.self, forKey: .branchedFromShotId) ?? ""
         sourceBoundaries = ((try? container.decodeIfPresent([ShotSourceBoundary].self, forKey: .sourceBoundaries)) ?? nil) ?? []
         seedSegmentClips = ((try? container.decodeIfPresent([ShotRenderSegmentClip].self, forKey: .seedSegmentClips)) ?? nil) ?? []
+        segmentTakeSelections = ((try? container.decodeIfPresent([ShotSegmentTakeSelection].self, forKey: .segmentTakeSelections)) ?? nil) ?? []
         audioRegions = ((try? container.decodeIfPresent([ShotAudioRegion].self, forKey: .audioRegions)) ?? nil) ?? []
         sourceSegmentAudio = ((try? container.decodeIfPresent([ShotSourceSegmentAudio].self, forKey: .sourceSegmentAudio)) ?? nil) ?? []
         pictureInsertions = ((try? container.decodeIfPresent([ShotPictureInsertion].self, forKey: .pictureInsertions)) ?? nil) ?? []
@@ -1242,6 +1249,9 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
             value.activeRenderVersionId = normalizedVersion.versionId
             value.renderArtifact = normalizedVersion
             value = value.selectingContinuationTakes(from: normalizedVersion, now: now)
+            if normalizedVersion.isReady {
+                value = value.selectingFreshSegmentTakes(from: normalizedVersion)
+            }
         }
         value.updatedAt = now
         return value
@@ -1750,7 +1760,8 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
             pictureInsertions: pictureInsertions.map { $0.normalized() },
             outputScopes: outputScopes,
             scopeId: ShotOutputEditContext.selection?.scopeId ?? "",
-            selectedContinuationTakeIds: Dictionary(continuationRecords.map { ($0.entryId, $0.selectedTakeId) }, uniquingKeysWith: { _, last in last })
+            selectedContinuationTakeIds: Dictionary(continuationRecords.map { ($0.entryId, $0.selectedTakeId) }, uniquingKeysWith: { _, last in last }),
+            segmentTakeSelections: segmentTakeSelections.sorted { $0.placementKey < $1.placementKey }
         )
     }
 
@@ -1767,6 +1778,9 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
             for index in value.continuationRecords.indices {
                 value.continuationRecords[index].selectedTakeId = selections[value.continuationRecords[index].entryId] ?? ""
             }
+        }
+        if let takeSelections = snapshot.segmentTakeSelections {
+            value.segmentTakeSelections = takeSelections
         }
         return value
             .settingCutList(snapshot.cutList, now: now)
@@ -1977,6 +1991,12 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         value.seedSegmentClips = value.seedSegmentClips
             .map { $0.normalized() }
             .filter { !$0.clipPath.isEmpty }
+        value.segmentTakeSelections = pruningSegmentTakeSelections(
+            value.segmentTakeSelections,
+            retainedClipPaths: value.retainedTakeClipPaths,
+            entries: value.entries,
+            continuationEntryIds: Set(value.continuationRecords.map(\.entryId))
+        )
         value.audioRegions = value.audioRegions
             .map { $0.normalized() }
             .filter { !$0.regionId.isEmpty && !$0.laneId.isEmpty && $0.durationSeconds > 0 }
@@ -3925,6 +3945,9 @@ struct ShotPictureStateSnapshot: Hashable {
     var outputScopes: [ShotOutputScope] = []
     var scopeId: String = ""
     var selectedContinuationTakeIds: [String: String]? = nil
+    /// Optional like the continuation selectors: a hand-built snapshot that
+    /// omits it must never wipe an operator's take choices on restore.
+    var segmentTakeSelections: [ShotSegmentTakeSelection]? = nil
 }
 
 /// Before AND after travel together (the `ShotAudioStateEdit` shape) because

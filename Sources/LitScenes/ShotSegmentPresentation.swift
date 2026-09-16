@@ -13,17 +13,17 @@ func shotSavedSegmentClip(
     startFrameId: String, endFrameId: String
 ) -> ShotRenderSegmentClip? {
     if let selected = shot.continuationRecord(entryId: endEntryId)?.selectedTake?.segmentClip { return selected }
+    // THE SELECTION LAW: continuation take → operator's pair take → playable
+    // version clip → seed. Every resolver of "which clip represents this
+    // placement" reads the same order.
+    if let picked = shotSelectedSegmentTakeClip(shot: shot, placementKey: shotPlacementSegmentKey(
+        startEntryId: startEntryId, endEntryId: endEntryId,
+        legacyStartId: startFrameId, legacyEndId: endFrameId)) { return picked }
     if let rendered = shot.playableRenderVersion?.segmentClip(
         placementStartEntryId: startEntryId, placementEndEntryId: endEntryId,
         forStart: startFrameId, end: endFrameId) { return rendered }
-    if !startEntryId.isEmpty || !endEntryId.isEmpty,
-       let seed = shot.seedSegmentClips.first(where: {
-           $0.placementStartEntryId == startEntryId && $0.placementEndEntryId == endEntryId
-       }) { return seed }
-    return shot.seedSegmentClips.first {
-        $0.placementStartEntryId.isEmpty && $0.placementEndEntryId.isEmpty
-            && $0.startFrameImageId == startFrameId && $0.endFrameImageId == endFrameId
-    }
+    return shotSeedSegmentClip(shot: shot, startEntryId: startEntryId, endEntryId: endEntryId,
+        startFrameId: startFrameId, endFrameId: endFrameId)
 }
 
 struct ShotSegmentPreview: Hashable {
@@ -32,6 +32,11 @@ struct ShotSegmentPreview: Hashable {
     /// already represent their complete source segment.
     var sourceStartSeconds: Double = 0
     var sourceEndSeconds: Double? = nil
+    /// Which segment and take this is, when the player should say so. A
+    /// whole-shot render file carries its artifact placement key here rather
+    /// than borrowing a segment's.
+    var take: ShotTakePreviewContext? = nil
+    var placementKey: String { take?.placementKey ?? clip.placementKey }
     var durationSeconds: Double {
         sourceEndSeconds.map { max($0 - sourceStartSeconds, 0) }
             ?? (clip.durationSeconds > 0 ? clip.durationSeconds : Double(clip.requestedDurationSeconds))

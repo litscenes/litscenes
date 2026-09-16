@@ -23,7 +23,11 @@ extension ShotRenderModel {
 }
 
 /// The saved predecessor of a destination Frame, independent of render versions.
-func shotEndingSourceAnchor(shot: ProjectShot, entryId: String) -> ShotContinuationAnchor? {
+func shotEndingSourceAnchor(
+    shot: ProjectShot,
+    entryId: String,
+    fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+) -> ShotContinuationAnchor? {
     // A combined source starts its own sequence; its first Frame is not an
     // ending destination for the preceding source's continuation.
     guard !shot.sourceBoundaries.contains(where: { $0.rightEntryId == entryId }) else { return nil }
@@ -39,11 +43,13 @@ func shotEndingSourceAnchor(shot: ProjectShot, entryId: String) -> ShotContinuat
     }
     guard let version = shot.playableRenderVersion,
           version.renderedEntryIds.contains(previous.entryId), !version.renderedEntryIds.contains(entryId) else { return nil }
-    let clip = version.clipPaths.last.flatMap { path in version.segmentClips.first { $0.clipPath == path && FileManager.default.fileExists(atPath: path) } }
+    let renderedTail = version.clipPaths.last.flatMap { path in version.segmentClips.first { $0.clipPath == path && fileExists(path) } }
+    let tail = renderedTail.map { shotResolvedTailClip(shot: shot, base: $0, versionId: version.versionId, fileExists: fileExists) }
+    let clip = tail?.clip
     let path = clip?.clipPath.trimmed.nilIfEmpty ?? version.videoPath
-    guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else { return nil }
+    guard !path.isEmpty, fileExists(path) else { return nil }
     return ShotContinuationAnchor(sourceKind: "rendered_original", sourceEntryId: previous.entryId,
-        sourceRenderVersionId: version.versionId, sourceSegmentPlacementKey: clip?.placementKey ?? "",
+        sourceRenderVersionId: tail?.versionId ?? version.versionId, sourceSegmentPlacementKey: clip?.placementKey ?? "",
         tailClipPath: path, tailClipEndSeconds: clip.map { $0.durationSeconds > 0 ? $0.durationSeconds : Double($0.requestedDurationSeconds) } ?? Double(version.totalSeconds),
         tailClipFingerprint: continuationFileFingerprint(path: path, readsBytes: false)).normalized()
 }

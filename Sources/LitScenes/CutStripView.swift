@@ -146,6 +146,9 @@ struct CutStripActions {
         _, _, _ in nil
     }
     var onUseContinuationTake: (String, ShotContinuationBranchImpact) -> Void = { _, _ in }
+    /// Pair-take selection for ordinary segments: (shotId, placementKey, clipPath).
+    var shotSegmentTakeImpact: (String, String, String) -> ShotSegmentTakeImpact? = { _, _, _ in nil }
+    var onUseShotSegmentTake: (String, String, String) -> Void = { _, _, _ in }
     var continuationRechainEstimate: (String, Bool) -> ShotRenderCostEstimate = {
         _, _ in ShotRenderCostEstimate()
     }
@@ -221,6 +224,7 @@ extension CutStripActions {
         wrapped.onStartContinuation = { touch($0); return await self.onStartContinuation($0, $1) }
         wrapped.onStartContinuationRetake = { touch($0); return await self.onStartContinuationRetake($0, $1, $2) }
         wrapped.onUseContinuationTake = { touch($0); self.onUseContinuationTake($0, $1) }
+        wrapped.onUseShotSegmentTake = { touch($0); self.onUseShotSegmentTake($0, $1, $2) }
         wrapped.onRechainContinuations = { touch($0); return await self.onRechainContinuations($0) }
         wrapped.onRebuildContinuationChain = { touch($0); return await self.onRebuildContinuationChain($0) }
         wrapped.onShowOriginal = { touch($0); self.onShowOriginal($0) }
@@ -292,6 +296,8 @@ struct CutStripView: View {
     @State private var expandedNarration = false
     @State private var expandedRenderPlan = false
     @State private var showingCivitai = false
+    /// The video tile whose take strip popover is open.
+    @State private var takeStripKey = ""
     /// `.box` only: the render disclosure remembers its last state across
     /// Scenes and projects — open by default, and closed until reopened once
     /// the operator closes it. Confirming a render never counts as closing.
@@ -1443,6 +1449,10 @@ struct CutStripView: View {
             set: { if !$0 { takeBrowserEntryId = "" } }), arrowEdge: .bottom) {
                 if let record = tile.result.record { continuationTakeBrowser(entryId: record.entryId) }
         }
+        .popover(isPresented: Binding(get: { !takeStripKey.isEmpty && takeStripKey == tile.id },
+            set: { if !$0 { takeStripKey = "" } }), arrowEdge: .bottom) {
+                ShotRowTakePopover(cut: cut, tile: tile, actions: actions, onClose: { takeStripKey = "" })
+        }
     }
 
     @ViewBuilder
@@ -1451,11 +1461,22 @@ struct CutStripView: View {
             HStack(spacing: 8) {
                 if let preview = tile.result.preview, tile.result.isPlayable {
                     Button(tile.result.progress?.stage.isPending == true ? "PLAY CURRENT" : "PREVIEW CLIP") {
-                        actions.onPreviewShotSegment(cut.shotId, preview)
+                        let takes = tile.segment.map { shotTakeOptions(shot: cut, segment: $0) } ?? []
+                        if let inFilm = shotInFilmTake(takes),
+                           let enriched = shotRowTakePreview(tile: tile, option: inFilm, takeCount: takes.count) {
+                            actions.onPreviewShotSegment(cut.shotId, enriched)
+                        } else {
+                            actions.onPreviewShotSegment(cut.shotId, preview)
+                        }
                     }
                 }
                 if let record = tile.result.record {
                     Button("TAKES (\(record.takes.count))") { takeBrowserEntryId = record.entryId }
+                } else if let segment = tile.segment {
+                    let takeCount = shotTakeOptions(shot: cut, segment: segment).count
+                    if takeCount >= 2 {
+                        Button("TAKES (\(takeCount))") { takeStripKey = tile.id }
+                    }
                 }
                 if let progress = tile.result.progress, [.failed, .interrupted, .canceled, .notStarted].contains(progress.stage) {
                     Button("REVIEW") { actions.onOpenShotSegment(cut.shotId, tile.id) }

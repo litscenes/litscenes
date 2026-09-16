@@ -1,17 +1,17 @@
 import AppKit
 import SwiftUI
 
-/// THE VERSIONS PLATE — provenance archaeology for every render version of a
-/// cut: what each version was rendered with (per-segment model, requested →
+/// THE RENDER HISTORY PLATE — provenance archaeology for every render version
+/// of a cut: what each version was rendered with (per-segment model, requested →
 /// measured duration, audio, resolution), the exact prompt each clip was
 /// paid with, its trace id, and which clips traveled in from an earlier
 /// version (REUSED · from N). Everything shown is read from the versions'
 /// own persisted clips — never from the next-render default — under the
 /// provenance label law in `ShotRenderProvenance.swift`.
 ///
-/// Historical renders are read-only previews. Current continuation TAKE
-/// selection uses the same laws as the Scene strip; generation always needs
-/// a separate priced confirmation.
+/// Historical renders are read-only: PREVIEW plays the saved whole-shot file
+/// exactly as written and changes nothing. Which take plays lives on the
+/// segment cards; generation always needs a separate priced confirmation.
 struct ShotRenderVersionsPlateView: View {
     let shot: ProjectShot
     /// The current plan's placement order; old versions' clips follow it
@@ -41,7 +41,7 @@ struct ShotRenderVersionsPlateView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                PlateLabel(text: "VERSIONS", size: 11, weight: .bold, color: PlateColor.ink)
+                PlateLabel(text: "RENDER HISTORY", size: 11, weight: .bold, color: PlateColor.ink)
                 PlateLabel(
                     text: shot.name.trimmed.nilIfEmpty ?? "This cut",
                     size: 9,
@@ -85,7 +85,7 @@ struct ShotRenderVersionsPlateView: View {
                     }
                     if versions.isEmpty {
                         PlateLabel(
-                            text: "No historical whole-Shot renders. Current sequence clips are listed above.",
+                            text: "No earlier whole-Shot renders. The current sequence's clips are listed above.",
                             size: 9,
                             color: PlateColor.inkFaint
                         )
@@ -143,7 +143,7 @@ struct ShotRenderVersionsPlateView: View {
                 if version.isReady {
                     Button("PREVIEW") { onPreviewVersion(version.versionId) }
                         .buttonStyle(PlateButtonStyle())
-                        .help("Preview the exact saved video; current take selections stay unchanged")
+                        .help("Play this render's saved whole-shot file exactly as it was written; nothing in the film changes")
                 }
             }
             if version.status == "failed", let message = version.errorMessage.trimmed.nilIfEmpty {

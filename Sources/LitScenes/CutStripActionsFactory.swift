@@ -302,6 +302,16 @@ func makeCutStripActions(
     actions.onUseContinuationTake = { cutId, impact in
         Task { registerContinuationEdit(cutId, await library.useShotContinuationTake(shotId: cutId, impact: impact)) }
     }
+    actions.shotSegmentTakeImpact = { cutId, key, path in
+        library.shotSegmentTakeImpact(shotId: cutId, placementKey: key, clipPath: path)
+    }
+    actions.onUseShotSegmentTake = { cutId, key, path in
+        guard let impact = library.shotSegmentTakeImpact(shotId: cutId, placementKey: key, clipPath: path),
+              let edit = library.useShotSegmentTake(shotId: cutId, impact: impact) else { return }
+        surface.pictureUndo.applyState = { id, snapshot in library.restoreShotPictureState(shotId: id, snapshot: snapshot) }
+        surface.pictureUndo.registerEdit(shotId: cutId, old: edit.before, new: edit.after,
+            actionName: "Use Take", undoManager: surface.undoManager)
+    }
     actions.continuationRechainEstimate = { cutId, rebuildAll in
         library.shotContinuationRechainEstimate(shotId: cutId, rebuildAll: rebuildAll)
     }

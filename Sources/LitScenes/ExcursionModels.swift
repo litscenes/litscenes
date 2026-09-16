@@ -236,13 +236,18 @@ func excursionTransitionMedia(
     endImageId: String,
     fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
 ) -> ExcursionTransitionMedia {
-    guard let artifact = cut?.playableRenderVersion,
-          let clip = artifact.segmentClip(
-              placementStartEntryId: startEntryId,
-              placementEndEntryId: endEntryId,
-              forStart: startImageId,
-              end: endImageId
-          ),
+    let placementKey = shotPlacementSegmentKey(
+        startEntryId: startEntryId, endEntryId: endEntryId,
+        legacyStartId: startImageId, legacyEndId: endImageId
+    )
+    guard let cut,
+          let clip = shotSelectedSegmentTakeClip(shot: cut, placementKey: placementKey)
+              ?? cut.playableRenderVersion?.segmentClip(
+                  placementStartEntryId: startEntryId,
+                  placementEndEntryId: endEntryId,
+                  forStart: startImageId,
+                  end: endImageId
+              ),
           !clip.clipPath.trimmed.isEmpty,
           fileExists(clip.clipPath) else {
         return .geometric

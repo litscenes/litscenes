@@ -103,3 +103,11 @@
 2026-09-16T00:35:57Z Inline recipe snapshots enlarged existing nested Shot values enough to overflow a test thread stack; compact copy-on-write recipe storage preserved independent drafts and restored the failing Shot check.
 
 2026-09-16T02:53:12Z The current-shot panel used separate model/length controls while the Shot rail used duration submenus; both should share menu content. The Civitai sheet inherited conflicting foreground and system appearance, requiring its own background and color scheme.
+
+2026-09-16T03:12:34Z Per-segment takes are derived from the retained render history rather than copied into a second ledger; the only new persisted state is the operator's per-placement pick, keyed by the immutable clip file like a razor pin, so no migration exists and a dangling pick degrades to the playable render.
+2026-09-16T03:12:34Z The output fingerprint substitutes a selected clip for its placement instead of appending it; appending would have staled every downstream continuation and re-flattened every scope for a pick that changed nothing.
+2026-09-16T03:12:34Z A finished render clears the picks of placements it freshly rendered, and only once it is ready; clearing at the first in-flight persist would flip the picture mid-render because playback substitutes the last ready version.
+2026-09-16T03:12:34Z Partial-render reuse keeps the active version as its base with selections overlaid last, so a failed render's landed clips stay reusable and the render reuses exactly what the operator is watching.
+2026-09-16T03:12:34Z The assembly's continuation rung stays gated on AI-extension entries while the presentation resolver is ungated; the divergence predates takes and is left as is.
+2026-09-16T03:12:34Z Whole-shot history numerals left the player bar: a per-segment take strip answers the same question without a look-alike read-only mode, and the render history plate keeps provenance. Escape now returns a take preview or comparison to the full shot before it closes the sheet.
+2026-09-16T03:12:34Z Compare is picture only: two muted players on one host clock, the longer take leading the loop. Sound stays in single-take preview.

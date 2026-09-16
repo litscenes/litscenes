@@ -143,3 +143,61 @@ struct ShotPlayerTransportKeys: ViewModifier {
             }
     }
 }
+
+// MARK: - Take review keys
+
+/// What the take keys may do right now. Stepping and using apply to a
+/// previewed take; the digits and Space apply while comparing two takes.
+enum ShotTakeReviewKeyMode: Equatable {
+    case inactive
+    case previewing(canStep: Bool, canUse: Bool)
+    case comparing
+}
+
+/// The take review key surface, applied OUTSIDE the transport modifier
+/// (whose `.focusable()` is where presses originate, so they bubble out to
+/// here). Every handler answers `.ignored` unless its mode owns the key and
+/// nobody is typing, so nothing is swallowed elsewhere.
+struct ShotTakeReviewKeys: ViewModifier {
+    var mode: ShotTakeReviewKeyMode
+    var onStepTake: (Int) -> Void
+    var onUsePreviewed: () -> Void
+    var onUseCompareSide: (Int) -> Void
+    var onToggleComparePlayback: () -> Void
+
+    private var canStep: Bool {
+        if case .previewing(let canStep, _) = mode { return canStep }
+        return false
+    }
+
+    private var canUse: Bool {
+        if case .previewing(_, let canUse) = mode { return canUse }
+        return false
+    }
+
+    private var isComparing: Bool { mode == .comparing }
+
+    func body(content: Content) -> some View {
+        content
+            .onKeyPress(keys: [.leftArrow, .rightArrow]) { press in
+                guard canStep, !shotTextInputOwnsKeyboard() else { return .ignored }
+                onStepTake(press.key == .leftArrow ? -1 : 1)
+                return .handled
+            }
+            .onKeyPress(keys: [.return, "u"]) { _ in
+                guard canUse, !shotTextInputOwnsKeyboard() else { return .ignored }
+                onUsePreviewed()
+                return .handled
+            }
+            .onKeyPress(keys: ["1", "2"]) { press in
+                guard isComparing, !shotTextInputOwnsKeyboard() else { return .ignored }
+                onUseCompareSide(press.key == "1" ? 0 : 1)
+                return .handled
+            }
+            .onKeyPress(.space) {
+                guard isComparing, !shotTextInputOwnsKeyboard() else { return .ignored }
+                onToggleComparePlayback()
+                return .handled
+            }
+    }
+}

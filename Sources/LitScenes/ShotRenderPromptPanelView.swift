@@ -64,14 +64,17 @@ struct ShotRenderPromptPanel: View {
     var onFocusSegment: (String) -> Void = { _ in }
     var onCopyVideo: (ShotSegmentPreview) -> Void = { _ in }
     var onOpenTakes: (String) -> Void = { _ in }
+    /// The take strip's callbacks; the modal owns preview/compare/use.
+    var previewingTakeId: String? = nil
+    var onPreviewTake: (ShotTakeOption) -> Void = { _ in }
+    var onUseTake: (ShotTakeOption) -> Void = { _ in }
+    var onCompareTakes: (ShotTakeOption, ShotTakeOption) -> Void = { _, _ in }
     var onInspectInput: () -> Void = {}
     var onExtend: (() -> Void)? = nil
     var onNewVersion: (() -> Void)? = nil
     var onRebuild: (([ShotSegmentPromptOverride]) -> Void)? = nil
     var rebuildEstimate = ShotRenderCostEstimate()
     var outputSeconds: Double = 0
-    var historyVersion: ShotRenderArtifact? = nil
-    var onEditCurrent: () -> Void = {}
     var savedFallback: ShotRenderPlanSegment? = nil
     var editingEarlierCut = false
     @State private var expandedInputs: Set<String> = []
@@ -173,13 +176,9 @@ struct ShotRenderPromptPanel: View {
             panelHeader
             GoProviderSetupHint(provider: .fal)
             Rectangle().fill(PlateColor.hairline).frame(height: 1)
-            if let version = historyVersion {
-                historyContents(version)
-            } else {
-                segmentList
-                Rectangle().fill(PlateColor.hairline).frame(height: 1)
-                footer
-            }
+            segmentList
+            Rectangle().fill(PlateColor.hairline).frame(height: 1)
+            footer
         }
         .background(PlateColor.cream)
         .sheet(item: $inspectedFrame) { frame in
@@ -257,34 +256,12 @@ struct ShotRenderPromptPanel: View {
     private var panelHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                PlateLabel(text: historyVersion == nil ? (editingEarlierCut ? "Earlier cut · Segments" : "Current Shot · Segments") : "Historical Shot", size: 10, weight: .semibold)
+                PlateLabel(text: editingEarlierCut ? "Earlier cut · Segments" : "Current Shot · Segments", size: 10, weight: .semibold)
                 Spacer(minLength: 0)
             }
-            if historyVersion == nil {
-                Text("Defaults for new material").font(.caption).foregroundStyle(PlateColor.inkFaint)
-                defaultRenderControls
-
-            }
+            Text("Defaults for new material").font(.caption).foregroundStyle(PlateColor.inkFaint)
+            defaultRenderControls
         }.padding(14)
-    }
-
-    private func historyContents(_ version: ShotRenderArtifact) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Version \(version.versionNumber) · read-only saved video").font(.headline)
-                Button("Edit Current Shot", action: onEditCurrent).buttonStyle(PlateButtonStyle())
-                ForEach(Array(version.segmentClips.enumerated()), id: \.offset) { index, clip in
-                    HStack(spacing: 10) {
-                        ShotSegmentVideoThumbnail(preview: ShotSegmentPreview(clip: clip))
-                        VStack(alignment: .leading) {
-                            Text("Segment \(index + 1) · " + shotClipModelShortLabel(provider: clip.provider, model: clip.model))
-                            Text(clip.prompt).lineLimit(5)
-                        }.font(.caption)
-                    }
-                }
-                if version.segmentClips.isEmpty { Text("This render is retained as one whole-Shot video.").font(.caption) }
-            }.padding(14)
-        }
     }
 
     private var unplannedSavedRecords: [ShotContinuationRecord] {
@@ -294,12 +271,16 @@ struct ShotRenderPromptPanel: View {
             .filter { $0.selectedTake != nil }
     }
 
+    /// Confirmed work the plan rows don't already show. Planned placements
+    /// carry their own progress on their card; this is compared by placement
+    /// key on both sides (a plan segment's id wears a kind prefix).
     private var unplannedWork: [ShotRowVideoTile] {
-        guard historyVersion == nil else { return [] }
-        let represented = Set(planSegments.map(\.id) + unplannedSavedRecords.map { ShotSegmentPresentation(record: $0).id })
-        return shotRowVideoTiles(shot: shot, segments: planSegments,
-            work: ShotWorkPresentation(jobs: workflows.jobs, shotId: shot.shotId))
-            .filter { $0.result.progress != nil && !represented.contains($0.id) }
+        shotUnrepresentedWorkTiles(
+            shotRowVideoTiles(shot: shot, segments: planSegments,
+                work: ShotWorkPresentation(jobs: workflows.jobs, shotId: shot.shotId)),
+            planSegments: planSegments,
+            unplannedRecords: unplannedSavedRecords
+        )
     }
 
     private var segmentList: some View {
@@ -324,7 +305,8 @@ struct ShotRenderPromptPanel: View {
                 }
                 ForEach(unplannedSavedRecords, id: \.entryId) { record in
                     VStack(alignment: .leading, spacing: 6) {
-                        resultRow(ShotSegmentPresentation(record: record), ordinal: "Saved segment")
+                        resultRow(ShotSegmentPresentation(record: record), ordinal: "Saved segment",
+                            takes: shotTakeOptions(record: record, placementKey: ShotSegmentPresentation(record: record).id))
                         Text("Generation inputs unavailable · saved video remains available.").font(.caption)
                     }.id(ShotSegmentPresentation(record: record).id)
                 }
@@ -415,7 +397,7 @@ struct ShotRenderPromptPanel: View {
                 get: { activeClip(item) == nil || expandedInputs.contains(item.pairKey) },
                 set: { if $0 { expandedInputs.insert(item.pairKey) } else { expandedInputs.remove(item.pairKey) } }
             )) { keyframePair(item) }
-            Text(item.isAIExtension ? "NEXT TAKE" : "NEXT RENDER").font(PlateType.label(8, weight: .semibold)).foregroundStyle(PlateColor.inkFaint)
+            Text("NEXT TAKE").font(PlateType.label(8, weight: .semibold)).foregroundStyle(PlateColor.inkFaint)
             VStack(alignment: .leading, spacing: 6) {
                 ShotEditorFlow(spacing: 8) {
                     PlateLabel(
@@ -480,58 +462,61 @@ struct ShotRenderPromptPanel: View {
 
     @ViewBuilder
     private func segmentRenderAction(_ item: ShotSegmentPromptPlanItem) -> some View {
-        if planSegments.count > 1 || item.isAIExtension {
-            let segmentKey = item.pair.placementKey
-            let isArmed = armedRenderKey == segmentKey
-            // THE HONEST BILL: "$0 reuse" is only true for other
-            // segments that HAVE a saved clip on the active
-            // version. Others without one (e.g. after a whole-
-            // shot LTX version, whose single clip matches no
-            // pair) are regenerated and billed too — price and
-            // promise must say so, never assume reuse.
-            let isTakeOperation = shot.continuationRecord(entryId: item.pair.endPlacementEntryId) != nil
-                || shotPendingEndingEntryIds(shot).contains(item.pair.endPlacementEntryId)
-            let missingOthers = isTakeOperation ? [] : planItems.filter {
-                $0.pair.placementKey != segmentKey && activeClip($0) == nil
-            }
-            let billedItems = [item] + missingOthers
-            let billedEstimate = ShotRenderCostEstimate.estimate(items: billedItems, pricing: falPricing)
-            let billedLabel = billedEstimate.headlineLabel.map { " · " + $0 } ?? ""
-            let extraSuffix = missingOthers.isEmpty
-                ? ""
-                : " +\(missingOthers.count) unsaved"
-            let reuseTail = missingOthers.isEmpty
-                ? "the other segments' saved clips traveling in at $0"
-                : "\(missingOthers.count) other segment\(missingOthers.count == 1 ? " has" : "s have") no saved clip on the active version, so this render regenerates and bills \(missingOthers.count == 1 ? "it" : "them") too"
-            let nextRoman = FrameCreatorModal.romanNumeral(
-                (shot.renderVersions.map(\.versionNumber).max() ?? 0) + 1
-            )
-            Button(isTakeOperation ? (shotPendingEndingEntryIds(shot).contains(item.pair.endPlacementEntryId) ? "Render ending…" : (activeClip(item) == nil ? "Retry · Review price" : "Render new take…")) : (isArmed
-                ? "Confirm\(extraSuffix)\(billedLabel)"
-                : "Render segment\(extraSuffix)\(billedLabel)")) {
-                if isArmed || isTakeOperation {
-                    armedRenderKey = nil
-                    guard saveDirectionPlansForConfirm() else { return }
-                    onRenderSegment(computedOverrides(), segmentKey)
-                } else {
-                    armedRenderKey = segmentKey
-                }
-            }
-            .buttonStyle(PlateButtonStyle(isProminent: isArmed))
-            .disabled(isRenderBlocked || (!isTakeOperation
-                && (!modelConfigured(item.renderStack.model) || !leadInRenderable(item) || !nativeExtendRenderable(item))))
-            .help(isTakeOperation ? "Review or generate only this take; earlier clips and render history stay unchanged" : (isRenderBlocked
-                ? "A shot is already rendering"
-                : (!nativeExtendRenderable(item)
-                    ? "Native Extend needs this AI extension directly after at least 73 frames of footage — choose an image-to-video model"
-                    : (!leadInRenderable(item)
-                    ? "\(item.renderStack.model.label) can't render an AI lead-in — it needs a model that accepts a tail frame alone"
-                    : (!modelConfigured(item.renderStack.model)
-                        ? "Add the required API key in App Settings before rendering this segment"
-                        : (isArmed
-                            ? "Click again to render this segment with \(item.renderStack.shortLabel) — this spends, and the result lands as version \(nextRoman) with \(reuseTail)"
-                            : "Arms a confirm — nothing renders until the second click. Renders this segment with \(item.renderStack.shortLabel); the result lands as version \(nextRoman) with \(reuseTail)"))))))
+        let segmentKey = item.pair.placementKey
+        let isArmed = armedRenderKey == segmentKey
+        // THE HONEST BILL: "$0 reuse" is only true for other
+        // segments that HAVE a saved clip on the active
+        // version. Others without one (e.g. after a whole-
+        // shot LTX version, whose single clip matches no
+        // pair) are regenerated and billed too — price and
+        // promise must say so, never assume reuse.
+        let isTakeOperation = shot.continuationRecord(entryId: item.pair.endPlacementEntryId) != nil
+            || shotPendingEndingEntryIds(shot).contains(item.pair.endPlacementEntryId)
+        let missingOthers = isTakeOperation ? [] : planItems.filter {
+            $0.pair.placementKey != segmentKey && activeClip($0) == nil
         }
+        let billedItems = [item] + missingOthers
+        let billedEstimate = ShotRenderCostEstimate.estimate(items: billedItems, pricing: falPricing)
+        let nextTake = shotTakeOptions(shot: shot, segment: .generated(item)).count + 1
+        let cta = shotTakeRenderCTA(
+            isArmed: isArmed,
+            stackLabel: item.renderStack.shortLabel,
+            nextTakeNumber: nextTake,
+            missingOtherCount: missingOthers.count,
+            isSingleSegment: planSegments.count == 1,
+            billLabel: billedEstimate.headlineLabel ?? ""
+        )
+        let takeTitle = shotPendingEndingEntryIds(shot).contains(item.pair.endPlacementEntryId)
+            ? "Render ending…"
+            : (activeClip(item) == nil ? "Retry · Review price" : "Render new take…")
+        Button(isTakeOperation ? takeTitle : cta.title) {
+            if isArmed || isTakeOperation {
+                armedRenderKey = nil
+                guard saveDirectionPlansForConfirm() else { return }
+                onRenderSegment(computedOverrides(), segmentKey)
+            } else {
+                armedRenderKey = segmentKey
+            }
+        }
+        .buttonStyle(PlateButtonStyle(isProminent: isArmed))
+        .disabled(isRenderBlocked || (!isTakeOperation
+            && (!modelConfigured(item.renderStack.model) || !leadInRenderable(item) || !nativeExtendRenderable(item))))
+        .help(segmentRenderHelp(item, isTakeOperation: isTakeOperation, ctaHelp: cta.help))
+    }
+
+    private func segmentRenderHelp(_ item: ShotSegmentPromptPlanItem, isTakeOperation: Bool, ctaHelp: String) -> String {
+        if isTakeOperation { return "Review or generate only this take; earlier clips and render history stay unchanged" }
+        if isRenderBlocked { return "A shot is already rendering" }
+        if !nativeExtendRenderable(item) {
+            return "Native Extend needs this AI extension directly after at least 73 frames of footage — choose an image-to-video model"
+        }
+        if !leadInRenderable(item) {
+            return "\(item.renderStack.model.label) can't render an AI lead-in — it needs a model that accepts a tail frame alone"
+        }
+        if !modelConfigured(item.renderStack.model) {
+            return "Add the required API key in App Settings before rendering this segment"
+        }
+        return ctaHelp
     }
 
     /// A footage segment: real material that plays verbatim — nothing to
@@ -578,19 +563,29 @@ struct ShotRenderPromptPanel: View {
     private func resultRow(_ segment: ShotRenderPlanSegment, ordinal: String) -> some View {
         let result = ShotSegmentPresentation(shot: shot, segment: segment)
         let work = ShotWorkPresentation(jobs: workflows.jobs, shotId: shot.shotId)
-        return resultRow(result.withProgress(historyVersion == nil ? work.segment(result.id) : nil, shot: shot), ordinal: ordinal)
+        return resultRow(result.withProgress(work.segment(result.id), shot: shot), ordinal: ordinal,
+            takes: shotTakeOptions(shot: shot, segment: segment))
     }
 
-    private func resultRow(_ source: ShotSegmentPresentation, ordinal: String) -> some View {
+    private func resultRow(_ source: ShotSegmentPresentation, ordinal: String, takes: [ShotTakeOption] = []) -> some View {
         let work = ShotWorkPresentation(jobs: workflows.jobs, shotId: shot.shotId)
-        let result = source.withProgress(historyVersion == nil ? work.segment(source.id) : nil, shot: shot)
+        let result = source.withProgress(work.segment(source.id), shot: shot)
         return ShotSegmentResultView(result: result, ordinal: ordinal,
             isFocused: focusedSegmentKey == result.id,
             isStale: result.record.map { shotContinuationStaleEntryIds(shot).contains($0.entryId) } ?? false,
             onSelect: { onFocusSegment(result.id) },
-            onPreview: { if let preview = result.preview { onPreviewSegment(preview) } },
+            onPreview: {
+                if let inFilm = shotInFilmTake(takes), inFilm.isReady { autosaveDrafts(); onPreviewTake(inFilm) }
+                else if let preview = result.preview { onPreviewSegment(preview) }
+            },
             onTakes: { if let record = result.record { autosaveDrafts(); onOpenTakes(record.entryId) } },
-            onCopy: { if let preview = result.preview { onCopyVideo(preview) } })
+            onCopy: { if let preview = result.preview { onCopyVideo(preview) } },
+            takes: takes,
+            previewedTakeId: previewingTakeId,
+            isRenderBlocked: isRenderBlocked,
+            onPreviewTake: { autosaveDrafts(); onPreviewTake($0) },
+            onUseTake: onUseTake,
+            onCompareTakes: { autosaveDrafts(); onCompareTakes($0, $1) })
     }
 
     /// The bridge's honest introduction: which end stands on real footage.

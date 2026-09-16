@@ -73,6 +73,13 @@ struct ShotSegmentResultView: View {
     var onPreview: () -> Void
     var onTakes: () -> Void
     var onCopy: () -> Void = {}
+    /// The placement's takes (≥2 shows the strip); empty for footage rows.
+    var takes: [ShotTakeOption] = []
+    var previewedTakeId: String? = nil
+    var isRenderBlocked = false
+    var onPreviewTake: (ShotTakeOption) -> Void = { _ in }
+    var onUseTake: (ShotTakeOption) -> Void = { _ in }
+    var onCompareTakes: ((ShotTakeOption, ShotTakeOption) -> Void)? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text("\(ordinal) · \(result.title)".uppercased())
@@ -86,7 +93,9 @@ struct ShotSegmentResultView: View {
                             .font(PlateType.label(10, weight: .semibold))
                         Text(String(format: "Saved video · %.1fs", result.preview?.durationSeconds ?? 0))
                             .font(PlateType.label(9, weight: .regular)).foregroundStyle(PlateColor.inkFaint)
-                        if let take = result.record?.selectedTake {
+                        if takes.count == 1, let only = takes.first, only.isInFilm {
+                            Text("TAKE 1 · IN FILM").font(PlateType.label(8, weight: .semibold))
+                        } else if takes.isEmpty, let take = result.record?.selectedTake {
                             Text("TAKE \(take.takeNumber) · IN USE").font(PlateType.label(8, weight: .semibold))
                         }
                         if !result.isPlayable {
@@ -100,32 +109,48 @@ struct ShotSegmentResultView: View {
                             Button("Preview Clip", action: onPreview).disabled(!result.isPlayable)
                             Button("Copy Video", action: onCopy).disabled(!result.isPlayable)
                         }
-                        if let record = result.record {
+                        if let record = result.record, takes.count < 2 {
                             Button("Takes (\(record.takes.count))", action: onTakes)
                         }
                     }.buttonStyle(PlateButtonStyle())
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if let progress = result.progress, progress.stage != .saved {
-                Text(progress.label + (progress.errorMessage.isEmpty ? "" : " · " + progress.errorMessage))
-                    .font(.caption).foregroundStyle(progress.stage == .failed ? CanonColor.rust : PlateColor.inkFaint)
-                    .fixedSize(horizontal: false, vertical: true)
+            if takes.count >= 2 {
+                ShotSegmentTakeStrip(
+                    options: takes,
+                    previewedTakeId: previewedTakeId,
+                    isRenderBlocked: isRenderBlocked,
+                    onPreview: onPreviewTake,
+                    onUse: onUseTake,
+                    onCompare: onCompareTakes,
+                    onAllTakes: result.record != nil ? onTakes : nil
+                )
             }
-            if isStale {
-                Text("Source changed · later clips remain in use. Review Takes to rechain.")
-                    .font(.caption).foregroundStyle(CanonColor.rust)
-            }
-            if result.progress == nil || result.progress?.stage == .saved,
-               let record = result.record, let attempt = record.renderingTake ?? record.sortedTakes.last,
-               attempt.takeId != record.selectedTakeId {
-                Text("\(attempt.takeStatus == .ready ? "Alternate take" : "Take") \(attempt.takeNumber) · \(attempt.takeStatus.rawValue)\(attempt.errorMessage.isEmpty ? "" : " · " + attempt.errorMessage)")
-                    .font(.caption).foregroundStyle(attempt.takeStatus == .failed ? CanonColor.rust : PlateColor.inkFaint)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            statusCaptions
         }
         .padding(8)
         .background(isFocused ? CanonColor.brass.opacity(0.09) : Color.clear)
         .overlay(Rectangle().stroke(isFocused ? CanonColor.brass : .clear))
+    }
+
+    @ViewBuilder
+    private var statusCaptions: some View {
+        if let progress = result.progress, progress.stage != .saved {
+            Text(progress.label + (progress.errorMessage.isEmpty ? "" : " · " + progress.errorMessage))
+                .font(.caption).foregroundStyle(progress.stage == .failed ? CanonColor.rust : PlateColor.inkFaint)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if isStale {
+            Text("Source changed · later clips remain in use. Review Takes to rechain.")
+                .font(.caption).foregroundStyle(CanonColor.rust)
+        }
+        if result.progress == nil || result.progress?.stage == .saved,
+           let record = result.record, let attempt = record.renderingTake ?? record.sortedTakes.last,
+           attempt.takeId != record.selectedTakeId {
+            Text("\(attempt.takeStatus == .ready ? "Alternate take" : "Take") \(attempt.takeNumber) · \(attempt.takeStatus.rawValue)\(attempt.errorMessage.isEmpty ? "" : " · " + attempt.errorMessage)")
+                .font(.caption).foregroundStyle(attempt.takeStatus == .failed ? CanonColor.rust : PlateColor.inkFaint)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }

@@ -691,6 +691,14 @@ func shotContinuationStaleEntryIds(_ shot: ProjectShot) -> [String] {
                 stale.append(entry.entryId)
                 dependencyBroken = true
             }
+        } else if take.anchor.sourceKind == "rendered_original",
+                  !take.anchor.sourceSegmentPlacementKey.isEmpty,
+                  let picked = shotSelectedSegmentTakeClip(shot: shot, placementKey: take.anchor.sourceSegmentPlacementKey),
+                  picked.clipPath != take.anchor.tailClipPath {
+            // The operator put a different take of the rendered tail in the
+            // film, so this continuation no longer grows from what plays.
+            stale.append(entry.entryId)
+            dependencyBroken = true
         } else if dependencyBroken {
             stale.append(entry.entryId)
         } else if !previousContinuationTakeId.isEmpty {

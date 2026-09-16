@@ -7,6 +7,8 @@ struct ShotRowVideoTile: Identifiable {
     var replacesEntryId = ""
     var ordinal: Int
     var count: Int
+    /// The plan segment behind a planned tile, so the row can offer its takes.
+    var segment: ShotRenderPlanSegment? = nil
     var id: String { result.id }
 }
 
@@ -15,9 +17,10 @@ func shotRowVideoTiles(shot: ProjectShot, segments: [ShotRenderPlanSegment], wor
     var tiles: [ShotRowVideoTile] = []
     var seen: Set<String> = []
     let entryIds = Set(shot.entries.map(\.entryId))
-    func append(_ result: ShotSegmentPresentation, start: String, end: String, ordinal: Int, count: Int) {
+    func append(_ result: ShotSegmentPresentation, start: String, end: String, ordinal: Int, count: Int,
+                segment: ShotRenderPlanSegment? = nil) {
         guard seen.insert(result.id).inserted else { return }
-        var tile = ShotRowVideoTile(result: result, ordinal: ordinal, count: count)
+        var tile = ShotRowVideoTile(result: result, ordinal: ordinal, count: count, segment: segment)
         if let entry = shot.entries.first(where: { $0.entryId == end }), entry.isAIExtension {
             tile.replacesEntryId = end
         } else if let entry = shot.entries.first(where: { $0.entryId == start }), entry.isClip, end.isEmpty {
@@ -40,7 +43,8 @@ func shotRowVideoTiles(shot: ProjectShot, segments: [ShotRenderPlanSegment], wor
         let clip = result.clip
         let identity = shotWorkflowSegment(segment, count: segments.count)
         append(result, start: identity?.startEntryId ?? clip?.placementStartEntryId ?? "",
-            end: identity?.endEntryId ?? clip?.placementEndEntryId ?? "", ordinal: index + 1, count: segments.count)
+            end: identity?.endEntryId ?? clip?.placementEndEntryId ?? "", ordinal: index + 1, count: segments.count,
+            segment: segment)
     }
     for entry in shot.entries where !entry.isSkipped {
         guard let record = shot.continuationRecord(entryId: entry.entryId) else { continue }
@@ -69,6 +73,21 @@ func shotRowVideoTiles(shot: ProjectShot, segments: [ShotRenderPlanSegment], wor
         append(result, start: "", end: "", ordinal: 1, count: max(segments.count, 1))
     }
     return tiles
+}
+
+/// Work tiles the segment list does not already show: a planned placement
+/// renders as its own row (any progress rides that row) and a saved
+/// continuation outside the plan renders as a saved segment. Compared by
+/// placement key on both sides — a plan segment's id wears a kind prefix a
+/// tile id never does.
+func shotUnrepresentedWorkTiles(
+    _ tiles: [ShotRowVideoTile],
+    planSegments: [ShotRenderPlanSegment],
+    unplannedRecords: [ShotContinuationRecord]
+) -> [ShotRowVideoTile] {
+    let represented = Set(planSegments.map(shotPlanPlacementKey)
+        + unplannedRecords.map { ShotSegmentPresentation(record: $0).id })
+    return tiles.filter { $0.result.progress != nil && !represented.contains($0.id) }
 }
 
 struct ShotSegmentLoadingThumbnail: View {

@@ -76,3 +76,32 @@ func cutRenderCTA(cut: ProjectShot, segmentCount: Int) -> CutRenderCTA {
         ? .finalizeFree
         : .renderMissing
 }
+
+/// The segment card's render CTA — one take of one placement. The result
+/// lands as the next take of that segment; the other segments' clips travel
+/// in verbatim unless they have no saved clip, in which case the bill and the
+/// promise both say so.
+func shotTakeRenderCTA(
+    isArmed: Bool,
+    stackLabel: String,
+    nextTakeNumber: Int,
+    missingOtherCount: Int,
+    isSingleSegment: Bool,
+    billLabel: String
+) -> (title: String, help: String) {
+    let extra = missingOtherCount > 0 ? " +\(missingOtherCount) unsaved" : ""
+    let bill = billLabel.isEmpty ? "" : " · \(billLabel)"
+    let title = isArmed ? "Confirm\(extra)\(bill)" : "Render new take\(extra)\(bill)"
+    let tail: String
+    if isSingleSegment {
+        tail = ""
+    } else if missingOtherCount == 0 {
+        tail = "; the other segments' clips travel in at $0"
+    } else {
+        tail = "; \(missingOtherCount) other segment\(missingOtherCount == 1 ? " has" : "s have") no saved clip on the active version, so this render regenerates and bills \(missingOtherCount == 1 ? "it" : "them") too"
+    }
+    let help = isArmed
+        ? "Click again to render this segment with \(stackLabel) — this spends; the result lands as take \(nextTakeNumber) of this segment\(tail)"
+        : "Arms a confirm — nothing renders until the second click. Renders this segment with \(stackLabel); the result lands as take \(nextTakeNumber) of this segment\(tail)"
+    return (title, help)
+}

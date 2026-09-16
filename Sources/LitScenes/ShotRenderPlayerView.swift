@@ -23,7 +23,7 @@ struct ShotVideoRequest: Identifiable, Hashable {
         switch intent { case .focus(let id), .ending(let id): return id; default: return "" }
     }
     var focusedSegmentKey: String {
-        switch intent { case .segment(let key): return key; case .preview(let value): return value.clip.placementKey; default: return "" }
+        switch intent { case .segment(let key): return key; case .preview(let value): return value.placementKey; default: return "" }
     }
     var initialPreview: ShotSegmentPreview? { if case .preview(let value) = intent { return value }; return nil }
     var autoplay: Bool { intent == .play || initialPreview != nil }
@@ -40,12 +40,6 @@ struct ShotVideoRequest: Identifiable, Hashable {
         else if !focusedEntryId.isEmpty { intent = .focus(focusedEntryId) }
         else { intent = autoplay ? .play : .edit }
     }
-}
-
-private enum ShotPlayerViewingSelection {
-    case current
-    case history(String)
-    case segment(ShotSegmentPreview)
 }
 
 /// Opens the Ambient Bed Tuner as a nested sheet of the shot player modal.
@@ -87,6 +81,10 @@ struct ShotRenderPlayerModal: View {
     var onUseContinuationTake: (ShotContinuationBranchImpact) -> Void
     var onRepairContinuationTake: (String, String) async -> Bool
     var onRechainContinuations: () async -> Bool
+    /// Pair-take selection for ordinary segments (continuation takes keep
+    /// their record law). Synchronous: choosing a take prepares nothing.
+    var segmentTakeImpact: (String, String) -> ShotSegmentTakeImpact? = { _, _ in nil }
+    var onUseSegmentTake: (String, String) -> ShotPictureStateEdit? = { _, _ in nil }
     var onSetDefaultRenderStack: (ShotRenderStack) -> Void
     var onSetSegmentRenderStack: (ShotRenderPair, ShotRenderStack?) -> Void
     var onRender: ([ShotSegmentPromptOverride]) -> Void
@@ -195,30 +193,30 @@ struct ShotRenderPlayerModal: View {
     @State private var currentReturnPlaying = false
     @State private var requestedPlayback: Bool?
     @State private var takeBrowserEntryId = ""
+    @State private var pendingTakeImpact: ShotTakeImpactPrompt?
+    @StateObject private var comparePlayers = ShotTakeComparePlayers()
     @State private var isPanelOpen: Bool
     /// The segment clip playing instead of the full shot (panel preview).
     @State private var viewingSelection: ShotPlayerViewingSelection = .current
     @State private var didResolveInitialFocus = false
     @State private var didLoadPlayer = false
     private var previewClip: ShotRenderSegmentClip? {
-        get {
-            switch viewingSelection {
-            case .current: return nil
-            case .segment(let preview): return preview.clip
-            case .history(let id):
-                return shot.renderVersions.first { $0.versionId == id }.map {
-                    ShotRenderSegmentClip(clipPath: $0.videoPath, durationSeconds: Double($0.totalSeconds))
-                }
-            }
-        }
-        nonmutating set { viewingSelection = newValue.map { ShotPlayerViewingSelection.segment(ShotSegmentPreview(clip: $0)) } ?? .current }
+        if case .segment(let preview) = viewingSelection { return preview.clip }
+        return nil
     }
-    private var previewedVersionId: String? {
-        if case .history(let id) = viewingSelection { return id }; return nil
+    /// Which segment and take the preview shows, when the preview knows.
+    private var previewTake: ShotTakePreviewContext? {
+        if case .segment(let preview) = viewingSelection { return preview.take }
+        return nil
     }
-    private var previewRenderLabel: String {
-        guard let id = previewedVersionId, let version = shot.renderVersions.first(where: { $0.versionId == id }) else { return "" }
-        return "HISTORY \(FrameCreatorModal.romanNumeral(version.versionNumber))"
+    private var compare: ShotTakeCompare? {
+        if case .compare(let value) = viewingSelection { return value }
+        return nil
+    }
+    private var isComparing: Bool { compare != nil }
+    private var previewPlacementKey: String? {
+        if case .segment(let preview) = viewingSelection { return preview.placementKey }
+        return nil
     }
     /// Honest per-clip durations, loaded off the saved files; the strip and
     /// the composition fall back to estimates until they land.
@@ -317,6 +315,8 @@ struct ShotRenderPlayerModal: View {
         onUseContinuationTake: @escaping (ShotContinuationBranchImpact) -> Void = { _ in },
         onRepairContinuationTake: @escaping (String, String) async -> Bool = { _, _ in false },
         onRechainContinuations: @escaping () async -> Bool = { false },
+        segmentTakeImpact: @escaping (String, String) -> ShotSegmentTakeImpact? = { _, _ in nil },
+        onUseSegmentTake: @escaping (String, String) -> ShotPictureStateEdit? = { _, _ in nil },
         onSetDefaultRenderStack: @escaping (ShotRenderStack) -> Void = { _ in },
         onSetSegmentRenderStack: @escaping (ShotRenderPair, ShotRenderStack?) -> Void = { _, _ in },
         onRender: @escaping ([ShotSegmentPromptOverride]) -> Void,
@@ -404,6 +404,8 @@ struct ShotRenderPlayerModal: View {
         self.onUseContinuationTake = onUseContinuationTake
         self.onRepairContinuationTake = onRepairContinuationTake
         self.onRechainContinuations = onRechainContinuations
+        self.segmentTakeImpact = segmentTakeImpact
+        self.onUseSegmentTake = onUseSegmentTake
         self.onSetDefaultRenderStack = onSetDefaultRenderStack
         self.onSetSegmentRenderStack = onSetSegmentRenderStack
         self.onRender = onRender
@@ -500,18 +502,19 @@ struct ShotRenderPlayerModal: View {
     /// The single source of truth for what plays: a previewed segment clip,
     /// else the active version's full video.
     private var currentVideoPath: String? {
-        previewClip?.clipPath.nilIfEmpty
+        if isComparing { return nil }
+        return previewClip?.clipPath.nilIfEmpty
             ?? activeLook?.videoPath.trimmed.nilIfEmpty
             ?? artifact?.videoPath.trimmed.nilIfEmpty
     }
 
     private var playerSourceKey: String {
-        if let id = previewedVersionId { return "history:\(id)" }
+        if let compare { return "compare:\(compare.left.clipPath)|\(compare.right.clipPath)" }
         if case .segment(let preview) = viewingSelection { return "segment:\(preview.clip.clipPath)#\(preview.sourceStartSeconds)#\(preview.sourceEndSeconds ?? -1)" }
         return "current:\(currentVideoPath ?? "")"
     }
 
-    private var isPreviewingClip: Bool { previewClip != nil }
+    private var isPreviewingClip: Bool { previewClip != nil || isComparing }
 
     /// Full-shot playback assembles the saved segment clips live through the
     /// cut layer (skips, razors, in/out) — the mp4 on disk is never touched.
@@ -606,7 +609,8 @@ struct ShotRenderPlayerModal: View {
                     playerSurface
                         .frame(minWidth: 880, minHeight: 380, maxHeight: .infinity)
                         .overlay { microphoneRecordingOverlay }
-                    if !shot.entries.isEmpty, previewedVersionId == nil { sourceActions.padding(.horizontal, 16).padding(.vertical, 5) }
+                        .overlay(alignment: .top) { takeReviewChip }
+                    if !shot.entries.isEmpty, !isComparing { sourceActions.padding(.horizontal, 16).padding(.vertical, 5) }
                     if activeLook != nil {
                         Rectangle().fill(PlateColor.hairline).frame(height: 1)
                         lookControlBar
@@ -640,6 +644,8 @@ struct ShotRenderPlayerModal: View {
         .background(PlateColor.cream)
         .plateEngravedBorder(cornerRadius: 0, inset: 6)
         .modifier(transportKeys)
+        .modifier(takeReviewKeys)
+        .modifier(takeImpactDialog)
         // The picture clipboard's menu route. Copy schedules a DIRECT write
         // after SwiftUI's provider write, so whatever the provider path does
         // (its write is a still-open live-verify trap), the pasteboard ends
@@ -835,7 +841,13 @@ struct ShotRenderPlayerModal: View {
             preparePlayer(resume: true)
         }
         .onChange(of: shot.activeRenderVersionId) { _, _ in
-            previewClip = nil
+            viewingSelection = .current
+        }
+        .onChange(of: shot.playableRenderVersion?.versionId) { previous, current in
+            // A finished render's fresh takes select themselves (THE FRESH
+            // TAKE LAW); say so, and point at the card that can undo it.
+            guard previous != nil, current != nil, previous != current, !isPreviewingClip else { return }
+            transportStatus = "New take landed in the film · open its segment card to compare or switch back"
         }
         .onChange(of: playheadSeconds) { previous, current in
             // THE FOLLOW LAW's playback half: pages only on an inside→outside
@@ -847,7 +859,7 @@ struct ShotRenderPlayerModal: View {
             )
         }
         .onChange(of: shot.activeLookVersionId) { _, value in
-            previewClip = nil
+            viewingSelection = .current
             if !value.isEmpty { isPanelOpen = false }
         }
         .onDisappear {
@@ -884,7 +896,7 @@ struct ShotRenderPlayerModal: View {
             skipped: skipped,
             skippedPlaceholders: skippedPlaceholders,
             isRenderBlocked: isRenderBlocked,
-            previewingSegmentKey: previewClip?.placementKey,
+            previewingSegmentKey: previewPlacementKey,
             configuredRenderModels: configuredRenderModels,
             onRender: { overrides in pauseForEditorAction(); onRender(overrides) },
             onRenderSegment: { overrides, key in pauseForEditorAction(); onRenderSegment(overrides, key) },
@@ -926,14 +938,16 @@ struct ShotRenderPlayerModal: View {
                 transportStatus = "Saved video copied · paste it into the timeline at $0"
             },
             onOpenTakes: { pauseForEditorAction(); takeBrowserEntryId = $0 },
+            previewingTakeId: previewedTakeId,
+            onPreviewTake: previewTakeOption,
+            onUseTake: useTake,
+            onCompareTakes: enterCompare,
             onInspectInput: pauseForEditorAction,
             onExtend: onExtend.map { action in { pauseForEditorAction(); action() } },
             onNewVersion: onNewVersion.map { action in { pauseForEditorAction(); action() } },
             onRebuild: onRebuild.map { action in { overrides in pauseForEditorAction(); action(overrides) } },
             rebuildEstimate: rebuildEstimate,
             outputSeconds: assembly.outputSeconds,
-            historyVersion: previewedVersionId.flatMap { id in shot.renderVersions.first { $0.versionId == id } },
-            onEditCurrent: returnToCurrent,
             savedFallback: assembly.bands.first.flatMap { band in
                 if case .artifactFallback = band.segment { return band.segment }; return nil
             },
@@ -994,6 +1008,195 @@ struct ShotRenderPlayerModal: View {
         pendingSeekSeconds = currentReturnSeconds
         requestedPlayback = currentReturnPlaying
         viewingSelection = .current
+    }
+
+    // MARK: Takes
+
+    /// The takes behind a placement, from the plan row when it exists, else
+    /// from a continuation record parked outside the plan.
+    private func takeOptions(forPlacement key: String) -> [ShotTakeOption] {
+        if let segment = planSegments.first(where: { shotPlanPlacementKey($0) == key }) {
+            return shotTakeOptions(shot: shot, segment: segment)
+        }
+        if let record = shot.continuationRecords.first(where: { record in
+            record.entryId == key || record.selectedTake?.segmentClip?.placementKey == key
+        }) {
+            return shotTakeOptions(record: record, placementKey: key)
+        }
+        return []
+    }
+
+    private func segmentLabel(forPlacement key: String) -> String {
+        if let index = planSegments.firstIndex(where: { shotPlanPlacementKey($0) == key }) {
+            return "SEGMENT \(index + 1)"
+        }
+        return "SEGMENT"
+    }
+
+    private var previewedTakeId: String? {
+        guard let previewTake, previewTake.takeNumber > 0 else { return nil }
+        return "\(previewTake.placementKey)#\(previewTake.takeNumber)"
+    }
+
+    private var previewedTakeOption: ShotTakeOption? {
+        guard let previewTake, let id = previewedTakeId else { return nil }
+        return takeOptions(forPlacement: previewTake.placementKey).first { $0.id == id }
+    }
+
+    private func previewTakeOption(_ option: ShotTakeOption) {
+        guard let clip = option.clip, option.isReady else { return }
+        let siblings = takeOptions(forPlacement: option.placementKey)
+        previewSegment(ShotSegmentPreview(clip: clip, take: ShotTakePreviewContext(
+            placementKey: option.placementKey,
+            label: segmentLabel(forPlacement: option.placementKey),
+            takeNumber: option.takeNumber,
+            takeCount: siblings.count,
+            isInFilm: option.isInFilm,
+            source: option.source
+        )))
+    }
+
+    private func stepTake(_ delta: Int) {
+        guard let previewTake, let id = previewedTakeId,
+              let next = shotSteppedTake(options: takeOptions(forPlacement: previewTake.placementKey),
+                                         currentId: id, delta: delta) else { return }
+        previewTakeOption(next)
+    }
+
+    private func enterCompare(_ left: ShotTakeOption, _ right: ShotTakeOption) {
+        guard left.isReady, right.isReady else { return }
+        if !isPreviewingClip {
+            currentReturnSeconds = currentPlayheadSeconds()
+            currentReturnPlaying = (player?.rate ?? 0) != 0
+        }
+        // The main player goes dark behind the panes; silence it first.
+        requestedPlayback = false
+        player?.pause()
+        viewingSelection = .compare(ShotTakeCompare(
+            left: left, right: right,
+            placementKey: left.placementKey,
+            segmentLabel: segmentLabel(forPlacement: left.placementKey)
+        ))
+    }
+
+    private func compareFromPreview() {
+        guard let option = previewedTakeOption else { return }
+        let siblings = takeOptions(forPlacement: option.placementKey)
+        let anchor = shotInFilmTake(siblings) ?? siblings.first { $0.isReady && $0.id != option.id }
+        guard let anchor, anchor.id != option.id else { return }
+        enterCompare(anchor, option)
+    }
+
+    /// USE is the only mutation. A pick that would leave later continuations
+    /// stale asks first; a clean pick applies at once.
+    private func useTake(_ option: ShotTakeOption) {
+        guard option.isReady, !option.isInFilm else { return }
+        let resolution: ShotContinuationBranchResolution?
+        switch option.source {
+        case .continuation(let entryId, let takeId):
+            resolution = continuationBranchImpact(entryId, takeId)?.resolution
+        case .render:
+            resolution = segmentTakeImpact(option.placementKey, option.clipPath)?.resolution
+        }
+        guard let resolution else {
+            transportStatus = "This take's video is missing — restore it before using it"
+            return
+        }
+        if case .selectCurrent = resolution {
+            applyTake(option, rechainEntryIds: nil)
+        } else {
+            pendingTakeImpact = ShotTakeImpactPrompt(option: option, resolution: resolution)
+        }
+    }
+
+    private func applyTake(_ option: ShotTakeOption, rechainEntryIds: [String]?) {
+        let previous = shotInFilmTake(takeOptions(forPlacement: option.placementKey))
+        switch option.source {
+        case .continuation(let entryId, let takeId):
+            guard let impact = continuationBranchImpact(entryId, takeId) else { return }
+            onUseContinuationTake(impact)
+        case .render:
+            guard let edit = onUseSegmentTake(option.placementKey, option.clipPath) else { return }
+            registerPictureEdit(edit, "Use Take \(option.takeNumber)")
+        }
+        markPreviewedTakeInFilm(option)
+        transportStatus = previous.map { "Take \(option.takeNumber) in film · ⌘Z restores Take \($0.takeNumber)" }
+            ?? "Take \(option.takeNumber) in film"
+        if let rechainEntryIds, !rechainEntryIds.isEmpty {
+            Task { _ = await onRechainContinuations() }
+        }
+    }
+
+    /// The preview context is a snapshot; after USE the chip and panes must
+    /// say IN FILM without waiting for a reopen.
+    private func markPreviewedTakeInFilm(_ option: ShotTakeOption) {
+        switch viewingSelection {
+        case .segment(var preview) where preview.placementKey == option.placementKey:
+            preview.take?.isInFilm = true
+            viewingSelection = .segment(preview)
+        case .compare(var compare) where compare.placementKey == option.placementKey:
+            compare.left.isInFilm = compare.left.id == option.id
+            compare.right.isInFilm = compare.right.id == option.id
+            viewingSelection = .compare(compare)
+        default:
+            break
+        }
+    }
+
+    @ViewBuilder
+    private var takeReviewChip: some View {
+        if let compare {
+            ShotTakeReviewChip(title: shotCompareChipTitle(compare), onFullShot: returnToCurrent)
+        } else if let previewTake {
+            ShotTakeReviewChip(
+                title: shotTakeChipTitle(previewTake),
+                onUse: chipUseAction,
+                onCompare: chipCompareAction,
+                onFullShot: returnToCurrent
+            )
+        }
+    }
+
+    private var chipUseAction: (() -> Void)? {
+        guard let previewTake, !previewTake.isInFilm, !isRenderBlocked,
+              let option = previewedTakeOption, option.isReady else { return nil }
+        return { useTake(option) }
+    }
+
+    private var chipCompareAction: (() -> Void)? {
+        guard let previewTake, previewTake.takeNumber > 0,
+              takeOptions(forPlacement: previewTake.placementKey).filter(\.isReady).count >= 2 else { return nil }
+        return { compareFromPreview() }
+    }
+
+    private var takeReviewKeyMode: ShotTakeReviewKeyMode {
+        if isComparing { return .comparing }
+        guard let previewTake, previewTake.takeNumber > 0 else { return .inactive }
+        let ready = takeOptions(forPlacement: previewTake.placementKey).filter(\.isReady)
+        return .previewing(canStep: ready.count > 1, canUse: chipUseAction != nil)
+    }
+
+    private var takeReviewKeys: ShotTakeReviewKeys {
+        ShotTakeReviewKeys(
+            mode: takeReviewKeyMode,
+            onStepTake: { stepTake($0) },
+            onUsePreviewed: { chipUseAction?() },
+            onUseCompareSide: { side in
+                guard let compare else { return }
+                useTake(side == 0 ? compare.left : compare.right)
+            },
+            onToggleComparePlayback: { comparePlayers.togglePlayback() }
+        )
+    }
+
+    private var takeImpactDialog: ShotTakeImpactDialog {
+        ShotTakeImpactDialog(
+            prompt: $pendingTakeImpact,
+            rechainEstimate: continuationEntryEstimate,
+            isRendering: isRenderBlocked,
+            onUse: { applyTake($0, rechainEntryIds: nil) },
+            onUseAndRechain: { option, stale in applyTake(option, rechainEntryIds: stale) }
+        )
     }
 
     @ViewBuilder private var directTakeBrowser: some View {
@@ -1058,9 +1261,6 @@ struct ShotRenderPlayerModal: View {
                 if shotPendingEndingEntryIds(shot).contains(entry.entryId) {
                     Button("RENDER ENDING") { pauseForEditorAction(); onReviewEnding(entry.entryId) }.disabled(isRenderBlocked)
                 }
-            }
-            if !shot.continuationRecords.isEmpty {
-                Button("TAKES") { pauseForEditorAction(); isVersionsPlateOpen = true }
             }
             Spacer()
         }
@@ -1472,7 +1672,7 @@ struct ShotRenderPlayerModal: View {
 
     private var transportKeys: ShotPlayerTransportKeys {
         ShotPlayerTransportKeys(
-            isEnabled: microphoneControlMode == .idle,
+            isEnabled: microphoneControlMode == .idle && !isComparing,
             onTogglePlayback: togglePlayback,
             onPause: pausePlaybackResolvingPlayhead,
             onShuttleForward: shuttleForward,
@@ -1496,6 +1696,10 @@ struct ShotRenderPlayerModal: View {
     /// and only with every rung clear does Escape reach the hidden
     /// `.cancelAction` button and close the modal.
     private func escapeLadder() -> Bool {
+        if isComparing || previewClip != nil {
+            returnToCurrent()
+            return true
+        }
         if pendingBladeMaterialSeconds != nil {
             pendingBladeMaterialSeconds = nil
             transportStatus = "Blade canceled"
@@ -1951,6 +2155,15 @@ struct ShotRenderPlayerModal: View {
     /// Home/End and the typed timecode jump: a precision act, so it pauses.
     private func jumpTo(seconds: Double) {
         guard player != nil, !isPreparingPlayer else { return }
+        if isPreviewingClip {
+            // A previewed take keeps its own clock — Home/End address it,
+            // never the full shot behind it.
+            guard !isComparing else { return }
+            player?.pause()
+            player?.seek(to: CMTime(seconds: max(seconds, 0), preferredTimescale: 600),
+                         toleranceBefore: .zero, toleranceAfter: .zero)
+            return
+        }
         pausePlaybackResolvingPlayhead()
         transportStatus = ""
         let ceiling = timelineDurationSeconds > 0 ? timelineDurationSeconds : max(seconds, 0)
@@ -2006,7 +2219,7 @@ struct ShotRenderPlayerModal: View {
         playheadSeconds = seconds
         if isPreviewingClip {
             pendingSeekSeconds = seconds
-            previewClip = nil
+            viewingSelection = .current
             return
         }
         player?.seek(
@@ -2255,6 +2468,8 @@ struct ShotRenderPlayerModal: View {
                     PlateLabel(text: "PREPARING CUT PREVIEW", size: 8.5, color: PlateColor.cream.opacity(0.7))
                 }
             }
+        } else if let compare {
+            ShotTakeCompareSurface(compare: compare, players: comparePlayers, onUse: useTake)
         } else if let player, videoExists {
             VideoPlayer(player: player)
                 .background(Color.black)
@@ -2345,7 +2560,6 @@ struct ShotRenderPlayerModal: View {
         ShotEditorFlow(spacing: 10) {
             lookCycler
             if activeLook == nil {
-                versionCycler
                 versionsPlateButton
                 substitutionBadge
             }
@@ -2356,7 +2570,7 @@ struct ShotRenderPlayerModal: View {
                     ? previewSeconds
                     : Double(requestedSeconds > 0 ? requestedSeconds : shot.renderStack.segmentSeconds)
                 PlateLabel(
-                    text: "\(previewRenderLabel.isEmpty ? "SEGMENT" : previewRenderLabel) · ~\(Int(segmentSeconds.rounded()))s",
+                    text: shotTakeFooterLabel(context: previewTake, compare: compare, seconds: segmentSeconds),
                     size: 8.5,
                     weight: .semibold,
                     color: PlateColor.ink
@@ -2583,43 +2797,6 @@ struct ShotRenderPlayerModal: View {
         }
     }
 
-    /// The version browser: one lowercase numeral per ready render, the active
-    /// one distinct. Numerals preview immutable saved video without selecting
-    /// a working render or changing continuation choices.
-    @ViewBuilder
-    private var versionCycler: some View {
-        let versions = shot.historicalWholeShotVersions.filter(\.isReady)
-        if !versions.isEmpty || shot.hasSavedPlayback {
-            HStack(spacing: 8) {
-                Button("CURRENT", action: returnToCurrent)
-                    .font(.system(size: 9, weight: previewClip == nil ? .bold : .regular))
-                    .foregroundStyle(previewClip == nil ? PlateColor.ink : PlateColor.inkFaint)
-                    .buttonStyle(.plain)
-                ForEach(versions, id: \.versionId) { version in
-                    let isActive = previewedVersionId == version.versionId
-                    Button {
-                        previewRender(version.versionId)
-                    } label: {
-                        Text(FrameCreatorModal.romanNumeral(version.versionNumber).lowercased())
-                            .font(.system(size: 11, weight: isActive ? .bold : .regular, design: .serif))
-                            .foregroundStyle(isActive ? PlateColor.ink : PlateColor.inkFaint)
-                            .frame(minWidth: 18, minHeight: 22)
-                            .overlay(alignment: .bottom) {
-                                Rectangle()
-                                    .fill(isActive ? PlateColor.ink : .clear)
-                                    .frame(height: 1)
-                            }
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help(isActive
-                        ? "Previewing historical version \(version.versionNumber)"
-                        : "Preview historical version \(version.versionNumber); the current sequence is unchanged")
-                }
-            }
-        }
-    }
-
     private func versionsPlateSheet() -> some View {
         ShotRenderVersionsPlateView(
             shot: shot,
@@ -2635,13 +2812,13 @@ struct ShotRenderPlayerModal: View {
                 }
             },
             onPreviewVersion: { versionId in
-                previewRender(versionId)
+                previewWholeShotVersion(versionId)
                 isVersionsPlateOpen = false
             },
             isRendering: isRenderBlocked,
             continuationEntryEstimate: continuationEntryEstimate,
             continuationBranchImpact: continuationBranchImpact,
-            onUseContinuationTake: { impact in previewClip = nil; onUseContinuationTake(impact) },
+            onUseContinuationTake: { impact in viewingSelection = .current; onUseContinuationTake(impact) },
             onRepairContinuationTake: onRepairContinuationTake,
             onRechainContinuations: onRechainContinuations,
             onNewContinuationTake: { entryId in pendingTakeReviewEntryId = entryId; isVersionsPlateOpen = false },
@@ -2649,15 +2826,21 @@ struct ShotRenderPlayerModal: View {
         )
     }
 
-    private func previewRender(_ versionId: String) {
-        guard let version = shot.renderVersions.first(where: { $0.versionId == versionId }) else { return }
-        if !isPreviewingClip {
-            currentReturnSeconds = currentPlayheadSeconds()
-            currentReturnPlaying = (player?.rate ?? 0) != 0
-        }
-        pendingSeekSeconds = 0
-        requestedPlayback = true
-        viewingSelection = .history(version.versionId)
+    /// RENDER HISTORY's honest preview: the exact saved whole-shot file,
+    /// carried as a preview with its own artifact placement key so no
+    /// segment card lights up for it and nothing in the film changes.
+    private func previewWholeShotVersion(_ versionId: String) {
+        guard let version = shot.renderVersions.first(where: { $0.versionId == versionId }),
+              !version.videoPath.trimmed.isEmpty else { return }
+        let clip = ShotRenderSegmentClip(
+            clipPath: version.videoPath, provider: version.provider, model: version.model,
+            durationSeconds: Double(version.totalSeconds)
+        )
+        previewSegment(ShotSegmentPreview(clip: clip, take: ShotTakePreviewContext(
+            placementKey: shotArtifactSegmentKey(versionId: version.versionId),
+            label: "RENDER \(FrameCreatorModal.romanNumeral(version.versionNumber)) · WHOLE-SHOT FILE",
+            takeNumber: 0, takeCount: 0, isInFilm: shot.isActiveRenderVersion(version), source: nil
+        )))
     }
 
     private var loopToggleButton: some View {
@@ -2681,9 +2864,6 @@ struct ShotRenderPlayerModal: View {
     /// ("WAN 2.7 + Kling 3 Pro"), never flattened to a shrug. With no
     /// artifact at all, the default is intent and says so.
     private var footerProvenanceLabel: String {
-        if let id = previewedVersionId, let version = shot.renderVersions.first(where: { $0.versionId == id }) {
-            return shotRenderProvenanceSummary(version: version)
-        }
         if case .segment(let preview) = viewingSelection {
             return shotClipModelShortLabel(provider: preview.clip.provider, model: preview.clip.model)
         }
@@ -2703,7 +2883,7 @@ struct ShotRenderPlayerModal: View {
                     .foregroundStyle(PlateColor.inkFaint)
             }
             .buttonStyle(.plain)
-            .help("Every version's provenance — models, prompts, durations, traces, and what was reused")
+            .help("Render history — every whole-shot render's provenance: models, prompts, durations, traces, and what was reused")
         }
     }
 
@@ -2716,24 +2896,22 @@ struct ShotRenderPlayerModal: View {
         if let active = shot.activeRenderVersion,
            let playable = shot.playableRenderVersion,
            active.versionId != playable.versionId {
-            let activeRoman = FrameCreatorModal.romanNumeral(active.versionNumber)
-            let playableRoman = FrameCreatorModal.romanNumeral(playable.versionNumber)
             if active.status == "generating" {
                 PlateLabel(
-                    text: "RENDERING \(activeRoman) — SHOWING \(playableRoman)",
+                    text: "RENDERING NEW TAKES · SHOWING LAST FINISHED RENDER",
                     size: 8,
                     weight: .semibold,
                     color: CanonColor.brass
                 )
-                .help("Version \(active.versionNumber) is rendering — you're watching the last finished render. Playback flips to the new version when it completes.")
+                .help("A render is in flight — you're watching the last finished render. Playback flips to the new takes when they land.")
             } else if active.status == "failed" {
                 PlateLabel(
-                    text: "\(activeRoman) FAILED — SHOWING \(playableRoman)",
+                    text: "RENDER FAILED · SHOWING LAST FINISHED RENDER",
                     size: 8,
                     weight: .semibold,
                     color: CanonColor.rust
                 )
-                .help("Version \(active.versionNumber) failed — you're watching the last finished render.")
+                .help("The newest render failed — you're watching the last finished render. Its takes stay in the film.")
             }
         }
     }
@@ -2859,7 +3037,7 @@ struct ShotRenderPlayerModal: View {
     /// Preview and export share one track graph: cut-aware source audio,
     /// narration, and the active microphone take with persisted lane gains.
     private func makePlayerItem() async throws -> AVPlayerItem {
-        if !isPreviewingClip && previewedVersionId == nil && !assembly.unavailableOutputScopeIds.isEmpty {
+        if !isPreviewingClip && !assembly.unavailableOutputScopeIds.isEmpty {
             throw ScreenGraphError.capture("Preparing the earlier cut for playback. Its original segments and takes remain available in the editor.")
         }
         if case .segment(let preview) = viewingSelection, let end = preview.sourceEndSeconds {

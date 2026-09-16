@@ -58,6 +58,11 @@ struct ShotPictureSourceCatalog {
                 active[shotArtifactSegmentKey(versionId: version.versionId)] = ShotPictureSource(path: version.videoPath)
             }
         }
+        // The operator's pair-take picks override the playable version's
+        // clips; continuation records below stay authoritative for theirs.
+        for selection in shot.segmentTakeSelections where retainedPaths.contains(selection.clipPath) {
+            active[selection.placementKey] = ShotPictureSource(path: selection.clipPath)
+        }
         for record in shot.continuationRecords {
             record.preservedSourceClips.forEach { retain($0.clipPath) }
             for take in record.takes {

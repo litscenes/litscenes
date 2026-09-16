@@ -5684,9 +5684,15 @@ final class LibraryEngine: ObservableObject {
                 version.renderedEntryIds.isEmpty || version.renderedEntryIds.contains(tailEntry.entryId)
             } ?? false
             if let playable, renderedCoversTail, playable.isReady {
-                let finalClip = playable.clipPaths.last.flatMap { path in
+                let renderedTail = playable.clipPaths.last.flatMap { path in
                     playable.segmentClips.first { $0.clipPath == path }
                 } ?? playable.segmentClips.last
+                let resolvedTail = renderedTail.map {
+                    shotResolvedTailClip(shot: shot, base: $0, versionId: playable.versionId) {
+                        FileManager.default.fileExists(atPath: $0)
+                    }
+                }
+                let finalClip = resolvedTail?.clip
                 let clipPath = finalClip?.clipPath.trimmed.nilIfEmpty ?? playable.videoPath
                 guard FileManager.default.fileExists(atPath: clipPath) else {
                     return ShotContinuationAvailability(lockReason: .missingTail)
@@ -5705,7 +5711,7 @@ final class LibraryEngine: ObservableObject {
                     sourceKind: "rendered_original",
                     sourceEntryId: tailEntry.entryId,
                     sourceTakeId: finalClip?.continuationTakeId ?? "",
-                    sourceRenderVersionId: playable.versionId,
+                    sourceRenderVersionId: resolvedTail?.versionId ?? playable.versionId,
                     sourceSegmentPlacementKey: finalClip?.placementKey ?? "",
                     framePath: previewPath,
                     frameFingerprint: finalClip?.continuationAnchorFingerprint ?? "",
@@ -7039,6 +7045,58 @@ final class LibraryEngine: ObservableObject {
         let stale = shotContinuationStaleEntryIds(selected)
         aestheticStatus = stale.isEmpty ? "Take selected — Play to review it" : "Take selected — clips remain playable with stale-anchor warnings"
         return ShotPictureStateEdit(before: current.pictureStateSnapshot(), after: selected.pictureStateSnapshot())
+    }
+
+    /// What choosing a retained take for an ordinary segment would do to the
+    /// continuations after it. nil when the take is not ready on disk.
+    func shotSegmentTakeImpact(shotId: String, placementKey: String, clipPath: String) -> ShotSegmentTakeImpact? {
+        guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+              let clip = shotRetainedSegmentClip(shot: shot, clipPath: clipPath, placementKey: placementKey),
+              FileManager.default.fileExists(atPath: clip.clipPath) else { return nil }
+        let stale = shotSegmentTakeStaleEntryIds(shot: shot, placementKey: placementKey, clipPath: clipPath)
+        return ShotSegmentTakeImpact(
+            placementKey: placementKey,
+            clipPath: clipPath,
+            resolution: stale.isEmpty ? .selectCurrent : .rechain(staleEntryIds: stale)
+        )
+    }
+
+    /// Puts a retained take in the film for one placement. Selection is not
+    /// structure: it is never freeze-gated, refused only while this cut has a
+    /// video operation in flight or the take's file is missing, and a pick
+    /// that leaves the effective clip unchanged persists nothing. Selection is
+    /// Shot-level state like the continuation selectors, so this reads the
+    /// canonical shot rather than an earlier-cut projection.
+    @discardableResult
+    func useShotSegmentTake(shotId: String, impact: ShotSegmentTakeImpact) -> ShotPictureStateEdit? {
+        guard let project = currentProject,
+              let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }) else { return nil }
+        guard !cutHasInFlightVideoOperation(cutId: shotId) else {
+            aestheticStatus = "Wait for this shot's video work to finish before choosing a take"
+            return nil
+        }
+        guard let clip = shotRetainedSegmentClip(shot: shot, clipPath: impact.clipPath, placementKey: impact.placementKey),
+              FileManager.default.fileExists(atPath: clip.clipPath) else {
+            aestheticStatus = "This take's video is missing — restore it before using it"
+            return nil
+        }
+        let now = DateFormats.now()
+        let staged = shot.selectingSegmentTake(placementKey: impact.placementKey, clipPath: impact.clipPath, now: now)
+        guard staged.segmentTakeSelection(placementKey: impact.placementKey)?.clipPath == impact.clipPath else {
+            aestheticStatus = "This segment's takes are chosen from its continuation record"
+            return nil
+        }
+        guard ShotPictureSourceCatalog(shot: staged).activePaths[impact.placementKey]
+                != ShotPictureSourceCatalog(shot: shot).activePaths[impact.placementKey] else {
+            aestheticStatus = "This take is already in the film"
+            return nil
+        }
+        guard persistShotTimeline(shotTimeline.updatingShot(shotId: shotId, now: now) { _ in staged }, for: project) else { return nil }
+        let stale = shotContinuationStaleEntryIds(staged)
+        aestheticStatus = stale.isEmpty
+            ? "Take in the film — Play to review it"
+            : "Take in the film — later continuations remain playable with stale-anchor warnings"
+        return ShotPictureStateEdit(before: shot.pictureStateSnapshot(), after: staged.pictureStateSnapshot())
     }
 
     /// Prepares exactly one open-ended extension beside a placed clip and
@@ -32080,19 +32138,10 @@ final class LibraryEngine: ObservableObject {
                 }
             }
 
-            var reuseArtifact = shot.activeRenderVersion ?? ShotRenderArtifact()
-            for seed in shot.seedSegmentClips {
-                reuseArtifact.upsertSegmentClip(seed)
-            }
-            // Selected continuation takes are immutable canonical clips. Make
-            // them available to local assembly regardless of which whole-Scene
-            // version happens to be active.
-            for record in shot.continuationRecords {
-                if let clip = record.selectedTake?.segmentClip,
-                   FileManager.default.fileExists(atPath: clip.clipPath) {
-                    reuseArtifact.upsertSegmentClip(clip)
-                }
-            }
+            // Selected continuation takes and pair takes are immutable
+            // canonical clips. The reuse source makes them available to local
+            // assembly regardless of which whole-Scene version is active.
+            let reuseArtifact = shotRenderReuseSource(shot: shot) { FileManager.default.fileExists(atPath: $0) }
             let implicitCombinedFilter: Set<String>? = shot.seedSegmentClips.isEmpty
                 ? nil
                 : Set(planKeys.filter { key in

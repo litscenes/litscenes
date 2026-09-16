@@ -732,30 +732,11 @@ func buildCombinedCut(
             startFrameImageId: String,
             endFrameImageId: String
         ) -> ShotRenderSegmentClip? {
-            if let selected = source.continuationRecord(entryId: placementEndEntryId)?.selectedTake?.segmentClip {
-                return selected
-            }
-            if let rendered = source.playableRenderVersion?.segmentClip(
-                placementStartEntryId: placementStartEntryId,
-                placementEndEntryId: placementEndEntryId,
-                forStart: startFrameImageId,
-                end: endFrameImageId
-            ) {
-                return rendered
-            }
-            if !placementStartEntryId.isEmpty || !placementEndEntryId.isEmpty,
-               let exact = source.seedSegmentClips.first(where: {
-                   $0.placementStartEntryId == placementStartEntryId
-                       && $0.placementEndEntryId == placementEndEntryId
-               }) {
-                return exact
-            }
-            return source.seedSegmentClips.first {
-                $0.placementStartEntryId.isEmpty
-                    && $0.placementEndEntryId.isEmpty
-                    && $0.startFrameImageId == startFrameImageId
-                    && $0.endFrameImageId == endFrameImageId
-            }
+            shotSavedSegmentClip(
+                shot: source,
+                startEntryId: placementStartEntryId, endEntryId: placementEndEntryId,
+                startFrameId: startFrameImageId, endFrameId: endFrameImageId
+            )
         }
 
         var parentKeyBySourceKey: [String: String] = [:]

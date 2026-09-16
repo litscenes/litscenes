@@ -332,6 +332,13 @@ struct ShotPlayerSheetHost: View {
                 onRechainContinuations: {
                     await library.rechainShotContinuations(shotId: request.shotId)
                 },
+                segmentTakeImpact: { key, path in
+                    library.shotSegmentTakeImpact(shotId: request.shotId, placementKey: key, clipPath: path)
+                },
+                onUseSegmentTake: { key, path in
+                    library.shotSegmentTakeImpact(shotId: request.shotId, placementKey: key, clipPath: path)
+                        .flatMap { library.useShotSegmentTake(shotId: request.shotId, impact: $0) }
+                },
                 onSetDefaultRenderStack: { stack in
                     library.setShotRenderStack(shotId: request.shotId, stack: stack)
                 },

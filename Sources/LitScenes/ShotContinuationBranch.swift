@@ -32,14 +32,15 @@ func branchShotContinuationSequence(_ source: ProjectShot, plan: [ShotRenderPlan
     copy.renderVersions = []
     copy.activeRenderVersionId = ""
     copy.seedSegmentClips = []
+    // The selected clip becomes the branch's seed, so the pick itself has
+    // nothing left to point at.
+    copy.segmentTakeSelections = []
     for segment in plan {
         let clip: ShotRenderSegmentClip?
         switch segment {
         case .preserved(let saved): clip = saved.clip
         case .generated(let item):
-            clip = source.continuationRecord(entryId: item.pair.endPlacementEntryId)?.selectedTake?.segmentClip
-                ?? source.playableRenderVersion?.segmentClip(placementStartEntryId: item.pair.startPlacementEntryId,
-                    placementEndEntryId: item.pair.endPlacementEntryId, forStart: item.pair.start?.imageId ?? "", end: item.pair.end?.imageId ?? "")
+            clip = shotSavedSegmentClip(shot: source, pair: item.pair)
                 ?? source.seedSegmentClips.first { $0.placementKey == item.pair.placementKey }
         case .footage(let placed):
             clip = source.playableRenderVersion?.segmentClip(placementStartEntryId: placed.clip.entryId,

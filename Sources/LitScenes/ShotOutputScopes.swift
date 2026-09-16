@@ -192,7 +192,7 @@ func shotOutputFingerprint(_ shot: ProjectShot) -> String {
     }
     let version = shot.playableRenderVersion
     let selected = shot.continuationRecords.compactMap(\.selectedTake)
-    let clips = (version?.segmentClips ?? []) + shot.seedSegmentClips + selected.compactMap(\.segmentClip)
+    let clips = shotFingerprintClipBasis(shot)
     var edits = ShotOutputEdits(shot)
     edits.pictureInsertions = edits.pictureInsertions.map { original in
         var copy = original
