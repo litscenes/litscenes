@@ -185,6 +185,7 @@ struct RenderStack: Hashable, Sendable, Identifiable {
     let civitaiSeed: RenderStackSeed
     let civitaiRecipe: [LensRenderRecipeParameter]
     var civitaiImageInputMode: CivitAIImageInputMode? = nil
+    var catalogRecipe: CivitAIRecipe? = nil
 
     var isOpenAI: Bool { kind == .openai }
     var isFAL: Bool { kind == .fal }
@@ -532,13 +533,22 @@ private func renderStackParameterType(_ value: Any) -> String {
 
 extension RenderStack: Codable {
     init(from decoder: Decoder) throws {
-        let id = try decoder.singleValueContainer().decode(String.self)
+        let container = try decoder.singleValueContainer()
+        if let recipe = try? container.decode(CivitAIRecipe.self), recipe.profile.kind == .image {
+            self = recipe.imageStack()
+            return
+        }
+        let id = try container.decode(String.self)
+        if id.hasPrefix("civitai.catalog."), RenderStackRegistry.shared.stack(id: id) == nil {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Saved Civitai recipe is unavailable")
+        }
         self = RenderStackRegistry.shared.stack(id: id) ?? RenderStackRegistry.shared.fallback
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
-        try container.encode(id)
+        if let catalogRecipe { try container.encode(catalogRecipe) }
+        else { try container.encode(id) }
     }
 }
 
@@ -557,6 +567,13 @@ final class RenderStackRegistry: @unchecked Sendable {
 
     private let lock = NSLock()
     private var cache: [RenderStack]?
+    private var browserStack: RenderStack?
+
+    func selectCatalogRecipe(_ recipe: CivitAIRecipe) {
+        CivitAIPreferences.archive(recipe)
+        lock.lock(); defer { lock.unlock() }
+        browserStack = recipe.imageStack()
+    }
     private let includeUserOverlay: Bool
 
     init(includeUserOverlay: Bool = true) {
@@ -566,7 +583,9 @@ final class RenderStackRegistry: @unchecked Sendable {
     /// Historical public surface: stacks available to create a frame. Workflow-
     /// only providers such as Outpaint stay out of every ordinary stack picker.
     func stacks() -> [RenderStack] {
-        registeredStacks().filter { $0.frameCreatorCapable }
+        let defaults = registeredStacks().filter { $0.frameCreatorCapable }
+        lock.lock(); let selected = browserStack; lock.unlock()
+        return defaults + (selected.map { [$0] } ?? [])
     }
 
     private func registeredStacks() -> [RenderStack] {
@@ -579,13 +598,13 @@ final class RenderStackRegistry: @unchecked Sendable {
     }
 
     func stack(id: String) -> RenderStack? {
-        registeredStacks().first { $0.id == id }
+        registeredStacks().first { $0.id == id } ?? stacks().first { $0.id == id } ?? CivitAIPreferences.archived(id)?.imageStack()
     }
 
     func stack(stackId: String) -> RenderStack? {
         let trimmed = stackId.trimmed
         guard !trimmed.isEmpty else { return nil }
-        return registeredStacks().first { $0.stackId == trimmed }
+        return registeredStacks().first { $0.stackId == trimmed } ?? stacks().first { $0.stackId == trimmed } ?? CivitAIPreferences.archived(trimmed)?.imageStack()
     }
 
     func reframeStacks() -> [RenderStack] {

@@ -3179,6 +3179,7 @@ struct LensRenderSourceDependency: Codable, Hashable, Identifiable {
 }
 
 struct LensMotionArtifact: Codable, Hashable {
+    var civitaiRecipe: CivitAIRecipe?
     var provider: String = "civitai"
     var model: String = "wan.v2.5.image-to-video"
     var status: String = ""

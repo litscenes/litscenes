@@ -577,7 +577,11 @@ struct FrameCreatorModal: View {
         // references (clip-moment seeds, retakes with refs) and the seeded
         // default is text-only, open on the first capable stack instead —
         // a default, not a substitution: no user choice existed yet.
-        var resolvedSeed = seededStack
+        if context.templateImage == nil, CivitAIPreferences.isConfigured, let saved = CivitAIPreferences.last(.image) {
+            RenderStackRegistry.shared.selectCatalogRecipe(saved)
+        }
+        var resolvedSeed = context.templateImage == nil && CivitAIPreferences.isConfigured
+            ? (CivitAIPreferences.last(.image)?.imageStack() ?? seededStack) : seededStack
         if let seed = resolvedSeed, !ProviderBilling.isConfigured(.image(seed)) {
             resolvedSeed = RenderStackRegistry.shared.stacks().first { ProviderBilling.isConfigured(.image($0)) }
         }
@@ -2424,6 +2428,14 @@ struct FrameCreatorModal: View {
                 .font(PlateType.label(8.5))
                 .foregroundStyle(PlateColor.inkFaint)
                 .fixedSize(horizontal: false, vertical: true)
+            CivitAIBrowserButton(kind: .image, seed: primaryStack?.catalogRecipe) { recipe, words in
+                RenderStackRegistry.shared.selectCatalogRecipe(recipe)
+                selectedStackIds = selectedStackIds.filter { !$0.hasPrefix("civitai.catalog.") }
+                selectedStackIds.insert(recipe.identity)
+                civitaiStrengthByStack[recipe.identity] = recipe.strength
+                if !words.isEmpty { prompt += " " + words.joined(separator: ", ") }
+                hasUserPickedStack = true
+            }
             // Stacks come from render_stacks.yaml (bundled defaults + the
             // Application Support overlay) — see App Settings → Stacks.
             ForEach(RenderStackRegistry.shared.stacks()) { stack in

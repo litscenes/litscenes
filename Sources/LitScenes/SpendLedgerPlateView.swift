@@ -96,6 +96,7 @@ struct SpendLedgerPlateView: View {
                 credits: total.credits > 0 ? total.credits : nil
             ))
         }
+        if total.buzz > 0 { parts.append("\(total.buzz) Buzz") }
         if total.unpricedCount > 0 {
             parts.append(total.unpricedCount == 1 ? "1 unpriced" : "\(total.unpricedCount) unpriced")
         }
@@ -158,7 +159,7 @@ struct SpendLedgerPlateView: View {
             PlateLabel(
                 text: entry.isFailure
                     ? "charge unknown"
-                    : spendAmountLabel(usd: entry.estimatedUSD, credits: entry.estimatedCredits),
+                    : spendAmountLabel(usd: entry.estimatedUSD, credits: entry.estimatedCredits, buzz: entry.estimatedBuzz),
                 size: 9,
                 weight: .semibold,
                 color: entry.isFailure ? CanonColor.rust : PlateColor.ink

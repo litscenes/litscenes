@@ -4819,17 +4819,21 @@ struct ScenesWorkspaceView: View {
 
                 VideoChainMenuSelect(
                     title: "Model",
-                    value: selectedVideoModel.label,
+                    value: library.videoChain.civitaiRecipe?.label ?? selectedVideoModel.label,
                     detail: selectedVideoModel.providerModelId,
                     width: 220
                 ) {
-                    ForEach(VideoModelSelection.options(for: selectedVideoProvider)) { model in
+                    ForEach(VideoModelSelection.options(for: selectedVideoProvider).filter { selectedVideoProvider != .civitaiWan || $0 == .civitaiWanV27 }) { model in
                         Button(model.label) {
                             selectVideoModel(model)
                         }
                     }
                 }
 
+                CivitAIBrowserButton(kind: .video, seed: library.videoChain.civitaiRecipe, requiresEnding: true, allowsTriggerWords: false) { recipe, _ in
+                    library.setVideoChainCivitaiRecipe(recipe)
+                    syncVideoControls()
+                }.disabled(library.videoChain.chainId.isEmpty)
                 Spacer(minLength: 0)
             }
 

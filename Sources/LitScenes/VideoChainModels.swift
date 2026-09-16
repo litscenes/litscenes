@@ -188,6 +188,7 @@ enum VideoModelSelection: String, Codable, Hashable, CaseIterable, Identifiable 
     case ltxDirectDefault = "ltx_direct_default"
     case civitaiWanV25ImageToVideo = "civitai_wan_v2_5_image_to_video"
     case civitaiWanV27 = "civitai_wan_v2_7"
+    case civitaiWanV22 = "civitai_wan_v2_2"
     case klingV26ImageToVideo = "kling_v2_6_image_to_video"
     case falKlingV3ProImageToVideo = "fal_kling_v3_pro_image_to_video"
     case falSeedance20ImageToVideo = "fal_seedance_2_0_image_to_video"
@@ -207,6 +208,7 @@ enum VideoModelSelection: String, Codable, Hashable, CaseIterable, Identifiable 
         case .ltxDirectDefault: "LTX 2.3 Pro"
         case .civitaiWanV25ImageToVideo: "WAN 2.5 Image-to-Video"
         case .civitaiWanV27: "WAN v2.7 Image-to-Video"
+        case .civitaiWanV22: "WAN 2.2 · Civitai"
         case .klingV26ImageToVideo: "Kling v2.6 Image-to-Video"
         case .falKlingV3ProImageToVideo: "Kling 3 Pro Image-to-Video"
         case .falSeedance20ImageToVideo: "Seedance 2.0 Image-to-Video"
@@ -226,6 +228,7 @@ enum VideoModelSelection: String, Codable, Hashable, CaseIterable, Identifiable 
         case .ltxDirectDefault: "ltx-2-3-pro"
         case .civitaiWanV25ImageToVideo: "wan.v2.5.image-to-video"
         case .civitaiWanV27: "wan.v2.7.image-to-video"
+        case .civitaiWanV22: "wan.v2.2.image-to-video"
         case .klingV26ImageToVideo: "kling-v2-6"
         case .falKlingV3ProImageToVideo: "fal-ai/kling-video/v3/pro/image-to-video"
         case .falSeedance20ImageToVideo: "bytedance/seedance-2.0/image-to-video"
@@ -290,7 +293,7 @@ enum VideoModelSelection: String, Codable, Hashable, CaseIterable, Identifiable 
         switch provider {
         case .bestAvailable: [.auto]
         case .ltxDirect: [.ltxDirectDefault]
-        case .civitaiWan: [.civitaiWanV27, .civitaiWanV25ImageToVideo]
+        case .civitaiWan: [.civitaiWanV27, .civitaiWanV25ImageToVideo, .civitaiWanV22]
         case .klingImageToVideo: [.klingV26ImageToVideo]
         case .falImageToVideo: [.falKlingV3ProImageToVideo, .falSeedance20ImageToVideo, .falSeedance25ImageToVideo, .falWan27ImageToVideo, .falHailuo3ImageToVideo, .falHailuo3MaxImageToVideo]
         case .falAudioToVideo: [.falLTX23AudioToVideo]
@@ -873,6 +876,7 @@ extension VideoFrameVersionDocument {
 }
 
 struct VideoSegmentVersionDocument: Codable, Hashable, Identifiable {
+    var civitaiRecipe: CivitAIRecipe? = nil
     var versionId: String
     var id: String { versionId }
     var versionNumber: Int
@@ -907,6 +911,7 @@ struct VideoSegmentVersionDocument: Codable, Hashable, Identifiable {
     var updatedAt: String = DateFormats.now()
 
     enum CodingKeys: String, CodingKey {
+        case civitaiRecipe
         case versionId
         case versionNumber
         case status
@@ -1008,6 +1013,7 @@ struct VideoSegmentVersionDocument: Codable, Hashable, Identifiable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        civitaiRecipe = try container.decodeIfPresent(CivitAIRecipe.self, forKey: .civitaiRecipe)
         versionId = try container.decodeIfPresent(String.self, forKey: .versionId) ?? ""
         versionNumber = try container.decodeIfPresent(Int.self, forKey: .versionNumber) ?? 0
         status = try container.decodeIfPresent(VideoSegmentStatus.self, forKey: .status) ?? .draft
@@ -1043,6 +1049,7 @@ struct VideoSegmentVersionDocument: Codable, Hashable, Identifiable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(civitaiRecipe, forKey: .civitaiRecipe)
         try container.encode(versionId, forKey: .versionId)
         try container.encode(versionNumber, forKey: .versionNumber)
         try container.encode(status, forKey: .status)
@@ -1597,6 +1604,7 @@ struct VideoChainDocument: Codable, Hashable, Identifiable {
     var providerSelection: VideoProviderSelection = .bestAvailable
     var selectedProviderId: VideoProviderSelection = .bestAvailable
     var modelSelection: VideoModelSelection? = .auto
+    var civitaiRecipe: CivitAIRecipe? = nil
     var selectedModelId: VideoModelSelection? = .auto
     var continuityMode: VideoContinuityMode = .promptExport
     var outputProfile: VideoOutputProfile = .standard(.landscape16x9)
@@ -1651,6 +1659,7 @@ extension VideoChainDocument {
         case providerSelection
         case selectedProviderId
         case modelSelection
+        case civitaiRecipe
         case selectedModelId
         case continuityMode
         case outputProfile
@@ -1688,6 +1697,7 @@ extension VideoChainDocument {
         providerSelection = try container.decodeIfPresent(VideoProviderSelection.self, forKey: .providerSelection) ?? .bestAvailable
         selectedProviderId = try container.decodeIfPresent(VideoProviderSelection.self, forKey: .selectedProviderId) ?? providerSelection
         modelSelection = try container.decodeIfPresent(VideoModelSelection.self, forKey: .modelSelection) ?? .auto
+        civitaiRecipe = try container.decodeIfPresent(CivitAIRecipe.self, forKey: .civitaiRecipe)
         selectedModelId = try container.decodeIfPresent(VideoModelSelection.self, forKey: .selectedModelId) ?? modelSelection
         continuityMode = try container.decodeIfPresent(VideoContinuityMode.self, forKey: .continuityMode) ?? .promptExport
         outputProfile = try container.decodeIfPresent(VideoOutputProfile.self, forKey: .outputProfile) ?? .standard(.landscape16x9)
@@ -1726,6 +1736,7 @@ extension VideoChainDocument {
         try container.encode(providerSelection, forKey: .providerSelection)
         try container.encode(selectedProviderId, forKey: .selectedProviderId)
         try container.encodeIfPresent(modelSelection, forKey: .modelSelection)
+        try container.encodeIfPresent(civitaiRecipe, forKey: .civitaiRecipe)
         try container.encodeIfPresent(selectedModelId, forKey: .selectedModelId)
         try container.encode(continuityMode, forKey: .continuityMode)
         try container.encode(outputProfile, forKey: .outputProfile)

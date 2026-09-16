@@ -730,7 +730,7 @@ struct ShotRenderPromptPanel: View {
                                 guard saveDirectionPlansForConfirm() else { return }
                                 onRebuild(computedOverrides())
                             }.buttonStyle(PlateButtonStyle())
-                                .disabled(isRenderBlocked || !rebuildEstimate.isComplete || !shotPendingEndingEntryIds(shot).isEmpty)
+                                .disabled(isRenderBlocked || !rebuildEstimate.canReview || !shotPendingEndingEntryIds(shot).isEmpty)
                             if !shotPendingEndingEntryIds(shot).isEmpty { Text("Render the pending ending from its card first.").font(.caption) }
                         }.padding(.top, 8)
                     }
@@ -833,6 +833,9 @@ struct ShotRenderPromptPanel: View {
 
     private var defaultRenderControls: some View {
         ShotEditorFlow(spacing: 6) {
+            CivitAIBrowserButton(kind: .video, seed: shot.renderStack.civitaiRecipe, allowsTriggerWords: false) { recipe, _ in
+                onSetDefaultRenderStack(.civitai(recipe))
+            }
             PlateLabel(text: "Default", size: 7.5, color: PlateColor.inkFaint)
             PlateLabel(text: "Model", size: 7, color: PlateColor.inkFaint)
             modelMenu(
@@ -865,6 +868,9 @@ struct ShotRenderPromptPanel: View {
 
     private func segmentRenderControls(_ item: ShotSegmentPromptPlanItem) -> some View {
         ShotEditorFlow(spacing: 7) {
+            CivitAIBrowserButton(kind: .video, seed: item.renderStack.civitaiRecipe, requiresEnding: item.pair.end != nil, allowsTriggerWords: false) { recipe, _ in
+                setSegmentStack(item, stack: .civitai(recipe))
+            }.disabled(item.pair.start == nil)
             PlateLabel(
                 text: item.hasRenderOverride ? "Override" : (activeClip(item) != nil && item.isAIExtension ? "Saved recipe" : "Shot default"),
                 size: 7.5,
@@ -967,7 +973,7 @@ struct ShotRenderPromptPanel: View {
                         Text(availabilityLabel)
                     }
                 }
-                .disabled(!modelConfigured(model) || !canLeadIn || narrationBlocked)
+                .disabled(!modelConfigured(model) || !canLeadIn || narrationBlocked || (shape == .paired && !model.supportsShotEnding && !allowsNarrationDriven))
             }
         } label: {
             settingLabel(modelLabel(stack.model, shape: shape))

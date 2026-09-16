@@ -2182,7 +2182,9 @@ struct ProjectShotTimelineDocument: Codable, Hashable, Sendable {
     func appendingShot(name: String, now: String) -> (document: ProjectShotTimelineDocument, shotId: String) {
         var value = self
         let shotId = "shot_\(shortHash("\(projectId):\(value.shots.count):\(now):\(UUID().uuidString)", length: 12))"
-        value.shots.append(ProjectShot(shotId: shotId, name: name.trimmed, createdAt: now, updatedAt: now))
+        var shot = ProjectShot(shotId: shotId, name: name.trimmed, createdAt: now, updatedAt: now)
+        if CivitAIPreferences.isConfigured, let saved = CivitAIPreferences.last(.video) { shot.preferredRenderStack = ShotRenderStack.civitai(saved).rawValue }
+        value.shots.append(shot)
         value.updatedAt = now
         return (value, shotId)
     }
@@ -2464,6 +2466,9 @@ struct MeaningStrand: Hashable, Identifiable, Sendable {
 /// executable provider request rather than two potentially invalid values.
 enum ShotRenderModel: String, Codable, CaseIterable, Identifiable, Sendable {
     case wan27 = "wan_2_7"
+    case civitaiWan22 = "civitai_wan_22"
+    case civitaiWan25 = "civitai_wan_25"
+    case civitaiWan27 = "civitai_wan_27"
     case falKlingV3Pro = "fal_kling_v3_pro"
     case falSeedance20 = "fal_seedance_2_0"
     case falSeedance25 = "fal_seedance_2_5"
@@ -2494,12 +2499,15 @@ enum ShotRenderModel: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 
     private static var supportedDefaultCases: [ShotRenderModel] {
-        [.wan27, .falKlingV3Pro, .falSeedance20, .falSeedance25, .falHailuo3, .falHailuo3Max, .falLTX23Narration]
+        [.wan27, .civitaiWan27, .civitaiWan25, .civitaiWan22, .falKlingV3Pro, .falSeedance20, .falSeedance25, .falHailuo3, .falHailuo3Max, .falLTX23Narration]
     }
 
     var label: String {
         switch self {
         case .wan27: return "WAN 2.7"
+        case .civitaiWan22: return "Civitai WAN 2.2"
+        case .civitaiWan25: return "Civitai WAN 2.5"
+        case .civitaiWan27: return "Civitai WAN 2.7"
         case .falKlingV3Pro: return "Kling 3 Pro"
         case .falSeedance20: return "Seedance 2.0"
         case .falSeedance25: return "Seedance 2.5"
@@ -2513,7 +2521,8 @@ enum ShotRenderModel: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var supportedDurations: [Int] {
         switch self {
-        case .wan27: return [5, 6, 8, 10]
+        case .wan27, .civitaiWan27: return [5, 6, 8, 10]
+        case .civitaiWan22, .civitaiWan25: return [5, 10]
         case .falKlingV3Pro: return Array(3...15)
         case .falSeedance20: return Array(4...15)
         // The endpoint accepts up to 30s; capped at 15 for segment-scale
@@ -2533,6 +2542,7 @@ enum ShotRenderModel: String, Codable, CaseIterable, Identifiable, Sendable {
     var defaultDuration: Int {
         switch self {
         case .wan27: return 8
+        case .civitaiWan22, .civitaiWan25, .civitaiWan27: return 5
         case .ltx23NativeExtend: return 8
         case .falKlingV3Pro, .falSeedance20, .falSeedance25, .falHailuo3, .falHailuo3Max, .falLTX23Narration, .klingV26Pro: return 5
         }
@@ -2540,6 +2550,7 @@ enum ShotRenderModel: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var providerSelection: VideoProviderSelection {
         switch self {
+        case .civitaiWan22, .civitaiWan25, .civitaiWan27: return .civitaiWan
         case .wan27, .falKlingV3Pro, .falSeedance20, .falSeedance25, .falHailuo3, .falHailuo3Max: return .falImageToVideo
         case .falLTX23Narration: return .falAudioToVideo
         case .ltx23NativeExtend: return .ltxDirect
@@ -2552,7 +2563,7 @@ enum ShotRenderModel: String, Codable, CaseIterable, Identifiable, Sendable {
         case .falKlingV3Pro, .falSeedance20, .falSeedance25, .ltx23NativeExtend: return true
         // Hailuo 3's audio is always on with no schema flag — not a choice,
         // so no "_audio" stack variant exists for it.
-        case .wan27, .falHailuo3, .falHailuo3Max, .falLTX23Narration, .klingV26Pro: return false
+        case .civitaiWan22, .civitaiWan25, .civitaiWan27, .wan27, .falHailuo3, .falHailuo3Max, .falLTX23Narration, .klingV26Pro: return false
         }
     }
 
@@ -2663,6 +2674,7 @@ struct ShotRenderStack: RawRepresentable, Codable, Hashable, Sendable {
     let model: ShotRenderModel
     let segmentSeconds: Int
     let generateAudio: Bool
+    var civitaiRecipe: CivitAIRecipe? = nil
 
     static var fallback: ShotRenderStack { GoConnection.isManaged ? recipe(model: .falKlingV3Pro, durationSeconds: 5) : .wan27Eight }
     static let wan27Five = recipe(model: .wan27, durationSeconds: 5)
@@ -2674,6 +2686,7 @@ struct ShotRenderStack: RawRepresentable, Codable, Hashable, Sendable {
     static let klingProTen = legacyKling(durationSeconds: 10)
 
     var rawValue: String {
+        if let civitaiRecipe { return civitaiRecipe.wireValue }
         if model == .falLTX23Narration {
             return "fal_ltx_2_3_audio_to_video"
         }
@@ -2687,6 +2700,9 @@ struct ShotRenderStack: RawRepresentable, Codable, Hashable, Sendable {
     }
 
     init?(rawValue: String) {
+        if let recipe = CivitAIRecipe(wireValue: rawValue), recipe.profile.kind == .video {
+            self = Self.civitai(recipe); return
+        }
         let trimmed = rawValue.trimmed
         guard !trimmed.isEmpty else { return nil }
         if trimmed == "fal_ltx_2_3_audio_to_video" {
@@ -2734,6 +2750,9 @@ struct ShotRenderStack: RawRepresentable, Codable, Hashable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
+        if let recipe = try? container.decode(CivitAIRecipe.self), recipe.profile.kind == .video {
+            self = Self.civitai(recipe); return
+        }
         let rawValue = try container.decode(String.self)
         guard let value = ShotRenderStack(rawValue: rawValue) else {
             throw DecodingError.dataCorruptedError(
@@ -2746,10 +2765,11 @@ struct ShotRenderStack: RawRepresentable, Codable, Hashable, Sendable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
-        try container.encode(rawValue)
+        if let civitaiRecipe { try container.encode(civitaiRecipe) } else { try container.encode(rawValue) }
     }
 
     var shortLabel: String {
+        if let civitaiRecipe { return civitaiRecipe.label + " · \(segmentSeconds)s" }
         if model == .falLTX23Narration {
             return model.label
         }
@@ -2758,6 +2778,7 @@ struct ShotRenderStack: RawRepresentable, Codable, Hashable, Sendable {
 
     var accurateHelp: String {
         switch model {
+        case .civitaiWan22, .civitaiWan25, .civitaiWan27: return "Personal Civitai generation · price reviewed before submission"
         case .wan27:
             return "FAL WAN 2.7 — one \(segmentSeconds)-second interpolated clip per adjacent frame pair; a single open-ended frame animates from its start frame alone."
         case .falKlingV3Pro:
@@ -2786,6 +2807,9 @@ struct ShotRenderStack: RawRepresentable, Codable, Hashable, Sendable {
     /// The model used for a first+last keyframe pair.
     var pairedModelSelection: VideoModelSelection {
         switch model {
+        case .civitaiWan22: return .civitaiWanV22
+        case .civitaiWan25: return .civitaiWanV25ImageToVideo
+        case .civitaiWan27: return .civitaiWanV27
         case .wan27: return .falWan27ImageToVideo
         case .falKlingV3Pro: return .falKlingV3ProImageToVideo
         case .falSeedance20: return .falSeedance20ImageToVideo
@@ -2801,6 +2825,9 @@ struct ShotRenderStack: RawRepresentable, Codable, Hashable, Sendable {
     /// The model used for a single-frame open-ended clip (no end keyframe).
     var openEndedModelSelection: VideoModelSelection {
         switch model {
+        case .civitaiWan22: return .civitaiWanV22
+        case .civitaiWan25: return .civitaiWanV25ImageToVideo
+        case .civitaiWan27: return .civitaiWanV27
         case .wan27: return .falWan27ImageToVideo
         case .falKlingV3Pro: return .falKlingV3ProImageToVideo
         case .falSeedance20: return .falSeedance20ImageToVideo
@@ -2818,6 +2845,7 @@ struct ShotRenderStack: RawRepresentable, Codable, Hashable, Sendable {
     /// refused honestly at plan/render time, never silently substituted.
     var tailAnchoredModelSelection: VideoModelSelection? {
         switch model {
+        case .civitaiWan22, .civitaiWan25, .civitaiWan27: return nil
         case .wan27: return nil            // FAL WAN 2.7 requires a start image (image_url/video_url)
         // FAL's Kling 3 Pro schema marks start_image_url REQUIRED (checked
         // last checked) even though Kling's native API takes image and/or
@@ -2840,6 +2868,7 @@ struct ShotRenderStack: RawRepresentable, Codable, Hashable, Sendable {
     /// Single source for pair → model. Nil = this stack cannot render the
     /// pair (today: only a lead-in on a stack with no tail-anchored model).
     func modelSelection(for pair: ShotRenderPair) -> VideoModelSelection? {
+        if [.civitaiWan22, .civitaiWan25].contains(model), pair.end != nil { return nil }
         if model == .falLTX23Narration {
             return pair.start == nil ? nil : .falLTX23AudioToVideo
         }
@@ -2848,7 +2877,8 @@ struct ShotRenderStack: RawRepresentable, Codable, Hashable, Sendable {
     }
 
     func replacingModel(_ model: ShotRenderModel) -> ShotRenderStack {
-        ShotRenderStack.recipe(
+        if model == self.model { return self }
+        return ShotRenderStack.recipe(
             model: model,
             durationSeconds: model.supportedDurations.contains(segmentSeconds)
                 ? segmentSeconds
@@ -2863,15 +2893,16 @@ struct ShotRenderStack: RawRepresentable, Codable, Hashable, Sendable {
     }
 
     func replacingDuration(_ durationSeconds: Int) -> ShotRenderStack {
-        ShotRenderStack.recipe(
-            model: model,
-            durationSeconds: durationSeconds,
-            generateAudio: generateAudio
-        )
+        if var recipe = civitaiRecipe {
+            recipe.duration = recipe.profile.durations.contains(durationSeconds) ? durationSeconds : recipe.duration
+            return Self.civitai(recipe)
+        }
+        return ShotRenderStack.recipe(model: model, durationSeconds: durationSeconds, generateAudio: generateAudio)
     }
 
     func replacingGeneratedAudio(_ enabled: Bool) -> ShotRenderStack {
-        ShotRenderStack.recipe(
+        if civitaiRecipe != nil { return self }
+        return ShotRenderStack.recipe(
             model: model,
             durationSeconds: segmentSeconds,
             generateAudio: enabled
@@ -2917,6 +2948,13 @@ struct ShotRenderStack: RawRepresentable, Codable, Hashable, Sendable {
             segmentSeconds: resolvedDuration,
             generateAudio: generateAudio
         )
+    }
+
+    static func civitai(_ recipe: CivitAIRecipe) -> Self {
+        let model: ShotRenderModel = recipe.profile == .wanVideo22 ? .civitaiWan22 : recipe.profile == .wanVideo25 ? .civitaiWan25 : .civitaiWan27
+        var stack = Self(model: model, segmentSeconds: recipe.duration, generateAudio: false)
+        stack.civitaiRecipe = recipe
+        return stack
     }
 
     private static func legacyKling(durationSeconds: Int) -> ShotRenderStack {
@@ -3166,6 +3204,7 @@ struct ShotRenderArtifact: Codable, Hashable, Sendable {
 /// Records the prompt that actually rendered. Clip files live in the project's
 /// proof directory and are never deleted (consistent with render versions).
 struct ShotRenderSegmentClip: Codable, Hashable, Sendable {
+    var civitaiRecipe: CivitAIRecipe? = nil
     var startFrameImageId: String = ""
     var endFrameImageId: String = ""
     var placementStartEntryId: String = ""
@@ -3251,7 +3290,7 @@ struct ShotRenderSegmentClip: Codable, Hashable, Sendable {
         case startFrameImageId, endFrameImageId
         case placementStartEntryId, placementEndEntryId
         case clipPath, requestId, prompt
-        case provider, model, providerOperation, traceId
+        case provider, model, providerOperation, traceId, civitaiRecipe
         case continuationTakeId, continuationAnchorFingerprint
         case generateAudio, resolution
         case requestedDurationSeconds, durationSeconds
@@ -3262,6 +3301,7 @@ struct ShotRenderSegmentClip: Codable, Hashable, Sendable {
     }
 
     init(
+        civitaiRecipe: CivitAIRecipe? = nil,
         startFrameImageId: String = "",
         endFrameImageId: String = "",
         placementStartEntryId: String = "",
@@ -3291,6 +3331,7 @@ struct ShotRenderSegmentClip: Codable, Hashable, Sendable {
         compilerVersion: Int = 0,
         updatedAt: String = ""
     ) {
+        self.civitaiRecipe = civitaiRecipe
         self.startFrameImageId = startFrameImageId
         self.endFrameImageId = endFrameImageId
         self.placementStartEntryId = placementStartEntryId
@@ -3323,6 +3364,7 @@ struct ShotRenderSegmentClip: Codable, Hashable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        civitaiRecipe = try container.decodeIfPresent(CivitAIRecipe.self, forKey: .civitaiRecipe)
         startFrameImageId = try container.decodeIfPresent(String.self, forKey: .startFrameImageId) ?? ""
         endFrameImageId = try container.decodeIfPresent(String.self, forKey: .endFrameImageId) ?? ""
         placementStartEntryId = try container.decodeIfPresent(String.self, forKey: .placementStartEntryId) ?? ""

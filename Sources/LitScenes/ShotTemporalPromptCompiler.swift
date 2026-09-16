@@ -111,7 +111,7 @@ func compileTemporalDirection(
             payload: .prompt(klingTimedProse(windows: windows, multiShot: multiShot)),
             dialect: "kling_timed_prose"
         )
-    case .falWan27ImageToVideo, .civitaiWanV27, .civitaiWanV25ImageToVideo:
+    case .falWan27ImageToVideo, .civitaiWanV27, .civitaiWanV25ImageToVideo, .civitaiWanV22:
         return ShotCompiledSegmentDirection(
             payload: .prompt(wanShotStamps(windows: windows, multiShot: multiShot)),
             dialect: "wan_shots"

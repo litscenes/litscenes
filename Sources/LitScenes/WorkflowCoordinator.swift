@@ -282,7 +282,7 @@ final class WorkflowCoordinator: ObservableObject {
         let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         let requestId = root["request_id"] as? String ?? root["job_id"] as? String
             ?? root["id"] as? String ?? response?.value(forHTTPHeaderField: "x-request-id") ?? ""
-        if !requestId.isEmpty { job.providerRequestId = WorkflowPrivacy.text(requestId) }
+        if !requestId.isEmpty, metadata.apiFamily != "pricing" { job.providerRequestId = WorkflowPrivacy.text(requestId) }
         if let response, response.statusCode >= 400,
            let reason = workflowProviderError(root), !reason.isEmpty {
             job.outcomeMessage = WorkflowPrivacy.text(reason)

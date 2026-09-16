@@ -16,7 +16,7 @@ struct ShotContinuationTargetFrame: Codable, Hashable, Sendable {
 extension ShotRenderModel {
     var supportsShotEnding: Bool {
         switch self {
-        case .wan27, .falKlingV3Pro, .falSeedance20, .falSeedance25, .falHailuo3, .falHailuo3Max: return true
+        case .civitaiWan27, .wan27, .falKlingV3Pro, .falSeedance20, .falSeedance25, .falHailuo3, .falHailuo3Max: return true
         default: return false
         }
     }

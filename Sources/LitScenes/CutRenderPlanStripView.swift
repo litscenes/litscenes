@@ -10,6 +10,7 @@ import AppKit
 // confirm button that saves prompt edits as overrides and fires the render.
 
 struct CutRenderPlanStrip: View {
+    @State private var showingCivitai = false
     let cut: ProjectShot
     var actions: CutStripActions
     /// Mirrors the owning strip's layout: `.box` prints the plan on the
@@ -671,7 +672,7 @@ struct CutRenderPlanStrip: View {
         let provenance = cut.playableRenderVersion.map { shotRenderProvenanceSummary(version: $0) }
         let nextDiffers = provenance.map { $0 != cut.renderStack.shortLabel } ?? false
         return Menu {
-            ShotRenderStackMenuContent(cut: cut, actions: actions)
+            ShotRenderStackMenuContent(cut: cut, actions: actions, onBrowseCivitai: { showingCivitai = true })
         } label: {
             HStack(spacing: 5) {
                 Text(nextDiffers ? "NEXT · \(cut.renderStack.shortLabel)" : cut.renderStack.shortLabel)
@@ -691,11 +692,17 @@ struct CutRenderPlanStrip: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
+        .sheet(isPresented: $showingCivitai) {
+            CivitAIModelBrowser(kind: .video, seed: cut.renderStack.civitaiRecipe, allowsTriggerWords: false,
+                onSelect: { recipe, _ in actions.onSetRenderStack(cut.shotId, .civitai(recipe)); showingCivitai = false },
+                onCancel: { showingCivitai = false })
+        }
         .help("\(cut.renderStack.accurateHelp) Sets this render's model and length — segment overrides remain independent.")
     }
 
     private func estimateHelp(_ estimate: ShotRenderCostEstimate) -> String {
-        if estimate.isComplete {
+        if estimate.pendingCivitaiQuotes > 0 { return "Civitai quotes are reviewed before each paid submission; any FAL estimate is shown separately." }
+        if estimate.canReview {
             if estimate.includesPublishedRateEstimate {
                 return "Approximate total: LTX Native Extend uses its published 1080p per-second rate; FAL segments use live rates. Provider billing is authoritative."
             }
@@ -728,7 +735,7 @@ struct CutRenderPlanStrip: View {
         }
         let hasDependentContinuationChain = shotHasDependentContinuationChain(cut)
         let rebuildEstimate = actions.continuationRechainEstimate(cut.shotId, true)
-        let rebuildPriceUnavailable = hasDependentContinuationChain && !rebuildEstimate.isComplete
+        let rebuildPriceUnavailable = hasDependentContinuationChain && !rebuildEstimate.canReview
         return HStack(spacing: 10) {
             Text("\(recipeSummary) = \(generatedSeconds)s generated")
                 .font(CanonType.archive(7.5, weight: .semibold))

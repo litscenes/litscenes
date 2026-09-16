@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import CryptoKit
 
@@ -75,6 +76,7 @@ struct VideoClipRequest {
     var audioDriverDurationSeconds: Double?
     var parentTraceId: String = ""
     var onProviderSubmitted: (@MainActor (String, String) async -> Void)?
+    var civitaiRecipe: CivitAIRecipe? = nil
 }
 
 struct VideoClipExtendRequest {
@@ -113,6 +115,7 @@ struct VideoClipRetakeRequest {
 }
 
 struct VideoClipResult {
+    var civitaiRecipe: CivitAIRecipe? { responseSnapshot["recipe"].flatMap { CivitAIRecipe(wireValue: $0) } }
     var providerId: VideoProviderSelection
     var providerVideoId: String
     var providerJobId: String
@@ -1150,6 +1153,7 @@ struct CivitAIWANImageProvider {
 
     func generateImage(from request: CivitAIWANImageRequest) async throws -> CivitAIWANImageResult {
         let stack = request.stack
+        if let recipe = stack.catalogRecipe { return try await generateCatalogImage(request, recipe: recipe) }
         let apiKey = credentialStore.resolvedCredential(for: .civitai)
         guard !apiKey.isEmpty, apiKey != GoConnection.marker else {
             throw ScreenGraphError.credentials("Connect your personal CivitAI key in Advanced provider connections.")
@@ -1225,6 +1229,30 @@ struct CivitAIWANImageProvider {
             if error is CancellationError || Task.isCancelled { throw CancellationError() }
             throw CivitAIWorkflowFailure(jobId: jobId, traceId: traceId, message: error.localizedDescription)
         }
+    }
+
+    private func generateCatalogImage(_ request: CivitAIWANImageRequest, recipe original: CivitAIRecipe) async throws -> CivitAIWANImageResult {
+        var recipe = original
+        if let width = request.widthOverride, let height = request.heightOverride { recipe.width = width; recipe.height = height }
+        recipe.strength = request.strength ?? recipe.strength
+        if recipe.negativePrompt.isEmpty { recipe.negativePrompt = request.negativePrompt }
+        guard request.sources.allSatisfy({ imagePixelSize(from: $0.data) != nil }) else { throw ScreenGraphError.capture("A reference image is invalid.") }
+        let prompt = providerPromptLimited(request.prompt, maxCharacters: request.stack.promptLimit ?? 1800)
+        let seed = recipe.seed ?? request.seed ?? civitaiRequestSeed(runId: request.runId, artifactId: request.artifactId)
+        recipe.seed = seed
+        let images = request.sources.map { "data:" + $0.mimeType + ";base64," + $0.data.base64EncodedString() }
+        let payload = try recipe.payload(prompt: prompt, images: images, resolvedSeed: seed)
+        var trace = metadata(context: request, operation: "catalog_image")
+        trace.requestTextJSON = inferenceTraceJSONString(["operator_prompt": request.operatorPrompt])
+        let output = try await CivitAIWorkflowClient(credentialStore: credentialStore).run(payload: payload, recipe: recipe, metadata: trace, preferenceRecipe: original)
+        guard imagePixelSize(from: output.data) != nil else { throw ScreenGraphError.capture("Civitai output is not a valid image. Recover the existing workflow.") }
+        let parameters = [LensRenderRecipeParameter(key: "civitai_recipe", value: recipe.wireValue, valueType: "string"),
+            LensRenderRecipeParameter(key: "quoted_buzz", value: output.quote.map { String($0.buzz) } ?? "", valueType: "number")]
+        let snapshot = LensRenderRecipeSnapshot(label: recipe.label, provider: "civitai", model: recipe.modelId,
+            stackId: recipe.identity, parameters: parameters, capabilities: [images.isEmpty ? "textToImage" : "imageEdit"])
+        return CivitAIWANImageResult(imageData: output.data, providerJobId: output.jobId, traceId: output.traceId,
+            responseSnapshot: ["job_id": output.jobId, "model": recipe.modelId, "billing_source": "personal"],
+            transmittedPrompt: prompt, renderRecipe: snapshot)
     }
 
     private func metadata(context: CivitAIWANImageRequest, operation: String, parentId: String = "") -> InferenceTraceRequestMetadata {
@@ -1433,399 +1461,45 @@ struct CivitAIWANVideoProvider: VideoGenerationProvider {
     let credentialStore: LitScenesCredentialResolving
     var providerId: VideoProviderSelection { .civitaiWan }
 
-    private let workflowsURL = URL(string: "https://orchestration.civitai.com/v2/consumer/workflows")!
-    private let blobsURL = URL(string: "https://orchestration.civitai.com/v2/consumer/blobs")!
-    private let terminalStates: Set<String> = ["succeeded", "failed", "canceled", "cancelled", "expired", "rejected"]
-
     func capability(outputProfile: VideoOutputProfile, durationSeconds: Int) -> VideoProviderCapability {
         VideoProviderCapability.capability(for: providerId, outputProfile: outputProfile, durationSeconds: durationSeconds, credentialStore: credentialStore)
     }
 
     func generateClip(from request: VideoClipRequest) async throws -> VideoClipResult {
-        let apiKey = credentialStore.resolvedCredential(for: .civitai)
-        guard !apiKey.isEmpty else { throw ScreenGraphError.credentials("CivitAI API key is missing.") }
-        guard let startFrameURL = request.startFrameURL else {
-            throw ScreenGraphError.capture("CivitAI WAN requires a start frame.")
+        var recipe = request.civitaiRecipe ?? CivitAIRecipe(profile:
+            request.modelSelection == .civitaiWanV25ImageToVideo ? .wanVideo25 :
+                request.modelSelection == .civitaiWanV22 ? .wanVideo22 : .wanVideo27)
+        recipe.duration = request.durationSeconds
+        if recipe.negativePrompt.isEmpty { recipe.negativePrompt = request.negativePrompt }
+        guard let startURL = request.startFrameURL else { throw ScreenGraphError.capture("Civitai video needs a start frame.") }
+        let sourceURLs = [startURL] + (request.targetEndFrameURL.map { [$0] } ?? [])
+        let data = try sourceURLs.map { try Data(contentsOf: $0) }
+        guard data.allSatisfy({ imagePixelSize(from: $0) != nil }) else { throw ScreenGraphError.capture("A video keyframe is invalid.") }
+        let images = zip(sourceURLs, data).map { url, bytes in "data:" + mediaMIMEType(for: url) + ";base64," + bytes.base64EncodedString() }
+        let preference = recipe
+        recipe.seed = recipe.seed ?? civitaiRequestSeed(runId: request.runId.trimmed.nilIfEmpty ?? request.chainId, artifactId: request.segmentId)
+        let payload = try recipe.payload(prompt: request.prompt, images: [images[0]], endImage: images.count > 1 ? images[1] : nil,
+            resolvedSeed: recipe.seed ?? civitaiRequestSeed(runId: request.runId.trimmed.nilIfEmpty ?? request.chainId, artifactId: request.segmentId))
+        let trace = InferenceTraceRequestMetadata(provider: "civitai", apiFamily: "video", operation: "catalog_video",
+            projectId: request.projectId, runId: request.runId.trimmed.nilIfEmpty ?? request.chainId,
+            traceGroupId: request.traceGroupId.trimmed.nilIfEmpty ?? request.chainId, parentTraceId: request.parentTraceId,
+            workflowName: request.workflowName, workflowStep: "civitai_video", artifactType: request.artifactType,
+            artifactId: request.segmentId, model: recipe.modelId, requestTextJSON: inferenceTraceJSONString(["operator_prompt": request.prompt]),
+            mediaRefsJSON: inferenceTraceJSONString(["images": data.map { ["sha256": sha256Hex($0), "byte_count": $0.count] as [String: Any] }]),
+            captureRequestBody: false, captureResponseBody: false)
+        let output = try await CivitAIWorkflowClient(credentialStore: credentialStore).run(payload: payload, recipe: recipe,
+            metadata: trace, onSubmitted: request.onProviderSubmitted, preferenceRecipe: preference)
+        try output.data.write(to: request.outputURL, options: .atomic)
+        guard try await !AVURLAsset(url: request.outputURL).loadTracks(withMediaType: .video).isEmpty else {
+            throw CivitAIWorkflowFailure(jobId: output.jobId, traceId: output.traceId, message: "Civitai output contains no readable video track. Recover the existing workflow.")
         }
-        let isOpenEndedWan25 = request.modelSelection == .civitaiWanV25ImageToVideo
-        if !isOpenEndedWan25, request.targetEndFrameURL == nil {
-            throw ScreenGraphError.capture("CivitAI WAN requires a target end frame.")
-        }
-        let traceGroupId = request.traceGroupId.trimmed.nilIfEmpty
-            ?? videoTraceGroupId(chainId: request.chainId, segmentId: request.segmentId)
-        let startURL = try await uploadBlob(
-            apiKey: apiKey,
-            fileURL: startFrameURL,
-            role: "start_frame",
-            traceGroupId: traceGroupId,
-            requestContext: request
-        )
-        let endURL: String?
-        if let targetEndFrameURL = request.targetEndFrameURL {
-            endURL = try await uploadBlob(
-                apiKey: apiKey,
-                fileURL: targetEndFrameURL,
-                role: "end_frame",
-                traceGroupId: traceGroupId,
-                requestContext: request
-            )
-        } else {
-            endURL = nil
-        }
-        var input: [String: Any] = [
-            "engine": "wan",
-            "version": isOpenEndedWan25 ? "v2.5" : "v2.7",
-            "provider": "fal",
-            "operation": "image-to-video",
-            "prompt": request.prompt,
-            "negativePrompt": request.negativePrompt.isEmpty ? NSNull() : request.negativePrompt,
-            "startImage": startURL,
-            "resolution": request.outputProfile.height >= 1080 ? "1080p" : "720p",
-            "aspectRatio": request.outputProfile.aspectRatio.rawValue,
-            "duration": request.durationSeconds,
-            "enablePromptExpansion": true,
-            "enableSafetyChecker": true
-        ]
-        if let endURL {
-            input["endImage"] = endURL
-        }
-        let payload: [String: Any] = [
-            "steps": [
-                [
-                    "$type": "videoGen",
-                    "input": input
-                ]
-            ]
-        ]
-        let submitted = try await postJSON(
-            apiKey: apiKey,
-            url: workflowsURL,
-            payload: payload,
-            traceGroupId: traceGroupId,
-            artifactId: request.segmentId,
-            model: request.modelSelection.providerModelId,
-            requestContext: request
-        )
-        let jobId = firstString(in: submitted.object, keys: ["id", "workflowId", "jobId"])
-        guard !jobId.isEmpty else {
-            throw ScreenGraphError.capture("CivitAI WAN submit returned no job id.")
-        }
-        let final = try await pollWorkflow(
-            apiKey: apiKey,
-            jobId: jobId,
-            traceGroupId: traceGroupId,
-            artifactId: request.segmentId,
-            model: request.modelSelection.providerModelId,
-            requestContext: request
-        )
-        let status = (final.object["status"] as? String ?? "").lowercased()
-        guard status == "succeeded" else {
-            throw ScreenGraphError.capture("CivitAI WAN workflow \(jobId) ended with status \(status.isEmpty ? "unknown" : status).")
-        }
-        guard let videoURL = outputVideoURLs(from: final.object).first else {
-            throw ScreenGraphError.capture("CivitAI WAN workflow \(jobId) produced no downloadable video.")
-        }
-        let downloadTraceId = try await download(
-            url: videoURL,
-            to: request.outputURL,
-            traceGroupId: traceGroupId,
-            requestContext: request
-        )
-        return VideoClipResult(
-            providerId: providerId,
-            providerVideoId: "",
-            providerJobId: jobId,
-            providerOperation: request.modelSelection.providerModelId,
-            traceId: final.traceId.isEmpty ? submitted.traceId : final.traceId,
-            traceIds: uniqueTraceIds([submitted.traceId, final.traceId, downloadTraceId]),
-            providerNativeSize: "\(request.outputProfile.width)x\(request.outputProfile.height)",
-            outputURL: request.outputURL,
-            responseSnapshot: [
-                "job_id": jobId,
-                "status": status,
-                "model": request.modelSelection.providerModelId,
-                "source_url": "[redacted-provider-media-capability]",
-                "start_blob_url": "[redacted-provider-media-capability]",
-                "end_blob_url": endURL == nil ? "" : "[redacted-provider-media-capability]"
-            ]
-        )
+        return VideoClipResult(providerId: .civitaiWan, providerVideoId: "", providerJobId: output.jobId,
+            providerOperation: recipe.profile.rawValue, traceId: output.traceId, traceIds: [output.traceId],
+            providerNativeSize: "\(recipe.width)x\(recipe.height)", outputURL: request.outputURL,
+            responseSnapshot: ["job_id": output.jobId, "model": recipe.modelId, "recipe": recipe.wireValue,
+                "quoted_buzz": output.quote.map { String($0.buzz) } ?? "", "billing_source": "personal"])
     }
 
-    private func uploadBlob(
-        apiKey: String,
-        fileURL: URL,
-        role: String,
-        traceGroupId: String,
-        requestContext: VideoClipRequest
-    ) async throws -> String {
-        var request = URLRequest(url: blobsURL)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue(mediaMIMEType(for: fileURL), forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        let fileData = try Data(contentsOf: fileURL)
-        let traced = try await TracedHTTPTransport.upload(
-            request: request,
-            fromFile: fileURL,
-            metadata: InferenceTraceRequestMetadata(
-                provider: "civitai",
-                apiFamily: "video",
-                operation: "blob_upload",
-                projectId: requestContext.projectId,
-                runId: requestContext.runId.trimmed.nilIfEmpty ?? requestContext.chainId,
-                traceGroupId: traceGroupId,
-                parentTraceId: requestContext.parentTraceId,
-                workflowName: requestContext.workflowName.trimmed.nilIfEmpty ?? "video_chain",
-                workflowStep: "civitai_\(role)_upload",
-                artifactType: "video_input_asset",
-                artifactId: requestContext.segmentId,
-                model: requestContext.modelSelection.providerModelId,
-                requestBodyFormat: mediaMIMEType(for: fileURL),
-                responseBodyFormatHint: "application/json",
-                requestTextJSON: inferenceTraceJSONString([
-                    "role": role,
-                    "mime_type": mediaMIMEType(for: fileURL),
-                    "sha256": sha256Hex(fileData)
-                ]),
-                mediaRefsJSON: inferenceTraceJSONString([
-                    role: [
-                        "filename": fileURL.lastPathComponent,
-                        "sha256": sha256Hex(fileData),
-                        "mime_type": mediaMIMEType(for: fileURL)
-                    ]
-                ]),
-                providerRequestIDHeaderCandidates: ["x-request-id", "request-id", "x-correlation-id"],
-                captureRequestBody: false,
-                captureResponseBody: false
-            )
-        )
-        let data = traced.data
-        guard let http = traced.response, (200..<300).contains(http.statusCode) else {
-            let body = String(data: data.prefix(800), encoding: .utf8) ?? ""
-            throw ScreenGraphError.capture("CivitAI blob upload failed: \(body)")
-        }
-        guard let body = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw ScreenGraphError.capture("CivitAI blob upload response was not JSON.")
-        }
-        await InferenceTraceStore.shared.enrichContext(
-            traceId: traced.traceId,
-            responseTextJSON: inferenceTraceJSONString(redactedCivitAITracePayload(body))
-        )
-        let blobURL = firstString(in: body, keys: ["url", "publicUrl"])
-        if !blobURL.isEmpty {
-            return blobURL
-        }
-        if let blob = body["blob"] as? [String: Any] {
-            return firstString(in: blob, keys: ["url", "publicUrl"])
-        }
-        throw ScreenGraphError.capture("CivitAI blob upload returned no URL.")
-    }
-
-    private func postJSON(
-        apiKey: String,
-        url: URL,
-        payload: [String: Any],
-        traceGroupId: String,
-        artifactId: String,
-        model: String,
-        requestContext: VideoClipRequest
-    ) async throws -> CivitAIJSONResponse {
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
-        let traced = try await TracedHTTPTransport.send(
-            request: request,
-            metadata: InferenceTraceRequestMetadata(
-                provider: "civitai",
-                apiFamily: "video",
-                operation: "workflow_submit",
-                projectId: requestContext.projectId,
-                runId: requestContext.runId.trimmed.nilIfEmpty ?? requestContext.chainId,
-                traceGroupId: traceGroupId,
-                parentTraceId: requestContext.parentTraceId,
-                workflowName: requestContext.workflowName.trimmed.nilIfEmpty ?? "video_chain",
-                workflowStep: "civitai_workflow_submit",
-                artifactType: requestContext.artifactType.trimmed.nilIfEmpty ?? "video_segment",
-                artifactId: artifactId,
-                model: model,
-                requestBodyFormat: "application/json",
-                responseBodyFormatHint: "application/json",
-                requestTextJSON: inferenceTraceJSONString(redactedCivitAITracePayload(payload)),
-                providerRequestIDHeaderCandidates: ["x-request-id", "request-id", "x-correlation-id"],
-                captureRequestBody: false,
-                captureResponseBody: false
-            )
-        )
-        let data = traced.data
-        guard let http = traced.response, (200..<300).contains(http.statusCode) else {
-            let body = String(data: data.prefix(1200), encoding: .utf8) ?? ""
-            throw ScreenGraphError.capture("CivitAI workflow submit failed: \(body)")
-        }
-        guard let body = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw ScreenGraphError.capture("CivitAI workflow submit response was not JSON.")
-        }
-        await InferenceTraceStore.shared.enrichContext(
-            traceId: traced.traceId,
-            responseTextJSON: inferenceTraceJSONString(redactedCivitAITracePayload(body))
-        )
-        return CivitAIJSONResponse(object: body, traceId: traced.traceId)
-    }
-
-    private func pollWorkflow(
-        apiKey: String,
-        jobId: String,
-        traceGroupId: String,
-        artifactId: String,
-        model: String,
-        requestContext: VideoClipRequest
-    ) async throws -> CivitAIJSONResponse {
-        let url = workflowsURL.appendingPathComponent(jobId)
-        let started = Date()
-        var delay: UInt64 = 4
-        while true {
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            let traced = try await TracedHTTPTransport.send(
-                request: request,
-                metadata: InferenceTraceRequestMetadata(
-                    provider: "civitai",
-                    apiFamily: "video",
-                    operation: "workflow_poll",
-                    projectId: requestContext.projectId,
-                    runId: requestContext.runId.trimmed.nilIfEmpty ?? requestContext.chainId,
-                    traceGroupId: traceGroupId,
-                    parentTraceId: requestContext.parentTraceId,
-                    workflowName: requestContext.workflowName.trimmed.nilIfEmpty ?? "video_chain",
-                    workflowStep: "civitai_workflow_poll",
-                    artifactType: requestContext.artifactType.trimmed.nilIfEmpty ?? "video_segment",
-                    artifactId: artifactId,
-                    model: model,
-                    requestBodyFormat: "none",
-                    responseBodyFormatHint: "application/json",
-                    providerRequestIDHeaderCandidates: ["x-request-id", "request-id", "x-correlation-id"],
-                    captureRequestBody: false,
-                    captureResponseBody: false
-                )
-            )
-            let data = traced.data
-            guard let http = traced.response, (200..<300).contains(http.statusCode) else {
-                let body = String(data: data.prefix(800), encoding: .utf8) ?? ""
-                throw ScreenGraphError.capture("CivitAI workflow poll failed: \(body)")
-            }
-            guard let body = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                throw ScreenGraphError.capture("CivitAI workflow poll response was not JSON.")
-            }
-            await InferenceTraceStore.shared.enrichContext(
-                traceId: traced.traceId,
-                responseTextJSON: inferenceTraceJSONString(redactedCivitAITracePayload(body))
-            )
-            let status = (body["status"] as? String ?? "").lowercased()
-            if terminalStates.contains(status) {
-                return CivitAIJSONResponse(object: body, traceId: traced.traceId)
-            }
-            if Date().timeIntervalSince(started) > 1800 {
-                throw ScreenGraphError.capture("CivitAI workflow \(jobId) did not finish within 30 minutes.")
-            }
-            try await Task.sleep(nanoseconds: delay * 1_000_000_000)
-            delay = min(UInt64(Double(delay) * 1.5), 30)
-        }
-    }
-
-    private func download(
-        url: URL,
-        to outputURL: URL,
-        traceGroupId: String,
-        requestContext: VideoClipRequest
-    ) async throws -> String {
-        try ensureDirectory(outputURL.deletingLastPathComponent())
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        var recordedRequest = URLRequest(url: workflowsURL.appendingPathComponent("redacted-output-capability"))
-        recordedRequest.httpMethod = "GET"
-        let traced = try await TracedHTTPTransport.download(
-            request: request,
-            recordedRequest: recordedRequest,
-            metadata: InferenceTraceRequestMetadata(
-                provider: "civitai",
-                apiFamily: "video",
-                operation: "output_download",
-                projectId: requestContext.projectId,
-                runId: requestContext.runId.trimmed.nilIfEmpty ?? requestContext.chainId,
-                traceGroupId: traceGroupId,
-                parentTraceId: requestContext.parentTraceId,
-                workflowName: requestContext.workflowName.trimmed.nilIfEmpty ?? "video_chain",
-                workflowStep: "civitai_output_download",
-                artifactType: requestContext.artifactType.trimmed.nilIfEmpty ?? "video_segment",
-                artifactId: requestContext.segmentId,
-                model: requestContext.modelSelection.providerModelId,
-                requestBodyFormat: "none",
-                responseBodyFormatHint: "video/mp4",
-                requestTextJSON: inferenceTraceJSONString([
-                    "source": "[redacted-provider-media-capability]"
-                ]),
-                providerRequestIDHeaderCandidates: ["x-request-id", "request-id", "x-correlation-id"],
-                captureRequestBody: false,
-                captureResponseBody: false
-            )
-        )
-        guard let http = traced.response, (200..<300).contains(http.statusCode) else {
-            throw ScreenGraphError.capture("CivitAI output download failed.")
-        }
-        if FileManager.default.fileExists(atPath: outputURL.path) {
-            try FileManager.default.removeItem(at: outputURL)
-        }
-        try FileManager.default.moveItem(at: traced.temporaryURL, to: outputURL)
-        let outputData = try Data(contentsOf: outputURL)
-        await InferenceTraceStore.shared.enrichContext(
-            traceId: traced.traceId,
-            mediaRefsJSON: inferenceTraceJSONString([
-                "output": [
-                    "filename": outputURL.lastPathComponent,
-                    "sha256": sha256Hex(outputData),
-                    "mime_type": "video/mp4"
-                ]
-            ])
-        )
-        return traced.traceId
-    }
-
-    private func outputVideoURLs(from body: [String: Any]) -> [URL] {
-        guard let steps = body["steps"] as? [[String: Any]] else { return [] }
-        var urls: [URL] = []
-        for step in steps {
-            guard let output = step["output"] as? [String: Any] else { continue }
-            for key in ["video", "videos", "outputs", "media", "blob"] {
-                let value = output[key]
-                let items: [Any]
-                if let array = value as? [Any] {
-                    items = array
-                } else if let value {
-                    items = [value]
-                } else {
-                    items = []
-                }
-                for item in items {
-                    if let text = item as? String, let url = URL(string: text) {
-                        urls.append(url)
-                    } else if let dict = item as? [String: Any] {
-                        let text = firstString(in: dict, keys: ["url", "previewUrl"])
-                        if let url = URL(string: text), !text.isEmpty {
-                            urls.append(url)
-                        } else if let blob = dict["blob"] as? [String: Any],
-                                  let url = URL(string: firstString(in: blob, keys: ["url"])) {
-                            urls.append(url)
-                        }
-                    }
-                }
-            }
-        }
-        return urls
-    }
 }
 
 struct FALImageToVideoProvider: VideoGenerationProvider {

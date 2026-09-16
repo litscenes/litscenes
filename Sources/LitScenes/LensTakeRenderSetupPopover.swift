@@ -45,12 +45,13 @@ struct LensTakeRenderSetupPopover: View {
     var isAnimatingLensArtifact: Bool = false
     var onSubmit: (LensTakeRenderRequest) -> Void
     /// Ready takes only: regenerate/animate the WAN motion artifact. Nil disables.
-    var onAnimate: (() -> Void)? = nil
+    var onAnimate: ((CivitAIRecipe?) -> Void)? = nil
     /// Opens the host's per-take style picker. Nil hides the Edit Style button.
     var onEditStyle: (() -> Void)? = nil
     var onOpenAppSettings: (() -> Void)? = nil
     var onDismiss: () -> Void
 
+    @State private var motionRecipe: CivitAIRecipe?
     @State private var activeStillStack: RenderStack?
     @State private var styleModeByStack: [String: LensRenderStyleMode] = [:]
     @State private var debugParametersByStack: [String: String] = [:]
@@ -90,19 +91,22 @@ struct LensTakeRenderSetupPopover: View {
                         .kerning(1.1)
                         .foregroundStyle(CanonColor.muted)
                     renderStatusStackOption(
-                        title: "WAN 2.5 Image-to-Video",
-                        detail: "Civitai · 5 seconds · generated from this frame",
+                        title: (motionRecipe ?? image.motionArtifact?.civitaiRecipe)?.label ?? "WAN 2.5 Image-to-Video",
+                        detail: "Civitai · Review Buzz price before rendering",
                         status: motionStatusLabel(image),
                         icon: "film.fill",
                         isSelected: true,
                         isLocked: false
                     )
+                    CivitAIBrowserButton(kind: .video, seed: motionRecipe ?? image.motionArtifact?.civitaiRecipe, allowsTriggerWords: false) { recipe, _ in
+                        motionRecipe = recipe
+                    }
                     motionArtifactSummary(image)
                 }
 
                 Button {
                     onDismiss()
-                    onAnimate?()
+                    onAnimate?(motionRecipe ?? image.motionArtifact?.civitaiRecipe ?? CivitAIPreferences.last(.video))
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "play.fill")
@@ -125,6 +129,10 @@ struct LensTakeRenderSetupPopover: View {
                         .foregroundStyle(CanonColor.muted)
                     // Stacks come from render_stacks.yaml (defaults + user
                     // overlay) — same list as the Frame Creator.
+                    CivitAIBrowserButton(kind: .image, seed: activeStillStack?.catalogRecipe, allowsTriggerWords: false) { recipe, _ in
+                        RenderStackRegistry.shared.selectCatalogRecipe(recipe)
+                        activeStillStack = recipe.imageStack()
+                    }
                     ForEach(RenderStackRegistry.shared.stacks()) { stack in
                         renderStackOption(
                             title: stack.label,

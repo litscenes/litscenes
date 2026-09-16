@@ -3911,6 +3911,7 @@ final class LibraryEngine: ObservableObject {
                 estimatedUSD: outcome.status == "ready"
                     ? estimatedImageUSD(endpointId: outcome.renderRecipe?.model ?? "", outputPath: outcome.imagePath)
                     : nil,
+                estimatedBuzz: outcome.renderRecipe?.parameters.first { $0.key == "quoted_buzz" }.flatMap { Int($0.value) },
                 pricingNote: ledgerPricingNote(
                     endpointId: outcome.renderRecipe?.model ?? "",
                     fallback: outcome.renderRecipe?.parameters.first { $0.key == "provider_price_note" }?.value ?? ""
@@ -6376,7 +6377,7 @@ final class LibraryEngine: ObservableObject {
                 throw ScreenGraphError.capture("The selected continuation model is not configured")
             }
             let request = ShotContinuationRequest(mode: take.continuationMode, stack: stack, prompt: take.prompt, preparedAnchor: take.anchor)
-            guard ProviderBilling.source(for: .video(stack.model)) == .go || shotContinuationEstimatedUSD(request: request) != nil else {
+            guard stack.providerSelection == .civitaiWan || ProviderBilling.source(for: .video(stack.model)) == .go || shotContinuationEstimatedUSD(request: request) != nil else {
                 throw ScreenGraphError.capture("A complete provider price is required — review this take again")
             }
             guard (take.continuationMode == .nativeExtend) == stack.isNativeFootageExtend else {
@@ -6512,7 +6513,8 @@ final class LibraryEngine: ObservableObject {
                     generateAudio: stack.generateAudio, projectId: project.projectId,
                     runId: takeId, traceGroupId: "shot_continuation_\(shotId)",
                     workflowName: "shot_continuation", artifactType: "shot_continuation_take",
-                    parentTraceId: parentTrace, onProviderSubmitted: submitted
+                    parentTraceId: parentTrace, onProviderSubmitted: submitted,
+                    civitaiRecipe: stack.civitaiRecipe
                 ))
             }
             try Task.checkCancellation()
@@ -6530,6 +6532,7 @@ final class LibraryEngine: ObservableObject {
             phase = "provider"
             let result = try await generateShotClip(provider: provider, input: input, onProviderCompleted: { result in
                 take.providerOutputPath = result.outputURL.path
+                if let recipe = result.civitaiRecipe { take.stack = recipe.wireValue }
                 take.requestId = result.providerJobId.trimmed.nilIfEmpty ?? result.providerVideoId
                 take.traceId = result.traceId
                 phase = "finishing_media"
@@ -6537,11 +6540,13 @@ final class LibraryEngine: ObservableObject {
                 self.recordSpend(SpendLedgerEntry(kind: "shot_continuation_take", provider: result.providerId.rawValue,
                     model: stack.openEndedModelSelection.providerModelId, requestId: take.requestId,
                     traceId: take.traceId, contextLabel: shot.name, shotId: shotId, unit: "seconds",
-                    unitCount: Double(stack.segmentSeconds), estimatedUSD: self.shotContinuationEstimatedUSD(request: request)), for: project)
+                    unitCount: Double(stack.segmentSeconds), estimatedUSD: self.shotContinuationEstimatedUSD(request: request),
+                    estimatedBuzz: result.responseSnapshot["quoted_buzz"].flatMap(Int.init)), for: project)
             })
             take.requestId = result.providerJobId.trimmed.nilIfEmpty ?? result.providerVideoId
             take.traceId = result.traceId
             let clip = ShotRenderSegmentClip(
+                civitaiRecipe: result.civitaiRecipe,
                 startFrameImageId: take.anchor.syntheticFrame.imageId, endFrameImageId: take.targetFrame?.imageId ?? "",
                 placementStartEntryId: record.sourceEntryId, placementEndEntryId: entryId,
                 clipPath: result.outputURL.path, requestId: take.requestId, prompt: take.prompt,
@@ -6722,7 +6727,7 @@ final class LibraryEngine: ObservableObject {
                 aestheticStatus = "Generated chain is already current"
                 return true
             }
-            guard shotContinuationRechainEstimate(shotId: shotId).isComplete else {
+            guard shotContinuationRechainEstimate(shotId: shotId).canReview else {
                 return failShotVideoOperation("A complete price estimate is required before rechaining")
             }
             let requestedEntries = Set(shotContinuationStaleEntryIds(initial))
@@ -6808,7 +6813,7 @@ final class LibraryEngine: ObservableObject {
                     allowContinuationChainRebuild: true
                 )
             }
-            guard shotContinuationRechainEstimate(shotId: shotId, rebuildAll: true).isComplete else {
+            guard shotContinuationRechainEstimate(shotId: shotId, rebuildAll: true).canReview else {
                 return failShotVideoOperation("A complete price estimate is required before rebuilding the generated chain")
             }
             let requestedEntries = Set(entryIds)
@@ -6940,6 +6945,7 @@ final class LibraryEngine: ObservableObject {
         var estimate = ShotRenderCostEstimate(totalGeneratedCount: entryIds.count)
         for entryId in entryIds {
             guard let take = shot.continuationRecord(entryId: entryId)?.selectedTake else { continue }
+            if take.renderStack.providerSelection == .civitaiWan { estimate.pendingCivitaiQuotes += 1; continue }
             let usd: Double?
             if take.renderStack.isNativeFootageExtend,
                let context = ltxShotExtendContextSeconds(
@@ -8402,7 +8408,7 @@ final class LibraryEngine: ObservableObject {
     }
 
     @discardableResult
-    func animateLensHeroImageWithWAN25(lensId: String, imageId: String) async -> Bool {
+    func animateLensHeroImageWithWAN25(lensId: String, imageId: String, catalogRecipe: CivitAIRecipe? = nil) async -> Bool {
         return await WorkflowCoordinator.shared.run(project: currentProject, workflow: "animate_lens_hero_image_with_w_a_n25", artifactType: "frame", artifactId: imageId, lane: .video, recipeJSON: workflowRecipe(["lensId": String(describing: lensId), "imageId": String(describing: imageId)]), failure: false) { [self] in
             if let blockReason = lensHeroMotionStartBlockReason(lensId: lensId, imageId: imageId) {
                 aestheticStatus = blockReason
@@ -8420,13 +8426,15 @@ final class LibraryEngine: ObservableObject {
             }
             let image = heroImages[heroIndex].normalized()
 
+            let recipe = catalogRecipe ?? image.motionArtifact?.civitaiRecipe ?? CivitAIPreferences.last(.video) ?? CivitAIRecipe(profile: .wanVideo25)
             let now = DateFormats.now()
             let motionRunId = "lensmotion_\(shortHash("\(project.projectId):\(lensId):\(imageId):\(now)", length: 18))"
             let prompt = lensWAN25MotionPrompt(lens: lens, image: image)
             var running = image
             running.motionArtifact = LensMotionArtifact(
+                civitaiRecipe: recipe,
                 provider: "civitai",
-                model: VideoModelSelection.civitaiWanV25ImageToVideo.providerModelId,
+                model: recipe.modelId,
                 status: "generating",
                 videoPath: image.motionArtifact?.videoPath ?? "",
                 prompt: prompt,
@@ -8442,7 +8450,7 @@ final class LibraryEngine: ObservableObject {
                 heroImages,
                 lensId: lensId,
                 project: project,
-                status: "Animating frame with WAN 2.5"
+                status: "Animating frame with Civitai"
             ) else {
                 return false
             }
@@ -8451,7 +8459,7 @@ final class LibraryEngine: ObservableObject {
             defer {
                 activeLensMotionImageIds.remove(imageId)
             }
-            aestheticStatus = "Animating frame with WAN 2.5"
+            aestheticStatus = "Animating frame with Civitai"
 
             let outputURL = contextStore.aestheticProofDirectory(for: project)
                 .appendingPathComponent("lens_motion_\(shortHash("\(project.projectId):\(lensId):\(imageId):\(now)", length: 14))_wan25.mp4")
@@ -8460,16 +8468,16 @@ final class LibraryEngine: ObservableObject {
                 let provider = CivitAIWANVideoProvider(credentialStore: videoCredentialStore)
                 logGeneration(
                     kind: "video.start",
-                    message: "Frame motion (WAN 2.5) lens_id=\(lensId) image_id=\(imageId)"
+                    message: "Frame motion (Civitai) lens_id=\(lensId) image_id=\(imageId)"
                 )
                 let motionStartedAt = Date()
                 let result = try await provider.generateClip(from: VideoClipRequest(
                     chainId: motionRunId,
                     segmentId: imageId,
-                    modelSelection: .civitaiWanV25ImageToVideo,
+                    modelSelection: ShotRenderStack.civitai(recipe).openEndedModelSelection,
                     prompt: prompt,
                     negativePrompt: "text artifacts, captions, logos, extra limbs, warped anatomy, hard cuts, flicker, melting faces",
-                    durationSeconds: 5,
+                    durationSeconds: recipe.duration,
                     outputProfile: .standard(.landscape16x9, fitPolicy: .fitWithBlurFill),
                     startFrameURL: URL(fileURLWithPath: image.imagePath),
                     targetEndFrameURL: nil,
@@ -8478,8 +8486,22 @@ final class LibraryEngine: ObservableObject {
                     runId: motionRunId,
                     traceGroupId: motionRunId,
                     workflowName: "lens_frame_motion",
-                    artifactType: "lens_motion"
+                    artifactType: "lens_motion",
+                    onProviderSubmitted: { [weak self] requestId, traceId in
+                        guard let self, self.currentProject?.projectId == project.projectId,
+                              let current = self.projectLenses.lenses.first(where: { $0.lensId == lensId }) else { return }
+                        var images = current.sortedHeroImages
+                        guard let index = images.firstIndex(where: { $0.imageId == imageId }) else { return }
+                        images[index].motionArtifact?.requestId = requestId
+                        images[index].motionArtifact?.traceId = traceId
+                        _ = self.saveLensHeroMotionImages(images, lensId: lensId, project: project, status: "Civitai motion submitted")
+                    },
+                    civitaiRecipe: recipe
                 ))
+                recordSpend(SpendLedgerEntry(kind: "lens_motion", provider: "civitai", model: recipe.modelId,
+                    requestId: result.providerJobId, traceId: result.traceId, contextLabel: image.label, imageId: imageId,
+                    unit: "seconds", unitCount: Double(recipe.duration),
+                    estimatedBuzz: result.responseSnapshot["quoted_buzz"].flatMap(Int.init), pricingNote: "civitai_buzz_quote"), for: project)
                 let motionDurationMs = Int(Date().timeIntervalSince(motionStartedAt) * 1000)
                 logGeneration(
                     kind: "video.completed",
@@ -8488,8 +8510,9 @@ final class LibraryEngine: ObservableObject {
                 guard currentProject?.projectId == project.projectId else { return false }
                 var readyImages = heroImages
                 readyImages[heroIndex].motionArtifact = LensMotionArtifact(
+                    civitaiRecipe: result.civitaiRecipe ?? recipe,
                     provider: "civitai",
-                    model: result.responseSnapshot["model"] ?? VideoModelSelection.civitaiWanV25ImageToVideo.providerModelId,
+                    model: result.responseSnapshot["model"] ?? recipe.modelId,
                     status: "ready",
                     videoPath: result.outputURL.path,
                     prompt: prompt,
@@ -8503,9 +8526,9 @@ final class LibraryEngine: ObservableObject {
                     readyImages,
                     lensId: lensId,
                     project: project,
-                    status: "WAN 2.5 frame motion ready"
+                    status: "Civitai frame motion ready"
                 ) {
-                    aestheticStatus = "WAN 2.5 frame motion ready"
+                    aestheticStatus = "Civitai frame motion ready"
                     return true
                 }
                 return false
@@ -8517,13 +8540,14 @@ final class LibraryEngine: ObservableObject {
                 guard currentProject?.projectId == project.projectId else { return false }
                 var failedImages = heroImages
                 failedImages[heroIndex].motionArtifact = LensMotionArtifact(
+                    civitaiRecipe: recipe,
                     provider: "civitai",
-                    model: VideoModelSelection.civitaiWanV25ImageToVideo.providerModelId,
+                    model: recipe.modelId,
                     status: "failed",
                     videoPath: image.motionArtifact?.videoPath ?? "",
                     prompt: prompt,
-                    requestId: "",
-                    traceId: "",
+                    requestId: (error as? CivitAIWorkflowFailure)?.jobId ?? "",
+                    traceId: (error as? CivitAIWorkflowFailure)?.traceId ?? "",
                     errorMessage: error.localizedDescription,
                     generatedAt: "",
                     updatedAt: DateFormats.now()
@@ -8532,9 +8556,9 @@ final class LibraryEngine: ObservableObject {
                     failedImages,
                     lensId: lensId,
                     project: project,
-                    status: "WAN 2.5 frame motion failed"
+                    status: "Civitai frame motion failed"
                 )
-                aestheticStatus = "WAN 2.5 frame motion failed"
+                aestheticStatus = "Civitai frame motion failed"
                 lastError = error.localizedDescription
                 return false
             }
@@ -18069,6 +18093,7 @@ final class LibraryEngine: ObservableObject {
     func reloadProviderCredentials() {
         falPricing = nil
         providerCredentialsRevision += 1
+        NotificationCenter.default.post(name: .civitaiCredentialsChanged, object: nil)
         refreshVideoChainAfterCredentialChange(status: GoConnection.isManaged ? "LitScenes Go connected" : "Credentials reloaded from credentials.env")
         if StoryInferenceMode.resolved() == .direct { queueInitialStoryGenerationIfEligible() }
     }
@@ -19823,6 +19848,7 @@ final class LibraryEngine: ObservableObject {
     func setVideoChainProvider(_ provider: VideoProviderSelection) {
         guard let project = currentProject, !videoChain.chainId.isEmpty else { return }
         var chain = videoChain
+        chain.civitaiRecipe = nil
         chain.providerSelection = provider == .localPromptExport ? .bestAvailable : provider
         chain.modelSelection = VideoModelSelection.defaultModel(for: chain.providerSelection)
         chain.selectedModelId = VideoModelSelection.resolved(requested: chain.modelSelection, provider: chain.selectedProviderId)
@@ -19837,10 +19863,27 @@ final class LibraryEngine: ObservableObject {
         }
     }
 
+    func setVideoChainCivitaiRecipe(_ recipe: CivitAIRecipe) {
+        guard recipe.profile.kind == .video, recipe.profile.supportsEnding, recipe.validationError == nil else {
+            videoChainStatus = "This chain requires a Civitai model that supports start and ending frames"
+            return
+        }
+        guard let project = currentProject, !videoChain.chainId.isEmpty else { return }
+        var chain = videoChain
+        chain.providerSelection = .civitaiWan
+        chain.civitaiRecipe = recipe
+        chain.modelSelection = ShotRenderStack.civitai(recipe).openEndedModelSelection
+        chain.updatedAt = DateFormats.now()
+        chain = preflightedVideoChain(chain)
+        do { try persistVideoChain(chain, for: project); videoChainStatus = "Civitai recipe selected" }
+        catch { lastError = error.localizedDescription }
+    }
+
     func setVideoChainModel(_ model: VideoModelSelection) {
         guard let project = currentProject, !videoChain.chainId.isEmpty else { return }
         var chain = videoChain
         chain.modelSelection = model
+        chain.civitaiRecipe = nil
         chain.updatedAt = DateFormats.now()
         chain = preflightedVideoChain(chain)
         do {
@@ -20777,13 +20820,23 @@ final class LibraryEngine: ObservableObject {
                                 outputProfile: chain.outputProfile,
                                 startFrameURL: startURL,
                                 targetEndFrameURL: targetURL,
-                                outputURL: outputURL
+                                outputURL: outputURL,
+                                projectId: project.projectId,
+                                runId: versionId,
+                                traceGroupId: chain.chainId,
+                                civitaiRecipe: chain.civitaiRecipe
                             )
                         )
                         generatedVideoURL = result.outputURL
                     }
                     let clipDurationMs = Int(Date().timeIntervalSince(clipStartedAt) * 1000)
                     let clipJobId = result.providerJobId.trimmed.nilIfEmpty ?? result.providerVideoId.trimmed
+                    if result.providerId == .civitaiWan {
+                        recordSpend(SpendLedgerEntry(kind: "video_chain", provider: "civitai", model: result.civitaiRecipe?.modelId ?? modelSelection.providerModelId,
+                            requestId: clipJobId, traceId: result.traceId, contextLabel: "Video chain clip \(segment.order)",
+                            unit: "seconds", unitCount: Double(segment.durationSeconds),
+                            estimatedBuzz: result.responseSnapshot["quoted_buzz"].flatMap(Int.init), pricingNote: "civitai_buzz_quote"), for: project)
+                    }
                     logGeneration(
                         kind: "video.completed",
                         message: "Video chain clip \(segment.order) chain=\(chain.chainId) duration_ms=\(clipDurationMs) request_id=\(clipJobId.isEmpty ? "-" : clipJobId)"
@@ -20799,6 +20852,7 @@ final class LibraryEngine: ObservableObject {
                     pendingVersion.providerId = result.providerId
                     pendingVersion.providerVideoId = result.providerVideoId
                     pendingVersion.providerJobId = result.providerJobId
+                    pendingVersion.civitaiRecipe = result.civitaiRecipe
                     pendingVersion.providerOperation = result.providerOperation
                     pendingVersion.traceId = result.traceId
                     pendingVersion.providerNativeSize = result.providerNativeSize
@@ -29694,8 +29748,8 @@ final class LibraryEngine: ObservableObject {
         guard mediaMotionSelectableModels().contains(model) else {
             return "\(model.label) needs an authored narration driver — pick another model"
         }
-        guard videoCredentialStore.credentialStatus(for: .fal).isConfigured else {
-            return "Add a FAL API key in App Settings to start a video"
+        guard ProviderBilling.isConfigured(.video(model), store: videoCredentialStore) else {
+            return "Add the selected provider's personal API key in App Settings to start a video"
         }
         guard let item = items.first(where: { $0.mediaId == mediaId }), item.kind == .image else {
             return "This image is no longer in Media"
@@ -29717,7 +29771,8 @@ final class LibraryEngine: ObservableObject {
         model: ShotRenderModel,
         durationSeconds: Int,
         motionPrompt: String,
-        generateAudio: Bool
+        generateAudio: Bool,
+        catalogRecipe: CivitAIRecipe? = nil
     ) -> Bool {
         if let blockReason = mediaMotionStartBlockReason(mediaId: mediaId, model: model) {
             aestheticStatus = blockReason
@@ -29728,7 +29783,7 @@ final class LibraryEngine: ObservableObject {
             aestheticStatus = "This image is no longer in Media"
             return false
         }
-        let recipe = ShotRenderStack.recipe(
+        let recipe = catalogRecipe.map { ShotRenderStack.civitai($0).replacingDuration(durationSeconds) } ?? ShotRenderStack.recipe(
             model: model,
             durationSeconds: durationSeconds,
             generateAudio: generateAudio
@@ -29746,6 +29801,16 @@ final class LibraryEngine: ObservableObject {
         return true
     }
 
+    func recoverCivitaiMediaMotion(jobId: String) {
+        guard let job = mediaGenerations.motionJobs.first(where: { $0.jobId == jobId }),
+              let recipe = job.civitaiRecipe, !job.requestId.isEmpty,
+              let media = items.first(where: { $0.mediaId == job.sourceMediaId }),
+              !activeMediaMotionMediaIds.contains(media.mediaId) else { return }
+        spawnMediaMotionLaneTask(jobId: jobId) { [weak self] in
+            await self?.performMediaMotionRender(jobId: jobId, media: media, recipe: .civitai(recipe), motionPrompt: job.prompt)
+        }
+    }
+
     func cancelMediaMotionRender(jobId: String) {
         guard let project = currentProject,
               let job = mediaGenerations.motionJobs.first(where: { $0.jobId == jobId }) else { return }
@@ -29755,7 +29820,7 @@ final class LibraryEngine: ObservableObject {
         canceled.status = "canceled"
         canceled.errorMessage = job.requestId.isEmpty
             ? "Canceled by operator"
-            : "Stopped waiting locally. The provider render may still complete and bill at FAL."
+            : "Stopped waiting locally. The provider render may still complete and bill on your provider account."
         canceled.updatedAt = DateFormats.now()
         persistMediaMotionJob(canceled, for: project)
         aestheticStatus = "Start Video canceled"
@@ -29772,7 +29837,7 @@ final class LibraryEngine: ObservableObject {
             let now = DateFormats.now()
             let sourceName = ((media.filename as NSString).deletingPathExtension).nilIfEmpty ?? "Image"
             let prompt = motionPrompt.trimmed.nilIfEmpty ?? mediaMotionDefaultPrompt()
-            var job = MediaMotionJob(
+            var job = mediaGenerations.motionJobs.first(where: { $0.jobId == jobId }) ?? MediaMotionJob(
                 jobId: jobId,
                 status: "preparing",
                 sourceMediaId: media.mediaId,
@@ -29780,10 +29845,11 @@ final class LibraryEngine: ObservableObject {
                 durationSeconds: recipe.segmentSeconds,
                 prompt: prompt,
                 generateAudio: recipe.generateAudio,
-                pricingNote: "fal_per_video_second",
+                pricingNote: recipe.providerSelection == .civitaiWan ? "civitai_buzz_quote" : "fal_per_video_second",
                 generatedAt: now,
                 updatedAt: now
             )
+            job.civitaiRecipe = recipe.civitaiRecipe
             persistMediaMotionJob(job, for: project)
             aestheticStatus = "Starting a video from \(sourceName) — \(recipe.model.label)"
             logGeneration(
@@ -29839,7 +29905,8 @@ final class LibraryEngine: ObservableObject {
                         live.status = "generating"
                         live.updatedAt = DateFormats.now()
                         self.persistMediaMotionJob(live, for: project)
-                    }
+                    },
+                    civitaiRecipe: recipe.civitaiRecipe
                 ))
                 try Task.checkCancellation()
                 guard currentProject?.projectId == project.projectId else { return }
@@ -29848,6 +29915,7 @@ final class LibraryEngine: ObservableObject {
                 job = mediaGenerations.motionJobs.first(where: { $0.jobId == jobId }) ?? job
                 if !requestId.isEmpty { job.requestId = requestId }
                 job.traceId = result.traceId.isEmpty ? job.traceId : result.traceId
+                job.civitaiRecipe = result.civitaiRecipe ?? job.civitaiRecipe
                 job.status = "downloading"
                 job.updatedAt = DateFormats.now()
                 persistMediaMotionJob(job, for: project)
@@ -29864,6 +29932,7 @@ final class LibraryEngine: ObservableObject {
                         stack: recipe,
                         pricing: falPricing
                     ),
+                    estimatedBuzz: result.responseSnapshot["quoted_buzz"].flatMap(Int.init),
                     pricingNote: job.pricingNote
                 ))
                 let durableURL = proofDirectory.appendingPathComponent("\(safeIdentifier(jobId)).mp4")
@@ -29904,7 +29973,7 @@ final class LibraryEngine: ObservableObject {
                     job.status = "canceled"
                     job.errorMessage = job.requestId.isEmpty
                         ? "Canceled by operator"
-                        : "Stopped waiting locally. The provider render may still complete and bill at FAL."
+                        : "Stopped waiting locally. The provider render may still complete and bill on your provider account."
                 } else {
                     let failurePhase = job.status
                     job.status = "failed"
@@ -32526,7 +32595,8 @@ final class LibraryEngine: ObservableObject {
                                 workflowName: continuationWorkflowName,
                                 artifactType: continuationArtifactType,
                                 parentTraceId: parentTraceId,
-                                onProviderSubmitted: submittedCallback
+                                onProviderSubmitted: submittedCallback,
+                                civitaiRecipe: renderStack.civitaiRecipe
                             )))
                         }
                     } catch {
@@ -32573,7 +32643,8 @@ final class LibraryEngine: ObservableObject {
                         unit: "seconds",
                         unitCount: Double(renderStack.segmentSeconds)
                             + (renderStack.isNativeFootageExtend ? (item.nativeExtendContextSeconds ?? 0) : 0),
-                        estimatedUSD: ShotRenderCostEstimate.segmentUSD(item: item, pricing: falPricing)
+                        estimatedUSD: ShotRenderCostEstimate.segmentUSD(item: item, pricing: falPricing),
+                        estimatedBuzz: result.responseSnapshot["quoted_buzz"].flatMap(Int.init)
                     ))
                     failurePhase = "persisting_segment_\(displayOrdinal)"
 
@@ -32597,6 +32668,7 @@ final class LibraryEngine: ObservableObject {
                         artifact.requestIds.append(requestId)
                     }
                     artifact.upsertSegmentClip(ShotRenderSegmentClip(
+                        civitaiRecipe: result.civitaiRecipe,
                         startFrameImageId: pair.start?.imageId ?? "",
                         endFrameImageId: pair.end?.imageId ?? "",
                         placementStartEntryId: pair.startPlacementEntryId,

@@ -100,27 +100,30 @@ struct ShotRenderCostEstimate: Equatable {
     var totalUSD: Double = 0
     var totalGoCredits: Int = 0
     var pricedSegmentCount: Int = 0
+    var pendingCivitaiQuotes: Int = 0
     var totalGeneratedCount: Int = 0
     var unpricedModelLabels: [String] = []
     var isFetchingRates: Bool = false
     var includesPublishedRateEstimate: Bool = false
 
-    var isComplete: Bool { unpricedModelLabels.isEmpty && totalGeneratedCount > 0 }
+    var canReview: Bool { unpricedModelLabels.isEmpty && totalGeneratedCount > 0 }
+    var isComplete: Bool { canReview && pendingCivitaiQuotes == 0 }
 
     var headlineLabel: String? {
-        guard pricedSegmentCount > 0 else { return nil }
+        guard pricedSegmentCount > 0 else { return pendingCivitaiQuotes > 0 ? "CIVITAI PRICE REVIEW" : nil }
+        let suffix = pendingCivitaiQuotes > 0 ? " + Civitai quote" : ""
         if totalGoCredits > 0 {
             let go = "up to \(totalGoCredits) Go credits"
             let direct = totalUSD > 0 ? String(format: "$%.2f direct + ", totalUSD) : ""
-            return "EST. " + (isComplete ? "" : "≥ ") + direct + go
+            return "EST. " + (isComplete ? "" : "≥ ") + direct + go + suffix
         }
         let amount = totalUSD < 0.01 && totalUSD > 0
             ? String(format: "$%.3f", totalUSD)
             : String(format: "$%.2f", totalUSD)
         if includesPublishedRateEstimate {
-            return isComplete ? "EST. ≈ \(amount)" : "EST. ≥ \(amount) (≈)"
+            return (isComplete ? "EST. ≈ \(amount)" : "EST. ≥ \(amount) (≈)") + suffix
         }
-        return isComplete ? "EST. \(amount)" : "EST. ≥ \(amount)"
+        return (isComplete ? "EST. \(amount)" : "EST. ≥ \(amount)") + suffix
     }
 
     /// The FAL endpoint id a stack bills against, nil for models that do not
@@ -244,6 +247,7 @@ struct ShotRenderCostEstimate: Equatable {
         value.totalGeneratedCount = items.count
         var unpriced: [String] = []
         for item in items {
+            if item.renderStack.providerSelection == .civitaiWan { value.pendingCivitaiQuotes += 1; continue }
             if let credits = segmentGoCredits(stack: item.renderStack, pricing: pricing) {
                 value.totalGoCredits += credits
                 value.pricedSegmentCount += 1

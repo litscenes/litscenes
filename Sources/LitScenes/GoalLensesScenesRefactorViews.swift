@@ -2947,9 +2947,9 @@ struct LensWorkbenchView: View {
                 _ = library.removePlannedLensCharacterTake(lensId: lens.lensId, imageId: heroImage.imageId)
                 syncDraft()
             },
-            onAnimateImage: { heroImage in
+            onAnimateImage: { heroImage, recipe in
                 Task {
-                    _ = await library.animateLensHeroImageWithWAN25(lensId: lens.lensId, imageId: heroImage.imageId)
+                    _ = await library.animateLensHeroImageWithWAN25(lensId: lens.lensId, imageId: heroImage.imageId, catalogRecipe: recipe)
                     syncDraft()
                 }
             },

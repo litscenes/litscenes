@@ -72,6 +72,7 @@ struct ShotContinuationReviewView: View {
     private var usesGo: Bool { ProviderBilling.source(for: .video(stack.model)) == .go }
 
     private var priceLabel: String {
+        if stack.providerSelection == .civitaiWan { return "REVIEW CIVITAI PRICE" }
         if usesGo {
             return ShotRenderCostEstimate.segmentGoCredits(stack: stack, pricing: pricing)
                 .map { "UP TO \($0) GO CREDITS" } ?? "REVIEW GO QUOTE"
@@ -86,7 +87,7 @@ struct ShotContinuationReviewView: View {
         !isPreparing && availability.canContinue
             && !prompt.trimmed.isEmpty
             && availability.anchor != nil
-            && (usesGo || price != nil)
+            && (usesGo || stack.providerSelection == .civitaiWan || price != nil)
             && configuredModels.contains(stack.model) && ProviderBilling.isConfigured(.video(stack.model))
             && (availability.targetFrame == nil || stack.model.supportsShotEnding)
     }
@@ -330,6 +331,10 @@ struct ShotContinuationReviewView: View {
 
     private var outFrameControls: some View {
         HStack(spacing: 8) {
+            CivitAIBrowserButton(kind: .video, seed: stack.civitaiRecipe, requiresEnding: availability.targetFrame != nil) { recipe, words in
+                stack = .civitai(recipe)
+                if !words.isEmpty { prompt += " " + words.joined(separator: ", ") }
+            }
             Menu {
                 ForEach(executableOutFrameModels) { model in
                     Menu(model.label) {
@@ -466,8 +471,8 @@ struct ShotContinuationTakeBrowserView: View {
                         onRechain()
                     }
                     .buttonStyle(PlateButtonStyle(isProminent: true))
-                    .disabled(isRendering || rechainEntryIds.isEmpty || !estimate.isComplete)
-                    .help(estimate.isComplete
+                    .disabled(isRendering || rechainEntryIds.isEmpty || !estimate.canReview)
+                    .help(estimate.canReview
                         ? "Generate only the stale links in order. Each completed take is retained, so a later failure can resume."
                         : "A complete estimate is required before rechain can submit paid work")
                 }
@@ -501,7 +506,7 @@ struct ShotContinuationTakeBrowserView: View {
                         onUseAndRechain(impact)
                         pendingImpact = nil
                     }
-                    .disabled(isRendering || !estimate.isComplete)
+                    .disabled(isRendering || !estimate.canReview)
                 }
                 Button("Cancel", role: .cancel) { pendingImpact = nil }
             }

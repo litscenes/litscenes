@@ -21,6 +21,7 @@ struct MediaMotionJob: Codable, Hashable, Identifiable, Sendable {
     var errorMessage: String = ""
     var generatedAt: String = ""
     var updatedAt: String = ""
+    var civitaiRecipe: CivitAIRecipe? = nil
 
     var id: String { jobId }
     var isActive: Bool {
@@ -30,7 +31,7 @@ struct MediaMotionJob: Codable, Hashable, Identifiable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case jobId, status, sourceMediaId, model, durationSeconds, prompt
         case generateAudio, requestId, traceId, pricingNote, outputMediaId
-        case errorMessage, generatedAt, updatedAt
+        case errorMessage, generatedAt, updatedAt, civitaiRecipe
     }
 
     init(
@@ -81,6 +82,7 @@ struct MediaMotionJob: Codable, Hashable, Identifiable, Sendable {
         errorMessage = ((try? container.decodeIfPresent(String.self, forKey: .errorMessage)) ?? nil) ?? ""
         generatedAt = ((try? container.decodeIfPresent(String.self, forKey: .generatedAt)) ?? nil) ?? ""
         updatedAt = ((try? container.decodeIfPresent(String.self, forKey: .updatedAt)) ?? nil) ?? ""
+        civitaiRecipe = try container.decodeIfPresent(CivitAIRecipe.self, forKey: .civitaiRecipe)
     }
 }
 

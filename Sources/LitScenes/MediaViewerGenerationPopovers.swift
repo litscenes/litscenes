@@ -17,9 +17,11 @@ struct MediaStartVideoPopover: View {
     @State private var motionPrompt = ""
     @State private var generateAudio = true
     @State private var submissionError = ""
+    @State private var civitaiRecipe: CivitAIRecipe?
 
     private var recipe: ShotRenderStack {
-        ShotRenderStack.recipe(
+        if var value = civitaiRecipe { value.duration = durationSeconds; return .civitai(value) }
+        return ShotRenderStack.recipe(
             model: model,
             durationSeconds: durationSeconds,
             generateAudio: generateAudio
@@ -27,6 +29,7 @@ struct MediaStartVideoPopover: View {
     }
 
     private var estimateLabel: String {
+        if recipe.providerSelection == .civitaiWan { return "Review Civitai price" }
         if let usd = ShotRenderCostEstimate.segmentUSD(stack: recipe, pricing: library.falPricing) {
             return String(format: "EST. $%.2f", usd)
         }
@@ -50,6 +53,14 @@ struct MediaStartVideoPopover: View {
                     .font(CanonType.interface(10))
                     .foregroundStyle(CanonColor.muted)
             }
+            ForEach(library.mediaGenerations.motionJobs.filter { $0.sourceMediaId == item.mediaId && $0.civitaiRecipe != nil && !$0.requestId.isEmpty && $0.status != "ready" }) { job in
+                Button("Recover Civitai render · no new submission") { library.recoverCivitaiMediaMotion(jobId: job.jobId) }
+                    .font(.caption)
+            }
+            CivitAIBrowserButton(kind: .video, seed: civitaiRecipe) { value, words in
+                civitaiRecipe = value; model = ShotRenderStack.civitai(value).model; durationSeconds = value.duration
+                if !words.isEmpty { motionPrompt += " " + words.joined(separator: ", ") }
+            }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(mediaMotionSelectableModels()) { candidate in
@@ -58,6 +69,7 @@ struct MediaStartVideoPopover: View {
                             isSelected: model == candidate
                         ) {
                             model = candidate
+                            civitaiRecipe = nil
                             durationSeconds = candidate.supportedDurations.contains(durationSeconds)
                                 ? durationSeconds
                                 : candidate.defaultDuration
@@ -91,7 +103,8 @@ struct MediaStartVideoPopover: View {
                         model: model,
                         durationSeconds: durationSeconds,
                         motionPrompt: motionPrompt,
-                        generateAudio: generateAudio
+                        generateAudio: generateAudio,
+                        catalogRecipe: civitaiRecipe
                     )
                     if accepted {
                         submissionError = ""
@@ -112,12 +125,17 @@ struct MediaStartVideoPopover: View {
                     .font(CanonType.interface(10.5))
                     .foregroundStyle(CanonColor.rust)
             }
-            Text("Renders from this image via FAL · lands top-level in Footage · logged to the spend ledger")
+            Text("Renders from this image via \(recipe.providerSelection == .civitaiWan ? "Civitai" : "FAL") · lands top-level in Footage · logged to the spend ledger")
                 .font(CanonType.interface(10))
                 .foregroundStyle(CanonColor.muted)
         }
         .padding(14)
         .frame(width: 380)
+        .onAppear {
+            if CivitAIPreferences.isConfigured, let value = CivitAIPreferences.last(.video) {
+                civitaiRecipe = value; model = ShotRenderStack.civitai(value).model; durationSeconds = value.duration
+            }
+        }
         .onChange(of: model) { _, _ in submissionError = "" }
         .onChange(of: durationSeconds) { _, _ in submissionError = "" }
         .onChange(of: generateAudio) { _, _ in submissionError = "" }

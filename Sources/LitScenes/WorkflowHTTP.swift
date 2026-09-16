@@ -56,7 +56,7 @@ enum WorkflowHTTP {
 
     static func send<Value: Sendable>(request: URLRequest, recordedRequest: URLRequest?, metadata: InferenceTraceRequestMetadata,
         bytes: @Sendable (Value) -> Data, operation: @Sendable (URLRequest) async throws -> (Value, URLResponse)) async throws -> (Value, URLResponse) {
-        let submission = metadata.apiFamily != "media_transfer" && !["GET", "HEAD"].contains(request.httpMethod ?? "GET")
+        let submission = !["media_transfer", "pricing"].contains(metadata.apiFamily) && !["GET", "HEAD"].contains(request.httpMethod ?? "GET")
         var currentRequest = request
         var retries = 0
         while true {

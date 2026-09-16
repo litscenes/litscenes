@@ -544,7 +544,7 @@ enum TracedHTTPTransport {
             guard !traceId.isEmpty else { throw ScreenGraphError.capture("Could not save request provenance; no provider request was sent") }
             let started = Date()
             do {
-                try await WorkflowCoordinator.shared.providerStarted(metadata, traceId: traceId, isSubmission: !["GET", "HEAD"].contains(request.httpMethod ?? "GET"))
+                try await WorkflowCoordinator.shared.providerStarted(metadata, traceId: traceId, isSubmission: metadata.apiFamily != "pricing" && !["GET", "HEAD"].contains(request.httpMethod ?? "GET"))
                 let (data, response) = try await WorkflowHTTP.send(request: request, recordedRequest: recordedRequest, metadata: metadata, bytes: { $0 }) { attempt in
                     try await URLSession.shared.data(for: attempt)
                 }

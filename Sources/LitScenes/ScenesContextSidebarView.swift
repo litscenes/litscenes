@@ -188,11 +188,12 @@ struct ScenesContextSidebarView: View {
                                 onContentChanged()
                             }
                         },
-                        onAnimateImage: { heroImage in
+                        onAnimateImage: { heroImage, recipe in
                             Task {
                                 _ = await library.animateLensHeroImageWithWAN25(
                                     lensId: lens.lensId,
-                                    imageId: heroImage.imageId
+                                    imageId: heroImage.imageId,
+                                    catalogRecipe: recipe
                                 )
                                 onContentChanged()
                             }

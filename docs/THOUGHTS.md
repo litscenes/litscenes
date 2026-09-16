@@ -96,3 +96,8 @@
 2026-09-15T00:37:44Z Provider credentials and billing selection are independent; queued work keeps its captured payer, and retries preserve job identity. Cached setup confirmation can suppress onboarding offline but never authorizes spending. Client capability and public subscription availability must be described separately.
 
 2026-09-15T19:56:04Z Subscriber refills provide more usage without adding onboarding choices or changing renewal dates. Direct purchases remain gated by server availability and account eligibility.
+
+2026-09-15T23:51:17Z Catalog availability, account permission, and executable application capabilities must be resolved independently; recipes must survive catalog and default changes.
+
+2026-09-16T00:35:57Z Civitai applies externalId idempotency to whatif requests, so quotes omit the eventual submission identity. Browser family availability is separated from account generation access, and WAN 2.2 LoRA video cannot accept an ending-frame constraint.
+2026-09-16T00:35:57Z Inline recipe snapshots enlarged existing nested Shot values enough to overflow a test thread stack; compact copy-on-write recipe storage preserved independent drafts and restored the failing Shot check.

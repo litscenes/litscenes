@@ -193,7 +193,7 @@ struct SceneCharactersPanel: View {
     var onOpenImage: (ProjectLensHeroImage) -> Void
     var onOpenIdentity: (LensIdentityTakeGroup) -> Void
     var onSubmitRender: (ProjectLensHeroImage, LensTakeRenderRequest) -> Void
-    var onAnimateImage: ((ProjectLensHeroImage) -> Void)? = nil
+    var onAnimateImage: ((ProjectLensHeroImage, CivitAIRecipe?) -> Void)? = nil
     var onPreviewStyle: (StyleImagePreviewRequest) -> Void
     var onApplyTakeStyle: ((ProjectLensHeroImage, LensStyleTreatmentSlot, String) -> Void)? = nil
     var onOpenAppSettings: (() -> Void)? = nil
@@ -247,7 +247,7 @@ struct SceneCharactersPanel: View {
                 onSubmit: { request in
                     onSubmitRender(image, request)
                 },
-                onAnimate: onAnimateImage.map { animate in { animate(image) } },
+                onAnimate: onAnimateImage.map { animate in { recipe in animate(image, recipe) } },
                 onEditStyle: onApplyTakeStyle != nil ? { openStylePicker(image) } : nil,
                 onOpenAppSettings: onOpenAppSettings,
                 onDismiss: { renderSetupImage = nil }

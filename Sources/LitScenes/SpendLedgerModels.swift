@@ -41,6 +41,7 @@ struct SpendLedgerEntry: Codable, Hashable, Identifiable, Sendable {
     /// nil = honestly unpriced. NEVER encode an unknown as zero.
     var estimatedUSD: Double?
     /// Non-USD units: ElevenLabs character cost, Decart credits.
+    var estimatedBuzz: Int?
     var estimatedCredits: Double?
     var pricingNote = ""
     /// completed | failed_unknown_charge
@@ -56,7 +57,7 @@ struct SpendLedgerEntry: Codable, Hashable, Identifiable, Sendable {
         // as "estimatedUsd" — the acronym round-trip trap. The stringValue
         // must be the camel form the decoder reconstructs.
         case estimatedUSD = "estimatedUsd"
-        case estimatedCredits, pricingNote, status
+        case estimatedCredits, estimatedBuzz, pricingNote, status
     }
 
     init(
@@ -74,6 +75,7 @@ struct SpendLedgerEntry: Codable, Hashable, Identifiable, Sendable {
         unitCount: Double = 0,
         estimatedUSD: Double? = nil,
         estimatedCredits: Double? = nil,
+        estimatedBuzz: Int? = nil,
         pricingNote: String = "",
         status: String = "completed"
     ) {
@@ -90,6 +92,7 @@ struct SpendLedgerEntry: Codable, Hashable, Identifiable, Sendable {
         self.unit = unit
         self.unitCount = unitCount
         self.estimatedUSD = estimatedUSD
+        self.estimatedBuzz = estimatedBuzz
         self.estimatedCredits = estimatedCredits
         self.pricingNote = pricingNote
         self.status = status
@@ -110,6 +113,7 @@ struct SpendLedgerEntry: Codable, Hashable, Identifiable, Sendable {
         unit = try container.decodeIfPresent(String.self, forKey: .unit) ?? ""
         unitCount = try container.decodeIfPresent(Double.self, forKey: .unitCount) ?? 0
         estimatedUSD = try container.decodeIfPresent(Double.self, forKey: .estimatedUSD)
+        estimatedBuzz = try container.decodeIfPresent(Int.self, forKey: .estimatedBuzz)
         estimatedCredits = try container.decodeIfPresent(Double.self, forKey: .estimatedCredits)
         pricingNote = try container.decodeIfPresent(String.self, forKey: .pricingNote) ?? ""
         status = try container.decodeIfPresent(String.self, forKey: .status) ?? "completed"
@@ -119,13 +123,14 @@ struct SpendLedgerEntry: Codable, Hashable, Identifiable, Sendable {
 struct SpendLedgerDayTotal: Codable, Hashable, Sendable {
     var usd: Double = 0
     var credits: Double = 0
+    var buzz: Int = 0
     var pricedCount = 0
     var unpricedCount = 0
     var failedCount = 0
     var countsByKind: [String: Int] = [:]
 
     private enum CodingKeys: String, CodingKey {
-        case usd, credits, pricedCount, unpricedCount, failedCount, countsByKind
+        case usd, credits, buzz, pricedCount, unpricedCount, failedCount, countsByKind
     }
 
     init() {}
@@ -134,6 +139,7 @@ struct SpendLedgerDayTotal: Codable, Hashable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         usd = try container.decodeIfPresent(Double.self, forKey: .usd) ?? 0
         credits = try container.decodeIfPresent(Double.self, forKey: .credits) ?? 0
+        buzz = try container.decodeIfPresent(Int.self, forKey: .buzz) ?? 0
         pricedCount = try container.decodeIfPresent(Int.self, forKey: .pricedCount) ?? 0
         unpricedCount = try container.decodeIfPresent(Int.self, forKey: .unpricedCount) ?? 0
         failedCount = try container.decodeIfPresent(Int.self, forKey: .failedCount) ?? 0
@@ -144,11 +150,12 @@ struct SpendLedgerDayTotal: Codable, Hashable, Sendable {
         if let usdValue = entry.estimatedUSD {
             usd += usdValue
             pricedCount += 1
-        } else if entry.estimatedCredits != nil {
+        } else if entry.estimatedCredits != nil || entry.estimatedBuzz != nil {
             pricedCount += 1
         } else {
             unpricedCount += 1
         }
+        buzz += entry.estimatedBuzz ?? 0
         if let creditsValue = entry.estimatedCredits {
             credits += creditsValue
         }
@@ -282,7 +289,8 @@ func spendLedgerSummaryFolding(
 /// UNPRICED, NEVER $0: nil USD and nil credits render as the word, not as
 /// a lying zero. Sub-cent amounts keep three decimals (the pricing
 /// headline precedent).
-func spendAmountLabel(usd: Double?, credits: Double?) -> String {
+func spendAmountLabel(usd: Double?, credits: Double?, buzz: Int? = nil) -> String {
+    if let buzz { return "\(buzz) Buzz" }
     if let usd {
         let dollars = usd >= 0.01 || usd == 0
             ? String(format: "$%.2f", usd)

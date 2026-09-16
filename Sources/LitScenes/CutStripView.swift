@@ -291,6 +291,7 @@ struct CutStripView: View {
 
     @State private var expandedNarration = false
     @State private var expandedRenderPlan = false
+    @State private var showingCivitai = false
     /// `.box` only: the render disclosure remembers its last state across
     /// Scenes and projects — open by default, and closed until reopened once
     /// the operator closes it. Confirming a render never counts as closing.
@@ -959,7 +960,7 @@ struct CutStripView: View {
             }
             if !isPlate {
                 Menu {
-                    ShotRenderStackMenuContent(cut: cut, actions: actions)
+                    ShotRenderStackMenuContent(cut: cut, actions: actions, onBrowseCivitai: { showingCivitai = true })
                 } label: {
                     HStack(spacing: 4) {
                         Text(nextDiffers ? "NEXT · \(cut.renderStack.shortLabel)" : cut.renderStack.shortLabel)
@@ -977,6 +978,11 @@ struct CutStripView: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .disabled(isRenderingThis)
+                .sheet(isPresented: $showingCivitai) {
+                    CivitAIModelBrowser(kind: .video, seed: cut.renderStack.civitaiRecipe, allowsTriggerWords: false,
+                        onSelect: { recipe, _ in actions.onSetRenderStack(cut.shotId, .civitai(recipe)); showingCivitai = false },
+                        onCancel: { showingCivitai = false })
+                }
                 .help("\(cut.renderStack.accurateHelp) Sets the NEXT render's default model and length — existing renders keep their own provenance; segment overrides remain independent.")
             }
 
@@ -2219,8 +2225,10 @@ struct CutRailNameField: View {
 struct ShotRenderStackMenuContent: View {
     let cut: ProjectShot
     var actions: CutStripActions
+    var onBrowseCivitai: () -> Void
 
     var body: some View {
+        if CivitAIPreferences.isConfigured { Button("Browse Civitai…", action: onBrowseCivitai) }
         ForEach(ShotRenderModel.shotDefaultCases) { model in
             if model == .falLTX23Narration {
                 let stack = cut.renderStack.replacingModel(model)

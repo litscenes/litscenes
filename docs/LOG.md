@@ -91,3 +91,7 @@
 2026-09-15T19:56:04Z go-credit-refills: Add subscriber refill controls to Account & usage and credit-exhaustion recovery. Preserve monthly plans, pending actions, and billing source.
 
 2026-09-15T20:06:51Z go-credit-refills: Implemented the two subscriber refills with purchase confirmation, recovery and server eligibility. Refill purchases preserve billing selection and monthly renewal. Build, existing tests and source hygiene pass. Changes are local; no commit or release was created.
+
+2026-09-15T23:51:17Z civitai-model-browser: Implement approved native catalog browsing, executable recipes, personal-key quotes, and image/video workflow integration.
+
+2026-09-16T00:35:57Z civitai-model-browser: implemented the native shared browser, family adapters, personal Buzz review, recipe persistence, and safe traced submission/recovery. Shared work remains uncommitted in this canonical checkout; publication and private submodule advancement require separate consent.
