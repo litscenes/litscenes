@@ -101,3 +101,5 @@
 
 2026-09-16T00:35:57Z Civitai applies externalId idempotency to whatif requests, so quotes omit the eventual submission identity. Browser family availability is separated from account generation access, and WAN 2.2 LoRA video cannot accept an ending-frame constraint.
 2026-09-16T00:35:57Z Inline recipe snapshots enlarged existing nested Shot values enough to overflow a test thread stack; compact copy-on-write recipe storage preserved independent drafts and restored the failing Shot check.
+
+2026-09-16T02:53:12Z The current-shot panel used separate model/length controls while the Shot rail used duration submenus; both should share menu content. The Civitai sheet inherited conflicting foreground and system appearance, requiring its own background and color scheme.

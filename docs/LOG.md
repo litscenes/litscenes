@@ -95,3 +95,5 @@
 2026-09-15T23:51:17Z civitai-model-browser: Implement approved native catalog browsing, executable recipes, personal-key quotes, and image/video workflow integration.
 
 2026-09-16T00:35:57Z civitai-model-browser: implemented the native shared browser, family adapters, personal Buzz review, recipe persistence, and safe traced submission/recovery. Shared work remains uncommitted in this canonical checkout; publication and private submodule advancement require separate consent.
+
+2026-09-16T02:53:12Z civitai-browser-ui: Match the supplied Shot menu reference in the current-shot/segment panel, place Browse Civitai models last, and give the browser a consistent readable palette. Existing selection scope and persistence remain in place.

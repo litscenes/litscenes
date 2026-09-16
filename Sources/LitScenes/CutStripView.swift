@@ -2228,62 +2228,107 @@ struct ShotRenderStackMenuContent: View {
     var onBrowseCivitai: () -> Void
 
     var body: some View {
-        if CivitAIPreferences.isConfigured { Button("Browse Civitai…", action: onBrowseCivitai) }
-        ForEach(ShotRenderModel.shotDefaultCases) { model in
+        ShotRenderRecipeMenuContent(
+            stack: cut.renderStack,
+            availableModels: ShotRenderModel.shotDefaultCases,
+            configuredModels: actions.configuredRenderModels,
+            onSelect: { actions.onSetRenderStack(cut.shotId, $0) },
+            onBrowseCivitai: onBrowseCivitai
+        )
+    }
+}
+
+/// Shared model → duration menu for Shot defaults and segment overrides.
+struct ShotRenderRecipeMenuContent: View {
+    var stack: ShotRenderStack
+    var availableModels: [ShotRenderModel]
+    var configuredModels: Set<ShotRenderModel>
+    var unavailableReasons: [ShotRenderModel: String] = [:]
+    var allowsCivitai = true
+    var onSelect: (ShotRenderStack) -> Void
+    var onBrowseCivitai: () -> Void
+
+    var body: some View {
+        ForEach(availableModels) { model in
+            let reason = unavailableReasons[model] ?? (configuredModels.contains(model) ? nil : "needs API key")
+            let title = reason.map { model.label + " · " + $0 } ?? model.label
             if model == .falLTX23Narration {
-                let stack = cut.renderStack.replacingModel(model)
-                Button {
-                    actions.onSetRenderStack(cut.shotId, stack)
-                } label: {
-                    if stack == cut.renderStack {
-                        Label(model.label, systemImage: "checkmark")
-                    } else {
-                        Text(
-                            actions.configuredRenderModels.contains(model)
-                                ? model.label
-                                : "\(model.label) · needs API key"
-                        )
-                    }
-                }
-                .disabled(!actions.configuredRenderModels.contains(model))
+                let choice = stack.replacingModel(model)
+                Button { onSelect(choice) } label: {
+                    if choice == stack { Label(title, systemImage: "checkmark") }
+                    else { Text(title) }
+                }.disabled(reason != nil)
             } else {
                 Menu {
                     ForEach(model.supportedDurations, id: \.self) { seconds in
-                        let stack = cut.renderStack
-                            .replacingModel(model)
-                            .replacingDuration(seconds)
-                        Button {
-                            actions.onSetRenderStack(cut.shotId, stack)
-                        } label: {
-                            if stack == cut.renderStack {
-                                Label("\(seconds)s", systemImage: "checkmark")
-                            } else {
-                                Text("\(seconds)s")
-                            }
+                        let choice = stack.replacingModel(model).replacingDuration(seconds)
+                        Button { onSelect(choice) } label: {
+                            if choice == stack { Label("\(seconds)s", systemImage: "checkmark") }
+                            else { Text("\(seconds)s") }
                         }
                     }
                     Hailuo3ResolutionMenuSection(model: model)
-                } label: {
-                    Text(actions.configuredRenderModels.contains(model) ? model.label : "\(model.label) · needs API key")
-                }
-                .disabled(!actions.configuredRenderModels.contains(model))
+                } label: { Text(title) }
+                .disabled(reason != nil)
             }
         }
-        if cut.renderStack.model.supportsGeneratedAudio {
+        if stack.model.supportsGeneratedAudio && !stack.model.requiresGeneratedAudio {
             Divider()
-            Toggle(
-                "Native audio",
-                isOn: Binding(
-                    get: { cut.renderStack.generateAudio },
-                    set: {
-                        actions.onSetRenderStack(
-                            cut.shotId,
-                            cut.renderStack.replacingGeneratedAudio($0)
-                        )
-                    }
-                )
-            )
+            Toggle("Native audio", isOn: Binding(
+                get: { stack.generateAudio },
+                set: { onSelect(stack.replacingGeneratedAudio($0)) }
+            ))
         }
+        if CivitAIPreferences.isConfigured {
+            Divider()
+            Button("Browse Civitai models…", action: onBrowseCivitai)
+                .disabled(!allowsCivitai)
+        }
+    }
+}
+
+/// Owns the sheet outside the native menu so dismissing the menu keeps it alive.
+struct ShotRenderRecipeMenu: View {
+    var stack: ShotRenderStack
+    var availableModels: [ShotRenderModel]
+    var configuredModels: Set<ShotRenderModel>
+    var unavailableReasons: [ShotRenderModel: String] = [:]
+    var allowsCivitai = true
+    var requiresEnding = false
+    var onSelect: (ShotRenderStack) -> Void
+    @State private var showingCivitai = false
+
+    var body: some View {
+        Menu {
+            ShotRenderRecipeMenuContent(stack: stack, availableModels: availableModels,
+                configuredModels: configuredModels, unavailableReasons: unavailableReasons,
+                allowsCivitai: allowsCivitai, onSelect: onSelect,
+                onBrowseCivitai: { showingCivitai = true })
+        } label: {
+            HStack(spacing: 5) {
+                Text(stack.shortLabel)
+                Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
+            }
+            .font(CanonType.archive(8.5, weight: .bold))
+            .kerning(0.8)
+            .foregroundStyle(PlateColor.ink)
+            .padding(.horizontal, 9)
+            .frame(height: 24)
+            .background(RoundedRectangle(cornerRadius: 6).fill(PlateColor.creamDeep.opacity(0.65)))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(PlateColor.hairline, lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .sheet(isPresented: $showingCivitai) {
+            CivitAIModelBrowser(kind: .video, seed: stack.civitaiRecipe, requiresEnding: requiresEnding,
+                allowsTriggerWords: false,
+                onSelect: { recipe, _ in onSelect(.civitai(recipe)); showingCivitai = false },
+                onCancel: { showingCivitai = false })
+        }
+        .help("Model and duration for the next render")
     }
 }
 

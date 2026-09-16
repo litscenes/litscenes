@@ -161,6 +161,10 @@ struct CivitAIModelBrowser: View {
             }.padding()
         }
         .frame(width: 1000, height: 720)
+        .foregroundStyle(CanonColor.ink)
+        .background(CanonColor.paper)
+        .environment(\.colorScheme, .light)
+        .preferredColorScheme(.light)
         .task(id: searchIdentity) { await search(more: false) }
         .task(id: "\(selected?.id ?? 0):\(versionId):\(includeMature)") { await loadVersion() }
         .task { serviceStatuses = (try? await CivitAICatalogClient.shared.serviceStatuses(kind: kind)) ?? [:] }
@@ -282,7 +286,7 @@ struct CivitAIBrowserButton: View {
         let _ = revision
         Group {
         if CivitAIPreferences.isConfigured {
-            Button("Browse Civitai…") { presented = true }
+            Button("Browse Civitai models…") { presented = true }
                 .sheet(isPresented: $presented) {
                     CivitAIModelBrowser(kind: kind, seed: seed, requiresEnding: requiresEnding, allowsTriggerWords: allowsTriggerWords, onSelect: { recipe, words in
                         onSelect(recipe, words); presented = false

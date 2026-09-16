@@ -173,6 +173,8 @@ Self-serve setup and direct-download Go checkout are available. App Store purcha
 
 ## Personal Civitai model browsing
 
+- Shot default and segment render controls use the same model-and-duration submenu as the Shot render strip. Resolution and native-audio controls remain within that menu; Browse Civitai models is the final item when a personal key is configured. Choosing a recipe retains the existing Shot-default or segment-override scope. The browser owns a light ink-on-paper palette, including native controls, independently of the presenting window appearance.
+
 - When a personal Civitai key exists, image stack and per-take controls, ready-frame Motion, Shot defaults/segments/continuations, Media Start Video, and the existing video-chain controls expose a native Civitai browser. It uses the personal account, independently of Go.
 - Search supports model names, creator, tags, type, base family, sort, favorites, and cursor pagination. A thumbnail grid opens version details, previews, resource availability, trigger words, and a link to the model's usage terms. Mature previews are included by default and can be hidden; mature generation uses Yellow Buzz and remains subject to the resource/account restrictions.
 - Executable image recipes cover SD 1.5 and SDXL checkpoints/LoRAs, Flux.2 Klein 4B/9B with compatible LoRAs, and WAN 2.7 images. Video recipes cover WAN 2.2 Comfy checkpoints/LoRAs and WAN 2.5/2.7 animation. Only WAN 2.7 exposes a constrained ending frame; tail-only generation and unsupported family/resource combinations cannot be submitted.

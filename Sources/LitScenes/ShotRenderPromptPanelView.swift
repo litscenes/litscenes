@@ -88,7 +88,6 @@ struct ShotRenderPromptPanel: View {
     @State private var armedRenderKey: String? = nil
     /// Bumped when a Hailuo resolution is picked — the preference lives in
     /// UserDefaults (not observed state), so the menu label needs a nudge.
-    @State private var hailuoResolutionTick = 0
 
     /// The editable (generated) segments — footage rows carry no prompt.
     private var planItems: [ShotSegmentPromptPlanItem] {
@@ -833,44 +832,13 @@ struct ShotRenderPromptPanel: View {
 
     private var defaultRenderControls: some View {
         ShotEditorFlow(spacing: 6) {
-            CivitAIBrowserButton(kind: .video, seed: shot.renderStack.civitaiRecipe, allowsTriggerWords: false) { recipe, _ in
-                onSetDefaultRenderStack(.civitai(recipe))
-            }
             PlateLabel(text: "Default", size: 7.5, color: PlateColor.inkFaint)
-            PlateLabel(text: "Model", size: 7, color: PlateColor.inkFaint)
-            modelMenu(
-                stack: shot.renderStack,
-                availableModels: ShotRenderModel.shotDefaultCases,
-                onSelect: { onSetDefaultRenderStack(shot.renderStack.replacingModel($0)) }
-            )
-            PlateLabel(text: "Length", size: 7, color: PlateColor.inkFaint)
-            durationMenu(
-                stack: shot.renderStack,
-                onSelect: { onSetDefaultRenderStack(shot.renderStack.replacingDuration($0)) }
-            )
-            if !Hailuo3ResolutionPreference.choices(for: shot.renderStack.model).isEmpty {
-                PlateLabel(text: "Res", size: 7, color: PlateColor.inkFaint)
-                hailuoResolutionMenu(model: shot.renderStack.model)
-            }
-            if shot.renderStack.model.supportsGeneratedAudio {
-                PlateLabel(text: "Audio", size: 7, color: PlateColor.inkFaint)
-                audioMenu(
-                    stack: shot.renderStack,
-                    onSelect: {
-                        onSetDefaultRenderStack(
-                            shot.renderStack.replacingGeneratedAudio($0)
-                        )
-                    }
-                )
-            }
+            modelMenu(stack: shot.renderStack, onSelect: onSetDefaultRenderStack)
         }
     }
 
     private func segmentRenderControls(_ item: ShotSegmentPromptPlanItem) -> some View {
         ShotEditorFlow(spacing: 7) {
-            CivitAIBrowserButton(kind: .video, seed: item.renderStack.civitaiRecipe, requiresEnding: item.pair.end != nil, allowsTriggerWords: false) { recipe, _ in
-                setSegmentStack(item, stack: .civitai(recipe))
-            }.disabled(item.pair.start == nil)
             PlateLabel(
                 text: item.hasRenderOverride ? "Override" : (activeClip(item) != nil && item.isAIExtension ? "Saved recipe" : "Shot default"),
                 size: 7.5,
@@ -884,31 +852,8 @@ struct ShotRenderPromptPanel: View {
                 availableModels: item.isAIExtension && item.pair.end != nil
                     ? ShotRenderModel.shotDefaultCases.filter(\.supportsShotEnding)
                     : ShotRenderModel.shotDefaultCases + (item.canUseNativeFootageExtend ? [.ltx23NativeExtend] : []),
-                onSelect: { model in
-                    setSegmentStack(item, stack: item.renderStack.replacingModel(model))
-                }
+                onSelect: { setSegmentStack(item, stack: $0) }
             )
-            durationMenu(
-                stack: item.renderStack,
-                onSelect: { seconds in
-                    setSegmentStack(item, stack: item.renderStack.replacingDuration(seconds))
-                }
-            )
-            if !Hailuo3ResolutionPreference.choices(for: item.renderStack.model).isEmpty {
-                hailuoResolutionMenu(model: item.renderStack.model)
-            }
-            if item.renderStack.model.supportsGeneratedAudio
-                && !item.renderStack.model.requiresGeneratedAudio {
-                audioMenu(
-                    stack: item.renderStack,
-                    onSelect: { enabled in
-                        setSegmentStack(
-                            item,
-                            stack: item.renderStack.replacingGeneratedAudio(enabled)
-                        )
-                    }
-                )
-            }
             if item.hasRenderOverride {
                 Button(item.isAIExtension ? "Use saved recipe" : "Use Defaults") {
                     onSetSegmentRenderStack(item.pair, nil)
@@ -951,135 +896,23 @@ struct ShotRenderPromptPanel: View {
         /// the pick failed mid-render with a scary provider error).
         allowsNarrationDriven: Bool = true,
         availableModels: [ShotRenderModel] = ShotRenderModel.shotDefaultCases,
-        onSelect: @escaping (ShotRenderModel) -> Void
+        onSelect: @escaping (ShotRenderStack) -> Void
     ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-        Menu {
-            ForEach(availableModels) { model in
-                let canLeadIn = shape != .leadIn
-                    || stack.replacingModel(model).tailAnchoredModelSelection != nil
-                let narrationBlocked = !allowsNarrationDriven
-                    && stack.replacingModel(model).isNarrationDriven
-                Button {
-                    onSelect(model)
-                } label: {
-                    let label = modelLabel(model, shape: shape)
-                    let availabilityLabel = narrationBlocked
-                        ? "\(label) · whole-shot only (set as Shot default)"
-                        : (modelConfigured(model) ? label : "\(label) · needs API key")
-                    if model == stack.model {
-                        Label(availabilityLabel, systemImage: "checkmark")
-                    } else {
-                        Text(availabilityLabel)
-                    }
-                }
-                .disabled(!modelConfigured(model) || !canLeadIn || narrationBlocked || (shape == .paired && !model.supportsShotEnding && !allowsNarrationDriven))
-            }
-        } label: {
-            settingLabel(modelLabel(stack.model, shape: shape))
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help({
-            switch shape {
-            case .paired: return "Paired first/last-frame model used on the next render"
-            case .openEnded: return "Open-ended model used on the next render"
-            case .leadIn: return "Lead-in model used on the next render — needs one that accepts a tail frame alone"
-            }
-        }())
+        let reasons = Dictionary(uniqueKeysWithValues: availableModels.compactMap { model -> (ShotRenderModel, String)? in
+            let candidate = stack.replacingModel(model)
+            if !allowsNarrationDriven && candidate.isNarrationDriven { return (model, "whole-shot only") }
+            if shape == .leadIn && candidate.tailAnchoredModelSelection == nil { return (model, "needs a start frame") }
+            if shape == .paired && !allowsNarrationDriven && !model.supportsShotEnding { return (model, "no ending-frame control") }
+            return nil
+        })
+        return VStack(alignment: .leading, spacing: 6) {
+            ShotRenderRecipeMenu(stack: stack, availableModels: availableModels,
+                configuredModels: configuredRenderModels, unavailableReasons: reasons,
+                allowsCivitai: shape != .leadIn,
+                requiresEnding: shape == .paired && !allowsNarrationDriven,
+                onSelect: onSelect)
             ProviderBillingControl(target: .video(stack.model))
         }
-    }
-
-    /// Standalone resolution menu (beside Length/Audio) for the Hailuo
-    /// stacks — writes the global per-model preference, never the recipe.
-    private func hailuoResolutionMenu(model: ShotRenderModel) -> some View {
-        Menu {
-            Hailuo3ResolutionMenuSection(
-                model: model,
-                showsDivider: false,
-                onPicked: { hailuoResolutionTick += 1 }
-            )
-        } label: {
-            settingLabel(Hailuo3ResolutionPreference.resolution(for: model))
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .id(hailuoResolutionTick)
-        .help("Hailuo render resolution — a global per-model preference read at render time. The cost estimate uses FAL's reported endpoint rate regardless of this choice.")
-    }
-
-    private func durationMenu(
-        stack: ShotRenderStack,
-        onSelect: @escaping (Int) -> Void
-    ) -> some View {
-        Menu {
-            ForEach(stack.model.supportedDurations, id: \.self) { seconds in
-                Button {
-                    onSelect(seconds)
-                } label: {
-                    if seconds == stack.segmentSeconds {
-                        Label("\(seconds)s", systemImage: "checkmark")
-                    } else {
-                        Text("\(seconds)s")
-                    }
-                }
-            }
-        } label: {
-            settingLabel("\(stack.segmentSeconds)s")
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Length of this generated segment on the next render")
-    }
-
-    private func audioMenu(
-        stack: ShotRenderStack,
-        onSelect: @escaping (Bool) -> Void
-    ) -> some View {
-        Menu {
-            Button {
-                onSelect(false)
-            } label: {
-                if !stack.generateAudio {
-                    Label("Off", systemImage: "checkmark")
-                } else {
-                    Text("Off")
-                }
-            }
-            Button {
-                onSelect(true)
-            } label: {
-                if stack.generateAudio {
-                    Label("On", systemImage: "checkmark")
-                } else {
-                    Text("On")
-                }
-            }
-        } label: {
-            settingLabel(stack.generateAudio ? "Audio on" : "Audio off")
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Generate provider-native audio for this segment on the next render")
-    }
-
-    private func settingLabel(_ value: String) -> some View {
-        HStack(spacing: 4) {
-            Text(value)
-                .font(PlateType.label(9, weight: .semibold))
-            Image(systemName: "chevron.down")
-                .font(.system(size: 6, weight: .bold))
-        }
-        .foregroundStyle(PlateColor.ink)
-        .padding(.horizontal, 7)
-        .frame(height: 22)
-        .background(RoundedRectangle(cornerRadius: 3).fill(PlateColor.creamDeep.opacity(0.65)))
-        .overlay(RoundedRectangle(cornerRadius: 3).stroke(PlateColor.hairline, lineWidth: 1))
     }
 
     private func setSegmentStack(_ item: ShotSegmentPromptPlanItem, stack: ShotRenderStack) {
