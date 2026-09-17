@@ -238,6 +238,22 @@ struct ShotPictureSegmentClipboardPayload: Codable, Hashable, Sendable {
         }
     }
 
+    /// A row accepts a complete saved-video selection or complete frame-pair cards.
+    /// Strip-range copies keep their existing timeline semantics.
+    var containsSavedVideosOnly: Bool {
+        !spans.isEmpty && spans.allSatisfy {
+            !$0.isSegmentCard && $0.seedClip != nil
+                && !$0.clipPath.trimmed.isEmpty && $0.clipPath == $0.seedClip?.clipPath
+                && $0.startSeconds.isFinite && $0.endSeconds.isFinite
+                && $0.startSeconds >= 0 && $0.seconds >= ShotCutList.minimumRangeSeconds
+                && $0.playbackRate == 1 && !$0.muteSourceAudio
+        }
+    }
+
+    var containsSegmentCardsOnly: Bool {
+        !spans.isEmpty && spans.allSatisfy(\.isSegmentCard)
+    }
+
     var totalSeconds: Double { spans.reduce(0) { $0 + $1.seconds } }
 }
 
@@ -263,11 +279,16 @@ enum ShotPictureClipboard {
         return [provider]
     }
 
-    static func write(_ payload: ShotPictureSegmentClipboardPayload) {
-        guard let data = try? JSONEncoder().encode(payload) else { return }
+    static let didChange = Notification.Name("LitScenesShotPictureClipboardDidChange")
+
+    @discardableResult
+    static func write(_ payload: ShotPictureSegmentClipboardPayload) -> Bool {
+        guard payload.isPasteable, let data = try? JSONEncoder().encode(payload) else { return false }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setData(data, forType: .litScenesShotPictureSegment)
+        let written = pasteboard.setData(data, forType: .litScenesShotPictureSegment)
+        NotificationCenter.default.post(name: didChange, object: nil)
+        return written
     }
 
     static func read() -> ShotPictureSegmentClipboardPayload? {
@@ -305,9 +326,44 @@ func shotPictureClipboardPasteRefusal(
     // Only a plain generated strip-span is shot-bound.
     if payload.sourceShotId != targetShotId,
        payload.spans.contains(where: { !$0.isFootage && !$0.isSegmentCard }) {
+        if payload.containsSavedVideosOnly {
+            return "Right-click the destination Shot row and choose Paste Video Segment at End"
+        }
         return "Generated spans paste only into their own shot — Copy the segment card (Re-render panel) to carry the whole segment, or Send to Footage"
     }
     return nil
+}
+
+/// A saved video is standalone material. Its footage placement and seed share
+/// one new key; provenance stays attached to the immutable copied clip.
+func shotAppendingSavedVideos(
+    _ shot: ProjectShot,
+    videos: [(mediaId: String, clip: ShotRenderSegmentClip)],
+    sourceShotId: String,
+    now: String
+) -> ProjectShot? {
+    guard !videos.isEmpty, videos.allSatisfy({
+        !$0.mediaId.trimmed.isEmpty && !$0.clip.clipPath.trimmed.isEmpty
+            && $0.clip.durationSeconds.isFinite && $0.clip.durationSeconds >= ShotCutList.minimumRangeSeconds
+    }) else { return nil }
+    var value = shot
+    for video in videos {
+        value = value.insertingClipEntry(clipMediaId: video.mediaId, at: value.entries.count, now: now)
+        guard let index = value.entries.indices.last else { return nil }
+        value.entries[index].leadTransition = ShotSeamStyle.cut.rawValue
+        let entry = value.entries[index]
+        var clip = video.clip
+        clip.startFrameImageId = shotFootageKey(mediaId: entry.clipMediaId, startSeconds: nil, endSeconds: nil)
+        clip.endFrameImageId = ""
+        clip.placementStartEntryId = entry.entryId
+        clip.placementEndEntryId = ""
+        clip.updatedAt = now
+        value.seedSegmentClips.append(clip.normalized())
+        value.sourceBoundaries.append(ShotSourceBoundary(
+            boundaryId: "boundary_\(UUID().uuidString.lowercased())", leftSourceCutId: shot.shotId,
+            rightSourceCutId: sourceShotId, rightEntryId: entry.entryId, createdAt: now))
+    }
+    return value
 }
 
 // MARK: - Structural paste (segment cards → another CUT row)

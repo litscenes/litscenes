@@ -48,17 +48,6 @@ struct ShotSegmentTakeStrip: View {
 
     private var takeActions: some View {
         ShotEditorFlow(spacing: 6) {
-            if let previewed, previewed.isReady, !previewed.isInFilm {
-                Button("Use in Film") { onUse(previewed) }
-                    .buttonStyle(PlateButtonStyle(isProminent: true))
-                    .disabled(isRenderBlocked)
-                    .help(useHelp(for: previewed))
-            }
-            if let onCompare, let pair = comparePair {
-                Button("Compare") { onCompare(pair.0, pair.1) }
-                    .buttonStyle(PlateButtonStyle())
-                    .help("Loop both takes side by side in the player (picture only); click a side or press 1 / 2 to use it")
-            }
             if let onAllTakes {
                 Button("All Takes…") { onAllTakes() }
                     .buttonStyle(PlateButtonStyle())
@@ -77,9 +66,9 @@ struct ShotSegmentTakeStrip: View {
     private func promptBlock(_ option: ShotTakeOption) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
-                PlateLabel(text: "Prompt · Take \(option.takeNumber)", size: 7.5, weight: .bold, color: PlateColor.inkFaint)
+                PlateLabel(text: "Prompt · Take \(option.takeNumber)", size: 10, weight: .bold, color: PlateColor.ink.opacity(0.72))
                 if let inFilm, inFilm.id != option.id, inFilm.prompt.trimmed != option.prompt.trimmed {
-                    PlateLabel(text: "Changed from the in-film take", size: 7, weight: .bold, color: CanonColor.brass)
+                    PlateLabel(text: "Changed from the in-film take", size: 10, weight: .bold, color: CanonColor.brass)
                         .help(inFilm.prompt.trimmed.nilIfEmpty ?? "The in-film take has no saved direction")
                 }
             }
@@ -101,8 +90,8 @@ private struct ShotTakeThumb: View {
     var onPreview: () -> Void
 
     private var ringColor: Color {
-        if option.isInFilm { return CanonColor.brass }
         if isPreviewed { return PlateColor.ink }
+        if option.isInFilm { return CanonColor.brass }
         return PlateColor.hairline
     }
 
@@ -125,7 +114,7 @@ private struct ShotTakeThumb: View {
                 .clipShape(RoundedRectangle(cornerRadius: 4))
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
-                        .stroke(ringColor, lineWidth: option.isInFilm ? 2 : 1)
+                        .stroke(ringColor, lineWidth: isPreviewed || option.isInFilm ? 2 : 1)
                         .opacity(option.status == .rendering ? 0 : 1)
                 )
                 .overlay(
@@ -135,15 +124,16 @@ private struct ShotTakeThumb: View {
                 )
             }
             .buttonStyle(.plain)
-            .disabled(!option.isReady)
+            .disabled(option.clip == nil)
             .help(option.caption + (option.prompt.trimmed.isEmpty ? "" : "\n\n" + option.prompt.trimmed))
-            HStack(spacing: 5) {
-                Text(option.caption)
-                    .font(PlateType.label(8, weight: .semibold))
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Take \(option.takeNumber)")
+                    .font(PlateType.label(10, weight: .semibold))
                     .foregroundStyle(option.status == .fileMissing ? CanonColor.rust : PlateColor.inkFaint)
                     .lineLimit(1)
+                if isPreviewed { Text("Selected").font(PlateType.label(10, weight: .bold)).foregroundStyle(PlateColor.ink) }
                 if option.isInFilm {
-                    PlateLabel(text: "In film", size: 7, weight: .bold, color: CanonColor.brass)
+                    PlateLabel(text: "In film", size: 10, weight: .bold, color: CanonColor.brass)
                 }
             }
             .frame(width: 96 + (option.isInFilm ? 52 : 0), alignment: .leading)

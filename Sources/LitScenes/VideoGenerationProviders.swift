@@ -77,6 +77,7 @@ struct VideoClipRequest {
     var parentTraceId: String = ""
     var onProviderSubmitted: (@MainActor (String, String) async -> Void)?
     var civitaiRecipe: CivitAIRecipe? = nil
+    var resolutionOverride: String? = nil
 }
 
 struct VideoClipExtendRequest {
@@ -1543,7 +1544,7 @@ struct FALImageToVideoProvider: VideoGenerationProvider {
                 targetEndFrameURL: request.targetEndFrameURL,
                 outputURL: request.outputURL,
                 multiShotPrompts: request.multiShotPrompts,
-                promptIsStructured: request.promptIsStructured
+                promptIsStructured: request.promptIsStructured, resolutionOverride: request.resolutionOverride
             ))
         return VideoClipResult(
             providerId: providerId,

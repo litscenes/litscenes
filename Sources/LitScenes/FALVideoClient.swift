@@ -51,6 +51,7 @@ struct FALImageToVideoRequest: FALTrackedVideoRequest {
     var multiShotPrompts: [ShotCompiledKlingShot]? = nil
     /// See `VideoClipRequest.promptIsStructured`.
     var promptIsStructured: Bool = false
+    var resolutionOverride: String? = nil
 }
 
 struct FALAudioToVideoRequest: FALTrackedVideoRequest {
@@ -605,17 +606,24 @@ struct FALVideoClient: @unchecked Sendable {
             // USER-CHOSEN, not a fixed tier — the endpoint's own spelling
             // (768P/2K); the cost estimate prices the endpoint's reported
             // per-unit rate regardless (stated approximation).
-            resolution = Hailuo3ResolutionPreference.resolution(for: .falHailuo3)
+            resolution = request.resolutionOverride ?? Hailuo3ResolutionPreference.resolution(for: .falHailuo3)
             providerNativeSize = "\(resolution) \(request.outputProfile.aspectRatio.rawValue)"
         case .falHailuo3MaxImageToVideo:
             durationRange = 5...15
             startField = "image_url"
-            resolution = Hailuo3ResolutionPreference.resolution(for: .falHailuo3Max)
+            resolution = request.resolutionOverride ?? Hailuo3ResolutionPreference.resolution(for: .falHailuo3Max)
             providerNativeSize = "\(resolution) \(request.outputProfile.aspectRatio.rawValue)"
         default:
             throw ScreenGraphError.capture(
                 "\(request.modelSelection.label) is not a FAL Shot image-to-video model."
             )
+        }
+        if request.resolutionOverride != nil {
+            let model: ShotRenderModel? = request.modelSelection == .falHailuo3ImageToVideo ? .falHailuo3
+                : (request.modelSelection == .falHailuo3MaxImageToVideo ? .falHailuo3Max : nil)
+            guard let model, Hailuo3ResolutionPreference.choices(for: model).contains(resolution) else {
+                throw ScreenGraphError.capture("This model does not support the selected resolution.")
+            }
         }
         guard durationRange.contains(request.durationSeconds) else {
             throw ScreenGraphError.capture(

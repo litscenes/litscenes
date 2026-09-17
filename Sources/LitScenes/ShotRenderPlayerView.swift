@@ -89,6 +89,8 @@ struct ShotRenderPlayerModal: View {
     var onSetSegmentRenderStack: (ShotRenderPair, ShotRenderStack?) -> Void
     var onRender: ([ShotSegmentPromptOverride]) -> Void
     var onRenderSegment: ([ShotSegmentPromptOverride], String) -> Void
+    var onSaveTakeDrafts: ([ShotTakeDraft]) -> Bool
+    var onRenderTake: (ShotTakeDraft) -> Void
     /// Debounced draft autosave from the Segment Prompts panel (persist only,
     /// never renders).
     var onPersistPromptDrafts: ([ShotPromptDraftUpdate]) -> Bool
@@ -142,6 +144,7 @@ struct ShotRenderPlayerModal: View {
     var onCancelRestyle: () -> Void
     var onRetryRestyle: (String) -> Void
     var onContinueLookAsNewShot: () async -> String?
+    var onPrepareFullShot: (String) async -> Result<ShotSegmentPreview, Error>
     var onSendToFootage: () async -> Bool
     /// Export for YouTube: flattens this cut + writes its title/description
     /// markdown into ~/Downloads/LitScenes-Finals. Returns the status line.
@@ -193,6 +196,8 @@ struct ShotRenderPlayerModal: View {
     @State private var currentReturnPlaying = false
     @State private var requestedPlayback: Bool?
     @State private var takeBrowserEntryId = ""
+    @State private var pendingBrowserDraft: ShotTakeDraft?
+    @State private var isPreparingSharedVideo = false
     @State private var pendingTakeImpact: ShotTakeImpactPrompt?
     @StateObject private var comparePlayers = ShotTakeComparePlayers()
     @State private var isPanelOpen: Bool
@@ -206,7 +211,13 @@ struct ShotRenderPlayerModal: View {
     }
     /// Which segment and take the preview shows, when the preview knows.
     private var previewTake: ShotTakePreviewContext? {
-        if case .segment(let preview) = viewingSelection { return preview.take }
+        if case .segment(let preview) = viewingSelection, var context = preview.take {
+            if context.takeNumber > 0,
+               let live = takeOptions(forPlacement: context.placementKey).first(where: { $0.takeNumber == context.takeNumber }) {
+                context.isInFilm = live.isInFilm
+            }
+            return context
+        }
         return nil
     }
     private var compare: ShotTakeCompare? {
@@ -321,6 +332,8 @@ struct ShotRenderPlayerModal: View {
         onSetSegmentRenderStack: @escaping (ShotRenderPair, ShotRenderStack?) -> Void = { _, _ in },
         onRender: @escaping ([ShotSegmentPromptOverride]) -> Void,
         onRenderSegment: @escaping ([ShotSegmentPromptOverride], String) -> Void,
+        onSaveTakeDrafts: @escaping ([ShotTakeDraft]) -> Bool = { _ in true },
+        onRenderTake: @escaping (ShotTakeDraft) -> Void = { _ in },
         onPersistPromptDrafts: @escaping ([ShotPromptDraftUpdate]) -> Bool = { _ in true },
         canAssistPrompts: Bool = false,
         onAssistPrompt: @escaping (ShotPromptAssistanceRequest) async -> ShotPromptAssistanceOutcome = { _ in .failed("Prompt assistance is unavailable.") },
@@ -362,6 +375,7 @@ struct ShotRenderPlayerModal: View {
         onCancelRestyle: @escaping () -> Void = {},
         onRetryRestyle: @escaping (String) -> Void = { _ in },
         onContinueLookAsNewShot: @escaping () async -> String? = { nil },
+        onPrepareFullShot: @escaping (String) async -> Result<ShotSegmentPreview, Error> = { _ in .failure(ScreenGraphError.capture("Full-shot preparation is unavailable")) },
         onSendToFootage: @escaping () async -> Bool = { false },
         onExportForYouTube: @escaping () async -> String = { "" },
         onCollectFrame: @escaping (String, Double, Double) async -> Bool = { _, _, _ in false },
@@ -410,6 +424,8 @@ struct ShotRenderPlayerModal: View {
         self.onSetSegmentRenderStack = onSetSegmentRenderStack
         self.onRender = onRender
         self.onRenderSegment = onRenderSegment
+        self.onSaveTakeDrafts = onSaveTakeDrafts
+        self.onRenderTake = onRenderTake
         self.onPersistPromptDrafts = onPersistPromptDrafts
         self.canAssistPrompts = canAssistPrompts
         self.onAssistPrompt = onAssistPrompt
@@ -451,6 +467,7 @@ struct ShotRenderPlayerModal: View {
         self.onCancelRestyle = onCancelRestyle
         self.onRetryRestyle = onRetryRestyle
         self.onContinueLookAsNewShot = onContinueLookAsNewShot
+        self.onPrepareFullShot = onPrepareFullShot
         self.onSendToFootage = onSendToFootage
         self.onExportForYouTube = onExportForYouTube
         self.onCollectFrame = onCollectFrame
@@ -609,7 +626,7 @@ struct ShotRenderPlayerModal: View {
                     playerSurface
                         .frame(minWidth: 880, minHeight: 380, maxHeight: .infinity)
                         .overlay { microphoneRecordingOverlay }
-                        .overlay(alignment: .top) { takeReviewChip }
+                    viewerMediaActions
                     if !shot.entries.isEmpty, !isComparing { sourceActions.padding(.horizontal, 16).padding(.vertical, 5) }
                     if activeLook != nil {
                         Rectangle().fill(PlateColor.hairline).frame(height: 1)
@@ -691,12 +708,18 @@ struct ShotRenderPlayerModal: View {
             )
         }
         .sheet(isPresented: Binding(get: { !takeBrowserEntryId.isEmpty }, set: { if !$0 { takeBrowserEntryId = "" } }), onDismiss: {
-            if !pendingTakeReviewEntryId.isEmpty {
+            if let draft = pendingBrowserDraft {
+                pendingBrowserDraft = nil
+                onRenderTake(draft)
+            } else if !pendingTakeReviewEntryId.isEmpty {
                 let id = pendingTakeReviewEntryId; pendingTakeReviewEntryId = ""; onReviewEnding(id)
             }
         }) { directTakeBrowser }
         .sheet(isPresented: $isVersionsPlateOpen, onDismiss: {
-            if !pendingTakeReviewEntryId.isEmpty {
+            if let draft = pendingBrowserDraft {
+                pendingBrowserDraft = nil
+                onRenderTake(draft)
+            } else if !pendingTakeReviewEntryId.isEmpty {
                 let id = pendingTakeReviewEntryId; pendingTakeReviewEntryId = ""; onReviewEnding(id)
             }
         }) {
@@ -926,22 +949,15 @@ struct ShotRenderPlayerModal: View {
             onPersistPromptDrafts: onPersistPromptDrafts,
             canAssistPrompts: canAssistPrompts,
             onAssistPrompt: onAssistPrompt,
+            onSaveTakeDrafts: onSaveTakeDrafts,
+            onRenderTake: { draft in pauseForEditorAction(); onRenderTake(draft) },
             focusedSegmentKey: focusedSegmentKey,
             onFocusSegment: focusSegment,
-            onCopyVideo: { preview in
-                ShotPictureClipboard.write(ShotPictureSegmentClipboardPayload(spans: [
-                    ShotPictureSegmentSpanRef(segmentKey: preview.clip.placementKey, clipPath: preview.clip.clipPath,
-                        startSeconds: preview.sourceStartSeconds,
-                        endSeconds: preview.sourceEndSeconds ?? preview.durationSeconds,
-                        label: "Saved segment", seedClip: preview.clip)
-                ], sourceShotId: shot.shotId, sourceProjectId: projectId))
-                transportStatus = "Saved video copied · paste it into the timeline at $0"
-            },
             onOpenTakes: { pauseForEditorAction(); takeBrowserEntryId = $0 },
             previewingTakeId: previewedTakeId,
             onPreviewTake: previewTakeOption,
             onUseTake: useTake,
-            onCompareTakes: enterCompare,
+            onCompareTakes: { _, _ in },
             onInspectInput: pauseForEditorAction,
             onExtend: onExtend.map { action in { pauseForEditorAction(); action() } },
             onNewVersion: onNewVersion.map { action in { pauseForEditorAction(); action() } },
@@ -952,7 +968,97 @@ struct ShotRenderPlayerModal: View {
                 if case .artifactFallback = band.segment { return band.segment }; return nil
             },
             editingEarlierCut: !editingOutputScopeId.isEmpty
-        )
+        ).id(shot.shotId)
+    }
+
+    private func copySavedVideo(_ preview: ShotSegmentPreview, label: String? = nil) {
+        guard FileManager.default.fileExists(atPath: preview.clip.clipPath) else {
+            transportStatus = "Video file unavailable — restore the saved file before copying"
+            return
+        }
+        var clip = preview.clip
+        if clip.sourceCutId.isEmpty { clip.sourceCutId = shot.shotId }
+        if clip.sourceRenderVersionId.isEmpty {
+            clip.sourceRenderVersionId = shot.renderVersions.first {
+                $0.segmentClips.contains { $0.clipPath == clip.clipPath } || $0.videoPath == clip.clipPath
+            }?.versionId ?? ""
+        }
+        let name = label ?? preview.take.map { $0.takeNumber > 0 ? "\($0.label) · Take \($0.takeNumber)" : "Saved Render" } ?? "Saved video"
+        let payload = ShotPictureSegmentClipboardPayload(spans: [
+            ShotPictureSegmentSpanRef(segmentKey: preview.placementKey, clipPath: clip.clipPath,
+                startSeconds: preview.sourceStartSeconds,
+                endSeconds: preview.sourceEndSeconds ?? (preview.sourceStartSeconds + preview.durationSeconds),
+                label: name, seedClip: clip)
+        ], sourceShotId: shot.shotId, sourceProjectId: projectId)
+        transportStatus = ShotPictureClipboard.write(payload)
+            ? "\(name) copied · right-click a Shot row → Paste Video at End"
+            : "Could not copy this video — the clipboard was not updated"
+    }
+
+    private func revealSavedVideo(_ preview: ShotSegmentPreview) {
+        let url = URL(fileURLWithPath: preview.clip.clipPath)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            transportStatus = "Video file unavailable — the saved segment could not be shown in Finder"
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    private var viewerMediaName: String {
+        if let context = previewTake {
+            return context.takeNumber > 0 ? "Take \(context.takeNumber)" : "Saved Render"
+        }
+        return previewClip == nil ? "Full Shot" : "Video"
+    }
+
+    private var viewerMediaActions: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(previewTake.map(shotTakeChipTitle) ?? (previewClip == nil
+                ? "Full Shot · \(String(format: "%.1f", timelineDurationSeconds))s"
+                : "Saved video · \(String(format: "%.1f", previewClip?.durationSeconds ?? 0))s"))
+                .font(PlateType.label(11, weight: .semibold)).foregroundStyle(PlateColor.ink)
+            ShotEditorFlow(spacing: 8) {
+                Button(isPreparingSharedVideo && !isPreviewingClip ? "Preparing Full Shot…" : "Copy \(viewerMediaName)") { shareViewerVideo(reveal: false) }
+                    .disabled(!videoExists || (isPreparingSharedVideo && !isPreviewingClip) || !playbackError.isEmpty)
+                Button("Show in Finder") { shareViewerVideo(reveal: true) }
+                    .help("Show \(viewerMediaName) in Finder")
+                    .disabled(!videoExists || (isPreparingSharedVideo && !isPreviewingClip) || !playbackError.isEmpty)
+                if let use = chipUseAction {
+                    Button("Use in Film", action: use).buttonStyle(PlateButtonStyle(isProminent: true))
+                }
+                if isPreviewingClip { Button("Full Shot", action: returnToCurrent) }
+            }
+            .buttonStyle(PlateButtonStyle())
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .background(PlateColor.cream)
+    }
+
+    private func shareViewerVideo(reveal: Bool) {
+        if case .segment(let preview) = viewingSelection {
+            if reveal { revealSavedVideo(preview) } else { copySavedVideo(preview) }
+            return
+        }
+        guard !isPreparingSharedVideo else { return }
+        let identity = shot.shotId
+        let selection = viewingSelection
+        let fingerprint = shotOutputFingerprint(shot)
+        let clipboardRevision = NSPasteboard.general.changeCount
+        isPreparingSharedVideo = true
+        Task { @MainActor in
+            let prepared = await onPrepareFullShot(fingerprint)
+            isPreparingSharedVideo = false
+            guard shot.shotId == identity, viewingSelection == selection,
+                  shotOutputFingerprint(shot) == fingerprint else { return }
+            switch prepared {
+            case .success(let preview):
+                if reveal { revealSavedVideo(preview) }
+                else if NSPasteboard.general.changeCount == clipboardRevision { copySavedVideo(preview, label: "Full Shot") }
+                else { transportStatus = "The clipboard changed during preparation. Copy Full Shot again when ready." }
+            case .failure(let error): transportStatus = "Could not prepare Full Shot: \(error.localizedDescription)"
+            }
+        }
     }
 
     private func pauseForEditorAction() {
@@ -998,6 +1104,7 @@ struct ShotRenderPlayerModal: View {
             currentReturnSeconds = currentPlayheadSeconds()
             currentReturnPlaying = (player?.rate ?? 0) != 0
         }
+        focusedSegmentKey = preview.placementKey
         pendingSeekSeconds = 0
         requestedPlayback = true
         viewingSelection = .segment(preview)
@@ -1044,7 +1151,7 @@ struct ShotRenderPlayerModal: View {
     }
 
     private func previewTakeOption(_ option: ShotTakeOption) {
-        guard let clip = option.clip, option.isReady else { return }
+        guard let clip = option.clip else { return }
         let siblings = takeOptions(forPlacement: option.placementKey)
         previewSegment(ShotSegmentPreview(clip: clip, take: ShotTakePreviewContext(
             placementKey: option.placementKey,
@@ -1199,6 +1306,35 @@ struct ShotRenderPlayerModal: View {
         )
     }
 
+    private func continuationBrowserOption(entryId: String, take: ShotContinuationTake) -> ShotTakeOption? {
+        guard let record = shot.continuationRecord(entryId: entryId) else { return nil }
+        let key = planSegments.first { segment in
+            if case .generated(let item) = segment { return item.pair.endPlacementEntryId == entryId }; return false
+        }.map(shotPlanPlacementKey) ?? entryId
+        return shotTakeOptions(record: record, placementKey: key).first {
+            if case .continuation(_, let id) = $0.source { return id == take.takeId }; return false
+        }
+    }
+
+    private func inspectContinuationTake(entryId: String, take: ShotContinuationTake) {
+        guard let option = continuationBrowserOption(entryId: entryId, take: take) else { return }
+        previewTakeOption(option)
+        requestedPlayback = false
+        player?.pause()
+    }
+
+    private func prepareBrowserDraft(entryId: String, take: ShotContinuationTake) {
+        guard let option = continuationBrowserOption(entryId: entryId, take: take),
+              let item = planSegments.compactMap({ segment -> ShotSegmentPromptPlanItem? in
+                  if case .generated(let item) = segment { return item }; return nil
+              }).first(where: { $0.pair.placementKey == option.placementKey }) else {
+            pendingTakeReviewEntryId = entryId
+            return
+        }
+        let base = ShotTakeDraft(shot: shot, item: item, option: option)
+        pendingBrowserDraft = shot.takeDrafts.first { $0.id == base.id } ?? base
+    }
+
     @ViewBuilder private var directTakeBrowser: some View {
         if let record = shot.continuationRecord(entryId: takeBrowserEntryId) {
             let stale = shotContinuationStaleEntryIds(shot)
@@ -1206,7 +1342,7 @@ struct ShotRenderPlayerModal: View {
                 selectedEntryIsStale: stale.contains(record.entryId), rechainEntryIds: stale,
                 isRendering: isRenderBlocked, rechainEstimate: continuationEntryEstimate,
                 branchImpact: { continuationBranchImpact(record.entryId, $0) },
-                onUse: { impact in returnToCurrent(); onUseContinuationTake(impact) },
+                onUse: { impact in onUseContinuationTake(impact) },
                 onUseAndRechain: { impact in
                     returnToCurrent(); onUseContinuationTake(impact); takeBrowserEntryId = ""
                     Task { _ = await onRechainContinuations() }
@@ -1214,7 +1350,15 @@ struct ShotRenderPlayerModal: View {
                 onRechain: { takeBrowserEntryId = ""; Task { _ = await onRechainContinuations() } },
                 onRepair: { id in Task { _ = await onRepairContinuationTake(record.entryId, id) } },
                 onNewTake: { pendingTakeReviewEntryId = record.entryId; takeBrowserEntryId = "" },
-                onClose: { takeBrowserEntryId = "" })
+                onClose: { takeBrowserEntryId = "" },
+                initialPreviewTakeId: {
+                    if case .continuation(_, let id) = previewTake?.source { return id }; return ""
+                }(),
+                onPreviewTake: { take in inspectContinuationTake(entryId: record.entryId, take: take) },
+                onNewTakeSelection: { take in
+                    prepareBrowserDraft(entryId: record.entryId, take: take)
+                    takeBrowserEntryId = ""
+                })
         }
     }
 
@@ -2563,28 +2707,13 @@ struct ShotRenderPlayerModal: View {
                 versionsPlateButton
                 substitutionBadge
             }
-            if isPreviewingClip {
-                let previewSeconds = previewClip?.durationSeconds ?? 0
-                let requestedSeconds = previewClip?.requestedDurationSeconds ?? 0
-                let segmentSeconds = previewSeconds > 0
-                    ? previewSeconds
-                    : Double(requestedSeconds > 0 ? requestedSeconds : shot.renderStack.segmentSeconds)
-                PlateLabel(
-                    text: shotTakeFooterLabel(context: previewTake, compare: compare, seconds: segmentSeconds),
-                    size: 8.5,
-                    weight: .semibold,
-                    color: PlateColor.ink
-                )
-                Button("Full shot", action: returnToCurrent)
-                .buttonStyle(PlateButtonStyle())
-                .help("Return the player to the full shot video")
-            } else if let activeLook {
+            if let activeLook {
                 PlateLabel(
                     text: "LUCY · LOOK \(FrameCreatorModal.romanNumeral(activeLook.versionNumber)) · ~\(Int(ShotAudioComposition.effectiveLookDurationSeconds(activeLook).rounded()))s",
                     size: 8.5,
                     color: PlateColor.inkFaint
                 )
-            } else if artifact != nil || usesCutComposition {
+            } else if !isPreviewingClip && (artifact != nil || usesCutComposition) {
                 let stackLabel = footerProvenanceLabel
                 let liveCount = assembly.planClips.filter(\.isPlayable).count
                 let count = usesCutComposition ? liveCount : (artifact?.segmentCount ?? 0)
@@ -2609,8 +2738,7 @@ struct ShotRenderPlayerModal: View {
             .buttonStyle(.plain)
             .help("The player's keyboard reference (?)")
             if !transportStatus.isEmpty {
-                PlateLabel(text: transportStatus, size: 8, color: PlateColor.inkFaint)
-                    .lineLimit(1)
+                Text(transportStatus).font(PlateType.label(11, weight: .regular)).foregroundStyle(PlateColor.ink).fixedSize(horizontal: false, vertical: true)
             }
             if !microphoneStatus.isEmpty {
                 PlateLabel(text: microphoneStatus, size: 8.5, color: PlateColor.inkFaint)
@@ -2744,14 +2872,7 @@ struct ShotRenderPlayerModal: View {
                     || isRenderBlocked
             )
             .help("One click: this cut's .mp4 plus a YouTube title + description .md land in ~/Downloads/LitScenes-Finals")
-            Button("Reveal in Finder") {
-                if let path = currentVideoPath {
-                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-                }
-            }
-            .buttonStyle(PlateButtonStyle())
-            .disabled(!revealTargetExists)
-            .help(isPreviewingClip ? "Reveal this segment's clip file" : "Reveal the shot's stitched video file")
+
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
@@ -2818,11 +2939,19 @@ struct ShotRenderPlayerModal: View {
             isRendering: isRenderBlocked,
             continuationEntryEstimate: continuationEntryEstimate,
             continuationBranchImpact: continuationBranchImpact,
-            onUseContinuationTake: { impact in viewingSelection = .current; onUseContinuationTake(impact) },
+            onUseContinuationTake: onUseContinuationTake,
             onRepairContinuationTake: onRepairContinuationTake,
             onRechainContinuations: onRechainContinuations,
             onNewContinuationTake: { entryId in pendingTakeReviewEntryId = entryId; isVersionsPlateOpen = false },
-            onClose: { isVersionsPlateOpen = false }
+            onClose: { isVersionsPlateOpen = false },
+            initialPreviewTakeId: {
+                if case .continuation(_, let id) = previewTake?.source { return id }; return ""
+            }(),
+            onPreviewContinuationTake: { entryId, take in inspectContinuationTake(entryId: entryId, take: take) },
+            onNewContinuationTakeSelection: { entryId, take in
+                prepareBrowserDraft(entryId: entryId, take: take)
+                isVersionsPlateOpen = false
+            }
         )
     }
 

@@ -2684,6 +2684,7 @@ extension MediaItemRecord {
     static let shotLookDerivativeKind = "shot_look"
     static let clipLookDerivativeKind = "clip_look"
     static let shotExportDerivativeKind = "shot_export"
+    static let shotSegmentDerivativeKind = "shot_segment"
     /// A prompt-driven restyle of one Media image, generated from the media
     /// viewer — lens-free, lands beside its source in the Library.
     static let mediaRestyleDerivativeKind = "media_restyle"
@@ -2739,6 +2740,7 @@ extension MediaItemRecord {
             Self.shotLookDerivativeKind,
             Self.clipLookDerivativeKind,
             Self.shotExportDerivativeKind,
+            Self.shotSegmentDerivativeKind,
             Self.mediaRestyleDerivativeKind,
             Self.mediaMotionDerivativeKind,
             Self.projectSheetDerivativeKind,

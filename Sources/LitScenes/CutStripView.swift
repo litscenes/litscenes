@@ -139,6 +139,7 @@ struct CutStripActions {
     var onPrepareContinuationRetake: (String, String) async -> ShotContinuationAvailability = {
         _, _ in ShotContinuationAvailability(lockReason: .missingTail)
     }
+    var onPrepareContinuationTakeDraft: (String, ShotTakeDraft) async -> ShotContinuationAvailability = { _, _ in ShotContinuationAvailability(lockReason: .missingTail) }
     var onStartContinuationRetake: (String, String, ShotContinuationRequest) async -> ShotContinuationOutcome = {
         _, _, _ in .failed(message: "Unavailable")
     }
@@ -159,10 +160,9 @@ struct CutStripActions {
     var onRechainContinuations: (String) async -> Bool = { _ in false }
     var onRebuildContinuationChain: (String) async -> Bool = { _ in false }
     var onShowOriginal: (String) -> Void = { _ in }
-    /// STRUCTURAL PASTE (row right-click): copied segment cards land at this
-    /// cut's end as first-class material — pair entries, prompt/stack
-    /// overrides, and the rendered take as a seed clip.
-    var onPasteSegmentCards: (String, [ShotPictureSegmentSpanRef]) -> Void = { _, _ in }
+    /// The complete payload retains project identity and immutable video provenance.
+    var picturePasteRefusal: (String, ShotPictureSegmentClipboardPayload?) -> String? = { _, _ in "Paste is unavailable" }
+    var onPastePictureClipboard: (String, ShotPictureSegmentClipboardPayload?) -> Void = { _, _ in }
     /// Flattens this cut's ACTIVE Look (picture + the cut's current audio
     /// mix) into a new CUT row inserted directly below this one.
     var onKeepLookAsNewCut: (String) -> Void = { _ in }
@@ -228,7 +228,7 @@ extension CutStripActions {
         wrapped.onRechainContinuations = { touch($0); return await self.onRechainContinuations($0) }
         wrapped.onRebuildContinuationChain = { touch($0); return await self.onRebuildContinuationChain($0) }
         wrapped.onShowOriginal = { touch($0); self.onShowOriginal($0) }
-        wrapped.onPasteSegmentCards = { touch($0); self.onPasteSegmentCards($0, $1) }
+        wrapped.onPastePictureClipboard = { touch($0); self.onPastePictureClipboard($0, $1) }
         wrapped.onKeepLookAsNewCut = { touch($0); self.onKeepLookAsNewCut($0) }
         return wrapped
     }
@@ -293,6 +293,7 @@ struct CutStripView: View {
         isPlate ? ScenesV2StageDress.insetFill : CanonColor.paperInset.opacity(legacyOpacity)
     }
 
+    @State private var pictureClipboardRevision = 0
     @State private var expandedNarration = false
     @State private var expandedRenderPlan = false
     @State private var showingCivitai = false
@@ -350,18 +351,17 @@ struct CutStripView: View {
         return index >= tail
     }
 
-    /// The picture clipboard's structural cards, read at menu-open. An append
-    /// lands in a locked cut's suffix tail; a hard-locked cut disables here
-    /// (the engine refuses honestly regardless).
     @ViewBuilder
     private var pasteSegmentMenuItem: some View {
-        let cards = ShotPictureClipboard.read()?.spans.filter(\.isSegmentCard) ?? []
-        Button(cards.isEmpty
-            ? "Paste Segment — copy one from a player's Re-render panel first"
-            : "Paste Segment at End\(cards.count > 1 ? " ×\(cards.count)" : "")") {
-            actions.onPasteSegmentCards(cut.shotId, cards)
+        let _ = pictureClipboardRevision
+        let payload = ShotPictureClipboard.read()
+        let refusal = actions.picturePasteRefusal(cut.shotId, payload)
+        let label = payload?.containsSegmentCardsOnly == true ? "Paste Frame Pair at End" : "Paste Video at End"
+        Button(label) {
+            actions.onPastePictureClipboard(cut.shotId, ShotPictureClipboard.read())
         }
-        .disabled(cards.isEmpty || (isLocked && !isSuffixAppendable))
+        .disabled(refusal != nil)
+        if let refusal { Text(refusal).font(.caption) }
     }
 
     /// Whether this row is one of the workbench's OPEN 3 (MRU). Collapsed rows
@@ -387,6 +387,15 @@ struct CutStripView: View {
         // Right-click paste target: "onto another cut row". The menu content
         // builds at open, so the clipboard read is always fresh.
         .contextMenu { pasteSegmentMenuItem }
+        .onReceive(NotificationCenter.default.publisher(for: ShotPictureClipboard.didChange)) { _ in
+            pictureClipboardRevision += 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            pictureClipboardRevision += 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)) { _ in
+            pictureClipboardRevision += 1
+        }
         .overlay(
             RoundedRectangle(cornerRadius: cardRadius)
                 .stroke(cardStroke, lineWidth: 1)
@@ -1445,6 +1454,7 @@ struct CutStripView: View {
             videoActions(tile)
         }
         .frame(width: Self.cellSize.width)
+        .contextMenu { pasteSegmentMenuItem }
         .popover(isPresented: Binding(get: { tile.result.record != nil && takeBrowserEntryId == tile.result.record?.entryId },
             set: { if !$0 { takeBrowserEntryId = "" } }), arrowEdge: .bottom) {
                 if let record = tile.result.record { continuationTakeBrowser(entryId: record.entryId) }
@@ -1604,6 +1614,7 @@ struct CutStripView: View {
             } else { actions.onOpenShotEntry(cut.shotId, entry.entryId) }
         }
         .contextMenu {
+            pasteSegmentMenuItem
             if !entry.isClip, !entry.isAIExtension, let frame, frame.status == "ready" {
                 Button("Enter Excursion") {
                     actions.onEnterExcursion(cut.shotId, entry.entryId, frame)
@@ -1866,7 +1877,19 @@ struct CutStripView: View {
                         beginContinuationReview(retakeEntryId: entryId)
                     }
                 },
-                onClose: { takeBrowserEntryId = "" }
+                onClose: { takeBrowserEntryId = "" },
+                onNewTakeSelection: { take in
+                    guard let item = boxPlanContext().segments.compactMap({ segment -> ShotSegmentPromptPlanItem? in
+                        if case .generated(let item) = segment { return item }; return nil
+                    }).first(where: { $0.pair.endPlacementEntryId == entryId }),
+                    let option = shotTakeOptions(record: record, placementKey: item.pair.placementKey).first(where: {
+                        if case .continuation(_, let id) = $0.source { return id == take.takeId }; return false
+                    }) else { return }
+                    let base = ShotTakeDraft(shot: cut, item: item, option: option)
+                    let draft = cut.takeDrafts.first { $0.id == base.id } ?? base
+                    takeBrowserEntryId = ""
+                    Task { @MainActor in await Task.yield(); beginContinuationReview(retakeEntryId: entryId, draft: draft) }
+                }
             )
         } else {
             VStack(alignment: .leading, spacing: 10) {
@@ -2133,15 +2156,15 @@ struct CutStripView: View {
         }
     }
 
-    private func beginContinuationReview(retakeEntryId: String = "") {
+    private func beginContinuationReview(retakeEntryId: String = "", draft: ShotTakeDraft? = nil) {
         let entryId = retakeEntryId.isEmpty
             ? (cut.entries.first { shotPendingEndingEntryIds(cut).contains($0.entryId) }?.entryId ?? "") : retakeEntryId
         continuationRetakeEntryId = entryId
         let initial = entryId.isEmpty ? actions.continuationAvailability(cut.shotId)
-            : shotEndingReviewPreview(shot: cut, entryId: entryId, frameLookup: actions.frameLookup)
+            : shotEndingReviewPreview(shot: cut, entryId: entryId, frameLookup: actions.frameLookup, draft: draft)
         let intent: ShotContinuationReviewSession.Intent = entryId.isEmpty ? .append
             : (initial.targetFrame == nil ? .retake(entryId) : .ending(entryId))
-        continuationSession = ShotContinuationReviewSession(intent: intent, initial: initial)
+        continuationSession = ShotContinuationReviewSession(intent: intent, initial: initial, takeDraft: draft)
         isAppendPickerOpen = true
         actions.onRenderPlanOpened()
     }
@@ -2169,7 +2192,8 @@ struct CutStripView: View {
         if let session = continuationSession {
             ShotContinuationReviewSheet(session: session, configuredModels: actions.configuredRenderModels,
                 pricing: actions.falPricing, prepare: {
-                    session.entryId.isEmpty ? await actions.onPrepareContinuation(cut.shotId)
+                    if let draft = session.takeDraft { return await actions.onPrepareContinuationTakeDraft(cut.shotId, draft) }
+                    return session.entryId.isEmpty ? await actions.onPrepareContinuation(cut.shotId)
                         : await actions.onPrepareContinuationRetake(cut.shotId, session.entryId)
                 }, onPrecedingEnding: { beginContinuationReview(retakeEntryId: $0) },
                 onCancel: { clearContinuationReview(closePopover: true) }, onRender: confirmContinuation)
@@ -2269,6 +2293,9 @@ struct ShotRenderRecipeMenuContent: View {
     var onSelect: (ShotRenderStack) -> Void
     var onBrowseCivitai: () -> Void
 
+    var selectedResolution: String? = nil
+    var onSelectResolution: ((ShotRenderModel, String) -> Void)? = nil
+
     var body: some View {
         ForEach(availableModels) { model in
             let reason = unavailableReasons[model] ?? (configuredModels.contains(model) ? nil : "needs API key")
@@ -2288,7 +2315,9 @@ struct ShotRenderRecipeMenuContent: View {
                             else { Text("\(seconds)s") }
                         }
                     }
-                    Hailuo3ResolutionMenuSection(model: model)
+                    Hailuo3ResolutionMenuSection(model: model,
+                        selectedResolution: model == stack.model ? selectedResolution : nil,
+                        onSelectResolution: onSelectResolution.map { action in { action(model, $0) } })
                 } label: { Text(title) }
                 .disabled(reason != nil)
             }
@@ -2317,6 +2346,9 @@ struct ShotRenderRecipeMenu: View {
     var allowsCivitai = true
     var requiresEnding = false
     var onSelect: (ShotRenderStack) -> Void
+    var selectedResolution: String? = nil
+    var onSelectResolution: ((ShotRenderModel, String) -> Void)? = nil
+    var labelOverride: String? = nil
     @State private var showingCivitai = false
 
     var body: some View {
@@ -2324,10 +2356,10 @@ struct ShotRenderRecipeMenu: View {
             ShotRenderRecipeMenuContent(stack: stack, availableModels: availableModels,
                 configuredModels: configuredModels, unavailableReasons: unavailableReasons,
                 allowsCivitai: allowsCivitai, onSelect: onSelect,
-                onBrowseCivitai: { showingCivitai = true })
+                onBrowseCivitai: { showingCivitai = true }, selectedResolution: selectedResolution, onSelectResolution: onSelectResolution)
         } label: {
             HStack(spacing: 5) {
-                Text(stack.shortLabel)
+                Text(labelOverride ?? stack.shortLabel)
                 Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
             }
             .font(CanonType.archive(8.5, weight: .bold))

@@ -17,6 +17,7 @@ struct ShotContinuationReviewView: View {
     @State private var mode: ShotContinuationMode
     @State private var stack: ShotRenderStack
     @State private var prompt: String
+    @State private var resolutionOverride: String?
     @State private var hasLoadedRecipe = false
 
     init(
@@ -45,6 +46,7 @@ struct ShotContinuationReviewView: View {
             ? (availability.nativeStack ?? availability.outFrameStack)
             : availability.outFrameStack)
         _prompt = State(initialValue: availability.suggestedPrompt)
+        _resolutionOverride = State(initialValue: availability.resolutionOverride)
     }
 
     private var executableOutFrameModels: [ShotRenderModel] {
@@ -196,7 +198,8 @@ struct ShotContinuationReviewView: View {
                         mode: mode,
                         stack: stack,
                         prompt: prompt,
-                        preparedAnchor: anchor, targetFrame: availability.targetFrame
+                        preparedAnchor: anchor, targetFrame: availability.targetFrame,
+                        baseTakeId: availability.baseTakeId, resolutionOverride: resolutionOverride
                     ))
                 } label: {
                     Text("▶ \(availability.targetFrame == nil ? "RENDER TAKE" : "RENDER ENDING") · \(priceLabel)")
@@ -220,12 +223,16 @@ struct ShotContinuationReviewView: View {
         .foregroundStyle(ShotReviewPalette.ink)
         .environment(\.colorScheme, .light)
         .preferredColorScheme(.light)
+        .onChange(of: stack.model) { _, model in
+            if let resolutionOverride, !Hailuo3ResolutionPreference.choices(for: model).contains(resolutionOverride) { self.resolutionOverride = nil }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .goFundingChanged)) { _ in onRefresh() }
         .onChange(of: isPreparing) { _, preparing in
             if !preparing && !hasLoadedRecipe {
                 mode = availability.preferredMode
                 stack = mode == .nativeExtend ? (availability.nativeStack ?? availability.outFrameStack) : availability.outFrameStack
                 if prompt.trimmed.isEmpty { prompt = availability.suggestedPrompt }
+                resolutionOverride = availability.resolutionOverride
                 hasLoadedRecipe = true
             }
         }
@@ -359,6 +366,13 @@ struct ShotContinuationReviewView: View {
             }
             .menuStyle(.button)
             .buttonStyle(.plain)
+            if !Hailuo3ResolutionPreference.choices(for: stack.model).isEmpty {
+                Menu(resolutionOverride ?? Hailuo3ResolutionPreference.resolution(for: stack.model)) {
+                    ForEach(Hailuo3ResolutionPreference.choices(for: stack.model), id: \.self) { choice in
+                        Button(choice) { resolutionOverride = choice }
+                    }
+                }
+            }
             if stack.model.supportsGeneratedAudio {
                 Toggle("Native audio", isOn: Binding(
                     get: { stack.generateAudio },
@@ -390,6 +404,9 @@ struct ShotContinuationTakeBrowserView: View {
     var onNewTake: () -> Void
     var onClose: () -> Void
 
+    var initialPreviewTakeId: String = ""
+    var onPreviewTake: ((ShotContinuationTake) -> Void)? = nil
+    var onNewTakeSelection: ((ShotContinuationTake) -> Void)? = nil
     @State private var previewTakeId = ""
     @State private var timestampSeconds = 0.0
     @State private var isPlaying = false
@@ -409,19 +426,19 @@ struct ShotContinuationTakeBrowserView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text("CONTINUATION TAKES")
-                    .font(CanonType.archive(9, weight: .bold))
+                    .font(CanonType.archive(10, weight: .bold))
                     .kerning(1)
                 Text("\(record.takes.count) retained")
-                    .font(CanonType.archive(7.5, weight: .medium))
-                    .foregroundStyle(CanonColor.muted)
+                    .font(CanonType.archive(10, weight: .medium))
+                    .foregroundStyle(CanonColor.ink.opacity(0.7))
                 if hasStaleSelectedTake {
                     Text("STALE ANCHOR")
-                        .font(CanonType.archive(7, weight: .bold))
+                        .font(CanonType.archive(10, weight: .bold))
                         .foregroundStyle(CanonColor.rust)
                 }
                 Spacer()
                 Button("CLOSE") { onClose() }
-                    .buttonStyle(PlateButtonStyle())
+                    .buttonStyle(PlateButtonStyle(disabledOpacity: 0.7))
             }
 
             if let take = previewTake, let clip = take.segmentClip {
@@ -440,10 +457,10 @@ struct ShotContinuationTakeBrowserView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 7))
                 HStack(spacing: 8) {
                     Button(isPlaying ? "PAUSE" : "PLAY") { isPlaying.toggle() }
-                        .buttonStyle(PlateButtonStyle())
+                        .buttonStyle(PlateButtonStyle(disabledOpacity: 0.7))
                     Text("TAKE \(take.takeNumber) · \(take.renderStack.shortLabel)")
-                        .font(CanonType.archive(7.5, weight: .semibold))
-                        .foregroundStyle(CanonColor.muted)
+                        .font(CanonType.archive(10, weight: .semibold))
+                        .foregroundStyle(CanonColor.ink.opacity(0.7))
                     Spacer()
                 }
             }
@@ -459,8 +476,11 @@ struct ShotContinuationTakeBrowserView: View {
 
             HStack {
                 if allowsNewTake {
-                    Button(record.readyTakes.isEmpty ? "RETRY · REVIEW PRICE" : "RENDER NEW TAKE…") { onNewTake() }
-                        .buttonStyle(PlateButtonStyle())
+                    Button(record.readyTakes.isEmpty ? "RETRY · REVIEW PRICE" : "RENDER NEW TAKE…") {
+                        if let take = previewTake, let onNewTakeSelection { onNewTakeSelection(take) }
+                        else { onNewTake() }
+                    }
+                        .buttonStyle(PlateButtonStyle(disabledOpacity: 0.7))
                         .disabled(isRendering || record.takes.isEmpty)
                         .help("Review the saved endpoint and current price for another immutable take")
                 }
@@ -470,7 +490,7 @@ struct ShotContinuationTakeBrowserView: View {
                     Button("RECHAIN · \(estimate.headlineLabel ?? "RATE UNAVAILABLE")") {
                         onRechain()
                     }
-                    .buttonStyle(PlateButtonStyle(isProminent: true))
+                    .buttonStyle(PlateButtonStyle(isProminent: true, disabledOpacity: 0.7))
                     .disabled(isRendering || rechainEntryIds.isEmpty || !estimate.canReview)
                     .help(estimate.canReview
                         ? "Generate only the stale links in order. Each completed take is retained, so a later failure can resume."
@@ -480,7 +500,13 @@ struct ShotContinuationTakeBrowserView: View {
         }
         .padding(16)
         .frame(width: 620, height: 520)
+        .onAppear {
+            previewTakeId = initialPreviewTakeId
+            if let take = previewTake { onPreviewTake?(take) }
+        }
+        .onChange(of: previewTakeId) { _, _ in if let take = previewTake { onPreviewTake?(take) } }
         .background(CanonColor.paper)
+        .foregroundStyle(CanonColor.ink)
         .confirmationDialog(
             impactTitle,
             isPresented: Binding(
@@ -513,6 +539,8 @@ struct ShotContinuationTakeBrowserView: View {
         } message: {
             Text(impactMessage)
         }
+        .environment(\.colorScheme, .light)
+        .preferredColorScheme(.light)
     }
 
     private func takeRow(_ take: ShotContinuationTake) -> some View {
@@ -524,10 +552,10 @@ struct ShotContinuationTakeBrowserView: View {
                 if let image = StripThumbnailCache.shared.image(path: take.finalFramePath) {
                     Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
                 } else if [.queued, .generating].contains(take.takeStatus) {
-                    ProgressView().controlSize(.small)
+                    ProgressView().controlSize(.small).tint(CanonColor.bone)
                 } else {
                     Image(systemName: take.takeStatus == .failed ? "exclamationmark.triangle" : "film")
-                        .foregroundStyle(take.takeStatus == .failed ? CanonColor.rust : CanonColor.muted)
+                        .foregroundStyle(CanonColor.bone)
                 }
             }
             .frame(width: 96, height: 54)
@@ -535,27 +563,27 @@ struct ShotContinuationTakeBrowserView: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {
                     Text("TAKE \(take.takeNumber)")
-                        .font(CanonType.archive(8, weight: .bold))
+                        .font(CanonType.archive(10, weight: .bold))
                     Text(take.takeStatus.rawValue.uppercased())
-                        .font(CanonType.archive(7, weight: .semibold))
-                        .foregroundStyle(take.takeStatus == .failed ? CanonColor.rust : CanonColor.muted)
+                        .font(CanonType.archive(10, weight: .semibold))
+                        .foregroundStyle(take.takeStatus == .failed ? CanonColor.rust : CanonColor.ink.opacity(0.7))
                     if selected {
-                        Text("IN USE")
-                            .font(CanonType.archive(7, weight: .bold))
-                            .foregroundStyle(CanonColor.brass)
+                        Text("IN FILM")
+                            .font(CanonType.archive(10, weight: .bold))
+                            .foregroundStyle(CanonColor.ink)
                     }
                 }
                 if !take.errorMessage.isEmpty {
-                    Text(take.errorMessage).font(CanonType.interface(9)).foregroundStyle(CanonColor.rust)
+                    Text(take.errorMessage).font(CanonType.interface(11)).foregroundStyle(CanonColor.rust)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if !take.isReady, !take.requestId.isEmpty || take.workflowStep == "provider" {
                     Text("Provider acceptance may be unknown. A new take may charge again.")
-                        .font(CanonType.interface(9)).foregroundStyle(CanonColor.rust)
+                        .font(CanonType.interface(11)).foregroundStyle(CanonColor.rust)
                 }
                 Text(take.prompt.trimmed.nilIfEmpty ?? "No saved direction")
-                    .font(CanonType.interface(9))
-                    .foregroundStyle(CanonColor.muted)
+                    .font(CanonType.interface(11))
+                    .foregroundStyle(CanonColor.ink.opacity(0.7))
                     .lineLimit(2)
             }
             Spacer()
@@ -563,7 +591,7 @@ struct ShotContinuationTakeBrowserView: View {
                (!take.errorMessage.isEmpty && (take.segmentClip != nil || !take.providerOutputPath.isEmpty))
                 || (!take.isReady && take.hasLocalRecoveryReceipt) {
                 Button("REPAIR · $0") { onRepair(take.takeId) }
-                    .buttonStyle(PlateButtonStyle()).disabled(isRendering)
+                    .buttonStyle(PlateButtonStyle(disabledOpacity: 0.7)).disabled(isRendering)
             }
             if take.isReady {
                 Button(previewed ? "PREVIEWING" : "PREVIEW") {
@@ -571,12 +599,12 @@ struct ShotContinuationTakeBrowserView: View {
                     timestampSeconds = 0
                     previewTakeId = take.takeId
                 }
-                .buttonStyle(PlateButtonStyle())
+                .buttonStyle(PlateButtonStyle(disabledOpacity: 0.7))
                 if !selected {
-                    Button("USE") {
+                    Button("USE IN FILM") {
                         pendingImpact = branchImpact(take.takeId)
                     }
-                    .buttonStyle(PlateButtonStyle())
+                    .buttonStyle(PlateButtonStyle(disabledOpacity: 0.7))
                 }
             }
         }

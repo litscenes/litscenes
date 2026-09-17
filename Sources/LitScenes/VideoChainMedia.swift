@@ -145,13 +145,14 @@ enum VideoChainMedia {
         videoURL: URL,
         outputURL: URL,
         startSeconds: Double,
-        durationSeconds: Double
+        durationSeconds: Double,
+        minimumDurationSeconds: Double = 0.1
     ) async throws -> URL {
         let asset = AVURLAsset(url: videoURL)
         let visualRange = try await videoTrackTimeRange(asset: asset)
         let visualDuration = max(visualRange.duration.seconds, 0)
-        let localStart = min(max(startSeconds, 0), max(visualDuration - 0.1, 0))
-        let rangeSeconds = min(max(durationSeconds, 0.1), max(visualDuration - localStart, 0))
+        let localStart = min(max(startSeconds, 0), max(visualDuration - minimumDurationSeconds, 0))
+        let rangeSeconds = min(max(durationSeconds, minimumDurationSeconds), max(visualDuration - localStart, 0))
         guard rangeSeconds > 0 else {
             throw ScreenGraphError.capture("The requested video range contains no visual frames.")
         }

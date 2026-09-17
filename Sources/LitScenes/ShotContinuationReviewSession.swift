@@ -6,6 +6,7 @@ struct ShotContinuationReviewSession: Identifiable {
     let id = UUID()
     var intent: Intent
     var initial: ShotContinuationAvailability
+    var takeDraft: ShotTakeDraft? = nil
     var entryId: String {
         switch intent { case .append: return ""; case .ending(let id), .retake(let id): return id }
     }
@@ -57,12 +58,15 @@ struct ShotContinuationReviewSheet: View {
     }
 }
 
-func shotEndingReviewPreview(shot: ProjectShot, entryId: String, frameLookup: [String: ProjectLensHeroImage]) -> ShotContinuationAvailability {
-    let take = shot.continuationRecord(entryId: entryId)?.selectedTake
+func shotEndingReviewPreview(shot: ProjectShot, entryId: String, frameLookup: [String: ProjectLensHeroImage], draft: ShotTakeDraft? = nil) -> ShotContinuationAvailability {
+    let record = shot.continuationRecord(entryId: entryId)
+    let take = draft.flatMap { base in record?.takes.first { $0.takeId == base.baseTakeId } } ?? (draft == nil ? record?.selectedTake : nil)
     let entry = shot.entries.first { $0.entryId == entryId }
     let frame = entry.flatMap { frameLookup[$0.frameImageId] }
-    var value = ShotContinuationAvailability(outFrameStack: take?.renderStack ?? shot.renderStack,
-        suggestedPrompt: take?.prompt ?? "")
+    var value = ShotContinuationAvailability(outFrameStack: draft?.renderStack ?? take?.renderStack ?? shot.renderStack,
+        suggestedPrompt: draft?.prompt ?? take?.prompt ?? "")
+    value.baseTakeId = draft?.baseTakeId.nilIfEmpty
+    value.resolutionOverride = draft?.resolution
     value.anchor = take?.anchor
     value.targetFrame = take?.targetFrame ?? frame.map {
         ShotContinuationTargetFrame(entryId: entryId, imageId: $0.imageId, imagePath: $0.imagePath, fingerprint: "", label: $0.label)

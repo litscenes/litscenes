@@ -84,13 +84,13 @@ struct ShotPlayerSheetHost: View {
 
     private func reviewEnding(_ entryId: String) { prepareSegmentReview(entryId: entryId) }
 
-    private func prepareSegmentReview(entryId: String?) {
+    private func prepareSegmentReview(entryId: String?, draft: ShotTakeDraft? = nil) {
         guard let shot = library.shotTimeline.shots.first(where: { $0.shotId == request.shotId }) else { return }
         let targetId = entryId ?? shot.entries.first { shotPendingEndingEntryIds(shot).contains($0.entryId) }?.entryId ?? ""
         let initial = targetId.isEmpty ? library.shotContinuationAvailability(shotId: request.shotId)
-            : shotEndingReviewPreview(shot: shot, entryId: targetId, frameLookup: library.projectWideFrameLookup)
+            : shotEndingReviewPreview(shot: shot, entryId: targetId, frameLookup: library.projectWideFrameLookup, draft: draft)
         endingSession = ShotContinuationReviewSession(intent: targetId.isEmpty ? .append
-            : (initial.targetFrame == nil ? .retake(targetId) : .ending(targetId)), initial: initial)
+            : (initial.targetFrame == nil ? .retake(targetId) : .ending(targetId)), initial: initial, takeDraft: draft)
     }
 
     private var scopedAudioRegionActions: ShotAudioRegionActions {
@@ -377,6 +377,23 @@ struct ShotPlayerSheetHost: View {
                     }
                     Task { await library.renderShot(shotId: shotId, onlySegmentKeys: [segmentKey]) }
                 },
+                onSaveTakeDrafts: { drafts in
+                    let saved = library.saveShotTakeDrafts(shotId: request.shotId, drafts: drafts)
+                    promptDraftSaveFailed = !saved
+                    return saved
+                },
+                onRenderTake: { draft in
+                    guard library.saveShotTakeDrafts(shotId: request.shotId, drafts: [draft]) else {
+                        promptDraftSaveFailed = true; return
+                    }
+                    promptDraftSaveFailed = false
+                    if let live = library.shotTimeline.shots.first(where: { $0.shotId == request.shotId }),
+                       live.continuationRecord(entryId: draft.endEntryId) != nil || shotPendingEndingEntryIds(live).contains(draft.endEntryId) {
+                        prepareSegmentReview(entryId: draft.endEntryId, draft: draft)
+                    } else {
+                        Task { await library.renderShot(shotId: request.shotId, onlySegmentKeys: [draft.placementKey], takeDraft: draft) }
+                    }
+                },
                 onPersistPromptDrafts: { updates in
                     let saved = library.saveShotPromptDrafts(shotId: request.shotId, updates: updates)
                     promptDraftSaveFailed = !saved
@@ -522,6 +539,9 @@ struct ShotPlayerSheetHost: View {
                     }
                     return newShotId
                 },
+                onPrepareFullShot: { fingerprint in
+                    await editingAsync { await library.prepareShotVideoForSharing(shotId: request.shotId, fingerprint: fingerprint) }
+                },
                 onSendToFootage: {
                     await editingAsync { await library.sendShotOutputToFootage(shotId: request.shotId) }
                 },
@@ -647,8 +667,10 @@ struct ShotPlayerSheetHost: View {
                             return value
                         }
                         return session.entryId.isEmpty ? await library.prepareShotContinuationAvailability(shotId: request.shotId)
-                            : await library.prepareShotContinuationRetakeAvailability(shotId: request.shotId, entryId: session.entryId)
-                    }, onPrecedingEnding: { reviewEnding($0) }, onCancel: { endingSession = nil }, onRender: { recipe in
+                            : await library.prepareShotContinuationRetakeAvailability(shotId: request.shotId, entryId: session.entryId, draft: session.takeDraft)
+                    }, onPrecedingEnding: { reviewEnding($0) }, onCancel: { endingSession = nil }, onRender: { submitted in
+                        var recipe = submitted
+                        recipe.baseTakeId = session.takeDraft?.baseTakeId.nilIfEmpty
                         endingSession = nil
                         Task {
                             let before = library.shotTimeline.shots.first { $0.shotId == request.shotId }

@@ -146,6 +146,7 @@ struct PlateButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     var isProminent = false
     var isFullWidth = false
+    var disabledOpacity: Double = 0.4
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -165,6 +166,6 @@ struct PlateButtonStyle: ButtonStyle {
                     )
             )
             .plateEngravedBorder(cornerRadius: 3, inset: 2)
-            .opacity(isEnabled ? 1 : 0.4)
+            .opacity(isEnabled ? 1 : disabledOpacity)
     }
 }

@@ -19,11 +19,6 @@ struct ShotTakeReviewChip: View {
                     .buttonStyle(PlateButtonStyle(isProminent: true))
                     .help("Put this take in the film — free, and ⌘Z brings the previous take back")
             }
-            if let onCompare {
-                Button("Compare", action: onCompare)
-                    .buttonStyle(PlateButtonStyle())
-                    .help("Loop this take beside the one in the film")
-            }
             Button("Full Shot", action: onFullShot)
                 .buttonStyle(PlateButtonStyle())
                 .help("Return the player to the full shot")

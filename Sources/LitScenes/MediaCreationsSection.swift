@@ -85,6 +85,7 @@ func creationsInventory(items: [MediaItemRecord], lenses: [ProjectLens]) -> [Cre
         case MediaItemRecord.shotLookDerivativeKind,
              MediaItemRecord.clipLookDerivativeKind,
              MediaItemRecord.shotExportDerivativeKind,
+             MediaItemRecord.shotSegmentDerivativeKind,
              MediaItemRecord.videoChainClipDerivativeKind,
              MediaItemRecord.videoChainReelDerivativeKind,
              MediaItemRecord.collectedShotFrameDerivativeKind:

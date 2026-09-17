@@ -27,6 +27,9 @@ struct ShotRenderVersionsPlateView: View {
     var onRechainContinuations: () async -> Bool
     var onNewContinuationTake: ((String) -> Void)? = nil
     var onClose: () -> Void
+    var initialPreviewTakeId: String = ""
+    var onPreviewContinuationTake: ((String, ShotContinuationTake) -> Void)? = nil
+    var onNewContinuationTakeSelection: ((String, ShotContinuationTake) -> Void)? = nil
 
     /// "versionId|pairKey" entries whose prompt is disclosed.
     @State private var expandedPrompts: Set<String> = []
@@ -306,7 +309,12 @@ struct ShotRenderVersionsPlateView: View {
                     Task { _ = await onRepairContinuationTake(record.entryId, takeId) }
                 },
                 onNewTake: { onNewContinuationTake?(record.entryId) },
-                onClose: { takeBrowserEntryId = "" }
+                onClose: { takeBrowserEntryId = "" },
+                initialPreviewTakeId: initialPreviewTakeId,
+                onPreviewTake: { take in onPreviewContinuationTake?(record.entryId, take) },
+                onNewTakeSelection: onNewContinuationTakeSelection.map { callback in
+                    { take in callback(record.entryId, take) }
+                }
             )
         } else {
             Color.clear

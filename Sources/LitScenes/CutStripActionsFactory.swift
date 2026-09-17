@@ -289,6 +289,9 @@ func makeCutStripActions(
     actions.onPrepareContinuationRetake = { cutId, entryId in
         await library.prepareShotContinuationRetakeAvailability(shotId: cutId, entryId: entryId)
     }
+    actions.onPrepareContinuationTakeDraft = { cutId, draft in
+        await library.prepareShotContinuationRetakeAvailability(shotId: cutId, entryId: draft.endEntryId, draft: draft)
+    }
     actions.onStartContinuationRetake = { cutId, entryId, request in
         let before = library.shotTimeline.shots.first { $0.shotId == cutId }
         let outcome = await library.startShotContinuationRetake(shotId: cutId, entryId: entryId, request: request)
@@ -345,16 +348,16 @@ func makeCutStripActions(
             _ = await library.continueActiveShotLookAsNewShot(shotId: cutId)
         }
     }
-    actions.onPasteSegmentCards = { cutId, cards in
-        surface.pictureUndo.applyState = { shotId, snapshot in
-            library.restoreShotPictureState(shotId: shotId, snapshot: snapshot)
-        }
-        if let edit = library.pasteShotSegmentCards(shotId: cutId, cards: cards) {
+    actions.picturePasteRefusal = { library.shotRowPasteRefusal(shotId: $0, payload: $1) }
+    actions.onPastePictureClipboard = { cutId, payload in
+        Task { @MainActor in
+            guard let edit = await library.pasteShotRowClipboard(shotId: cutId, payload: payload) else { return }
+            surface.pictureUndo.applyState = { shotId, snapshot in
+                library.restoreShotPictureState(shotId: shotId, snapshot: snapshot)
+            }
             surface.pictureUndo.registerEdit(
-                shotId: cutId,
-                old: edit.before,
-                new: edit.after,
-                actionName: cards.count > 1 ? "Paste \(cards.count) Segments" : "Paste Segment",
+                shotId: cutId, old: edit.before, new: edit.after,
+                actionName: payload?.containsSavedVideosOnly == true ? "Paste Video Segment" : "Paste Frame Pair",
                 undoManager: surface.undoManager
             )
         }

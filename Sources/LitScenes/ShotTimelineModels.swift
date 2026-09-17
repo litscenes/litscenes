@@ -736,6 +736,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
     /// entry it covers (Vision misses stylized faces). Self-cleaning: a
     /// different resolved anchor simply stops matching and the check re-arms.
     var narrationAnchorFaceOverrideEntryId: String = ""
+    var takeDrafts: [ShotTakeDraft] = []
     var segmentPromptOverrides: [ShotSegmentPromptOverride] = []
     /// Pair-keyed exceptions to the Shot-wide render recipe. They affect only
     /// future renders; saved clips retain the recipe that produced them.
@@ -870,7 +871,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         case preferredRenderStack
         case narrationAnchorEntryId
         case narrationAnchorFaceOverrideEntryId
-        case segmentPromptOverrides
+        case segmentPromptOverrides, takeDrafts
         case segmentRenderOverrides
         case segmentDirectionPlans
         case joinBridgeVersions
@@ -971,6 +972,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         preferredRenderStack = try container.decodeIfPresent(String.self, forKey: .preferredRenderStack) ?? ""
         narrationAnchorEntryId = try container.decodeIfPresent(String.self, forKey: .narrationAnchorEntryId) ?? ""
         narrationAnchorFaceOverrideEntryId = try container.decodeIfPresent(String.self, forKey: .narrationAnchorFaceOverrideEntryId) ?? ""
+        takeDrafts = try container.decodeIfPresent([ShotTakeDraft].self, forKey: .takeDrafts) ?? []
         segmentPromptOverrides = ((try? container.decodeIfPresent([ShotSegmentPromptOverride].self, forKey: .segmentPromptOverrides)) ?? nil) ?? []
         segmentRenderOverrides = ((try? container.decodeIfPresent([ShotSegmentRenderOverride].self, forKey: .segmentRenderOverrides)) ?? nil) ?? []
         segmentDirectionPlans = ((try? container.decodeIfPresent([ShotSegmentDirectionPlanRecord].self, forKey: .segmentDirectionPlans)) ?? nil) ?? []
@@ -1761,7 +1763,8 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
             outputScopes: outputScopes,
             scopeId: ShotOutputEditContext.selection?.scopeId ?? "",
             selectedContinuationTakeIds: Dictionary(continuationRecords.map { ($0.entryId, $0.selectedTakeId) }, uniquingKeysWith: { _, last in last }),
-            segmentTakeSelections: segmentTakeSelections.sorted { $0.placementKey < $1.placementKey }
+            segmentTakeSelections: segmentTakeSelections.sorted { $0.placementKey < $1.placementKey },
+            seedSegmentClips: seedSegmentClips
         )
     }
 
@@ -1774,6 +1777,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         value.sourceBoundaries = snapshot.sourceBoundaries
         value.pictureInsertions = snapshot.pictureInsertions
         value.outputScopes = snapshot.outputScopes
+        if let seeds = snapshot.seedSegmentClips { value.seedSegmentClips = seeds }
         if let selections = snapshot.selectedContinuationTakeIds {
             for index in value.continuationRecords.indices {
                 value.continuationRecords[index].selectedTakeId = selections[value.continuationRecords[index].entryId] ?? ""
@@ -3948,6 +3952,8 @@ struct ShotPictureStateSnapshot: Hashable {
     /// Optional like the continuation selectors: a hand-built snapshot that
     /// omits it must never wipe an operator's take choices on restore.
     var segmentTakeSelections: [ShotSegmentTakeSelection]? = nil
+    /// Retained media travels with paste undo/redo; legacy hand-built snapshots leave it alone.
+    var seedSegmentClips: [ShotRenderSegmentClip]? = nil
 }
 
 /// Before AND after travel together (the `ShotAudioStateEdit` shape) because
@@ -4521,6 +4527,7 @@ struct ShotSegmentPromptPlanItem: Identifiable {
     var nativeExtendSource: ShotNativeExtendSource? = nil
     var continuationTakeId: String = ""
     var continuationAnchor: ShotContinuationAnchor? = nil
+    var resolutionOverride: String? = nil
 
     var nativeExtendContextSeconds: Double? {
         guard let source = nativeExtendSource ?? nativeExtendSourceClip.map(ShotNativeExtendSource.footage) else { return nil }
@@ -5198,7 +5205,7 @@ func shotRenderSegmentPlan(
         continuationTakeId: String = "",
         continuationAnchor: ShotContinuationAnchor? = nil
     ) {
-        let item = makeShotSegmentPromptPlanItem(
+        var item = makeShotSegmentPromptPlanItem(
             shot: shot,
             pair: pair,
             index: generatedItems.count,
@@ -5210,6 +5217,7 @@ func shotRenderSegmentPlan(
             continuationTakeId: continuationTakeId,
             continuationAnchor: continuationAnchor
         )
+        if !shot.takeDrafts.isEmpty { applyStoredShotTakeDraft(to: &item, shot: shot) }
         segments.append(.generated(item))
         generatedItems.append(item)
     }

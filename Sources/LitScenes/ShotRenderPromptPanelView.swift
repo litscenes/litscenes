@@ -59,10 +59,12 @@ struct ShotRenderPromptPanel: View {
     var onPersistPromptDrafts: ([ShotPromptDraftUpdate]) -> Bool = { _ in true }
     var canAssistPrompts = false
     var onAssistPrompt: (ShotPromptAssistanceRequest) async -> ShotPromptAssistanceOutcome = { _ in .failed("Prompt assistance is unavailable.") }
+    var onSaveTakeDrafts: ([ShotTakeDraft]) -> Bool = { _ in true }
+    var onRenderTake: (ShotTakeDraft) -> Void = { _ in }
+    @State private var takeEdits: [String: ShotTakeDraft] = [:]
     @State private var promptSaveError = ""
     var focusedSegmentKey: String = ""
     var onFocusSegment: (String) -> Void = { _ in }
-    var onCopyVideo: (ShotSegmentPreview) -> Void = { _ in }
     var onOpenTakes: (String) -> Void = { _ in }
     /// The take strip's callbacks; the modal owns preview/compare/use.
     var previewingTakeId: String? = nil
@@ -95,7 +97,7 @@ struct ShotRenderPromptPanel: View {
     /// The editable (generated) segments — footage rows carry no prompt.
     private var planItems: [ShotSegmentPromptPlanItem] {
         planSegments.compactMap { segment in
-            if case .generated(let item) = segment { return item }
+            if case .generated(let item) = segment { return inspectedItem(item) }
             return nil
         }
     }
@@ -195,6 +197,7 @@ struct ShotRenderPromptPanel: View {
         }
         // Crash-safe drafts, same law as the inline plan strip: debounced,
         // upsert-only, flushed when the panel closes or opens a review.
+        .onChange(of: takeEdits) { scheduleAutosave() }
         .onChange(of: drafts) { scheduleAutosave() }
         .onChange(of: modeDrafts) { scheduleAutosave() }
         .onDisappear {
@@ -232,25 +235,54 @@ struct ShotRenderPromptPanel: View {
         _ = persistPromptDrafts()
     }
 
+    private func selectedOption(_ item: ShotSegmentPromptPlanItem) -> ShotTakeOption? {
+        let options = shotTakeOptions(shot: shot, segment: .generated(item))
+        return options.first { $0.id == previewingTakeId } ?? shotInFilmTake(options)
+    }
+
+    private func originalItem(_ item: ShotSegmentPromptPlanItem) -> ShotSegmentPromptPlanItem {
+        planSegments.compactMap { segment -> ShotSegmentPromptPlanItem? in
+            if case .generated(let original) = segment { return original }; return nil
+        }.first { $0.pairKey == item.pairKey } ?? item
+    }
+
+    private func takeDraft(_ item: ShotSegmentPromptPlanItem, savedOnly: Bool = false) -> ShotTakeDraft {
+        let original = originalItem(item)
+        let base = ShotTakeDraft(shot: shot, item: original, option: selectedOption(original), savedOnly: savedOnly)
+        if savedOnly { return base }
+        return takeEdits[base.id] ?? shot.takeDrafts.first { $0.id == base.id } ?? base
+    }
+
+    private func inspectedItem(_ item: ShotSegmentPromptPlanItem) -> ShotSegmentPromptPlanItem {
+        let draft = takeDraft(item)
+        var value = draft.applying(to: item)
+        if !draft.baseTakeId.isEmpty,
+           let take = shot.continuationRecord(entryId: draft.endEntryId)?.takes.first(where: { $0.takeId == draft.baseTakeId }) {
+            value.continuationTakeId = take.takeId
+            value.continuationAnchor = take.anchor
+            if !take.anchor.framePath.isEmpty { value.pair.start = take.anchor.syntheticFrame }
+            if let target = take.targetFrame { value.pair.end = target.frame }
+        }
+        return value
+    }
+
     @discardableResult
     private func persistPromptDrafts(requireText: Bool = false) -> Bool {
-        let changed = Set(drafts.keys).union(modeDrafts.keys)
-        let items = planItems.filter { changed.contains($0.pairKey) }
-        if requireText, items.contains(where: { draftValue(for: $0).trimmed.isEmpty }) {
+        if requireText, planItems.contains(where: { draftValue(for: $0).trimmed.isEmpty }) {
             promptSaveError = "Enter a direction or use Suggest before rendering."
             return false
         }
-        let updates = items.filter { !draftValue(for: $0).trimmed.isEmpty }.map {
-            ShotPromptDraftUpdate(item: $0, draft: promptDraftBinding($0).wrappedValue)
-        }
-        let saved = updates.isEmpty || onPersistPromptDrafts(updates)
-        promptSaveError = saved ? "" : "The prompt could not be saved. Retry before rendering."
+        let saved = takeEdits.isEmpty || onSaveTakeDrafts(Array(takeEdits.values))
+        promptSaveError = saved ? "" : "The draft could not be saved. Retry before rendering."
         return saved
     }
 
     private func promptDraftBinding(_ item: ShotSegmentPromptPlanItem) -> Binding<ShotPromptDraft> {
-        Binding(get: { ShotPromptDraft.current(item: item, text: drafts[item.pairKey], mode: modeValue(for: item)) },
-            set: { drafts[item.pairKey] = $0.text; modeDrafts[item.pairKey] = $0.mode })
+        Binding(get: { takeDraft(item).promptDraft }, set: {
+            var value = takeDraft(item)
+            value.prompt = $0.text; value.mode = $0.mode
+            takeEdits[value.id] = value
+        })
     }
 
     private var panelHeader: some View {
@@ -390,14 +422,20 @@ struct ShotRenderPromptPanel: View {
         shotSavedSegmentClip(shot: shot, pair: item.pair)
     }
 
-    private func segmentRow(_ item: ShotSegmentPromptPlanItem) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private func segmentRow(_ source: ShotSegmentPromptPlanItem) -> some View {
+        let item = inspectedItem(source)
+        let base = takeDraft(item)
+        return VStack(alignment: .leading, spacing: 10) {
             resultRow(.generated(item), ordinal: "Segment \(item.displayIndex + 1) of \(planSegments.count)")
             DisclosureGroup("Input Frames", isExpanded: Binding(
                 get: { activeClip(item) == nil || expandedInputs.contains(item.pairKey) },
                 set: { if $0 { expandedInputs.insert(item.pairKey) } else { expandedInputs.remove(item.pairKey) } }
             )) { keyframePair(item) }
-            Text("NEXT TAKE").font(PlateType.label(8, weight: .semibold)).foregroundStyle(PlateColor.inkFaint)
+            if base.renderStack == nil {
+                Text("This saved recipe is unavailable. Choose a supported model for the next take.")
+                    .font(.caption).foregroundStyle(CanonColor.rust)
+            }
+            Text(base.baseTakeNumber > 0 ? "Next take · based on Take \(base.baseTakeNumber)" : "Next take").font(PlateType.label(11, weight: .semibold)).foregroundStyle(PlateColor.ink)
             VStack(alignment: .leading, spacing: 6) {
                 ShotEditorFlow(spacing: 8) {
                     PlateLabel(
@@ -435,7 +473,7 @@ struct ShotRenderPromptPanel: View {
                 // rendered with, shown ONLY when the next render would change
                 // its recipe. This is the line that separates provenance from
                 // intent at the exact moment they diverge.
-                if let clip = activeClip(item),
+                if let clip = selectedOption(item)?.clip ?? activeClip(item),
                    let asRendered = shotSegmentAsRenderedDescriptor(clip: clip, nextStack: item.renderStack) {
                     PlateLabel(
                         text: "As rendered · \(asRendered) — next render · \(item.renderStack.shortLabel)",
@@ -453,6 +491,8 @@ struct ShotRenderPromptPanel: View {
                 }
                 segmentRenderControls(item)
                 ShotSegmentPromptEditor(shot: shot, item: item, draft: promptDraftBinding(item),
+                    baseIdentity: base.id, savedPrompt: takeDraft(item, savedOnly: true).prompt,
+                    onRevertRecipe: { let saved = takeDraft(item, savedOnly: true); takeEdits[saved.id] = saved },
                     canAssist: canAssistPrompts, onAssist: onAssistPrompt) {
                     segmentRenderAction(item)
                 }
@@ -492,14 +532,17 @@ struct ShotRenderPromptPanel: View {
         Button(isTakeOperation ? takeTitle : cta.title) {
             if isArmed || isTakeOperation {
                 armedRenderKey = nil
-                guard saveDirectionPlansForConfirm() else { return }
-                onRenderSegment(computedOverrides(), segmentKey)
+                guard persistPromptDrafts() else { return }
+                let draft = takeDraft(item)
+                guard !draft.prompt.trimmed.isEmpty else { promptSaveError = "Enter a direction or use Suggest before rendering."; return }
+                guard onSaveTakeDrafts([draft]) else { promptSaveError = "The draft could not be saved. Retry before rendering."; return }
+                onRenderTake(draft)
             } else {
                 armedRenderKey = segmentKey
             }
         }
         .buttonStyle(PlateButtonStyle(isProminent: isArmed))
-        .disabled(isRenderBlocked || (!isTakeOperation
+        .disabled(takeDraft(item).renderStack == nil || isRenderBlocked || (!isTakeOperation
             && (!modelConfigured(item.renderStack.model) || !leadInRenderable(item) || !nativeExtendRenderable(item))))
         .help(segmentRenderHelp(item, isTakeOperation: isTakeOperation, ctaHelp: cta.help))
     }
@@ -569,23 +612,31 @@ struct ShotRenderPromptPanel: View {
 
     private func resultRow(_ source: ShotSegmentPresentation, ordinal: String, takes: [ShotTakeOption] = []) -> some View {
         let work = ShotWorkPresentation(jobs: workflows.jobs, shotId: shot.shotId)
-        let result = source.withProgress(work.segment(source.id), shot: shot)
+        var result = source.withProgress(work.segment(source.id), shot: shot)
+        let inspected = takes.first { $0.id == previewingTakeId } ?? shotInFilmTake(takes)
+        if let inspected {
+            result.preview = inspected.clip.map { ShotSegmentPreview(clip: $0) }
+            result.isPlayable = inspected.isReady
+        }
         return ShotSegmentResultView(result: result, ordinal: ordinal,
             isFocused: focusedSegmentKey == result.id,
             isStale: result.record.map { shotContinuationStaleEntryIds(shot).contains($0.entryId) } ?? false,
-            onSelect: { onFocusSegment(result.id) },
+            onSelect: {
+                if let inspected { autosaveDrafts(); onPreviewTake(inspected) }
+                else if let preview = result.preview { onPreviewSegment(preview) }
+                else { onFocusSegment(result.id) }
+            },
             onPreview: {
-                if let inFilm = shotInFilmTake(takes), inFilm.isReady { autosaveDrafts(); onPreviewTake(inFilm) }
+                if let inspected, inspected.isReady { autosaveDrafts(); onPreviewTake(inspected) }
                 else if let preview = result.preview { onPreviewSegment(preview) }
             },
             onTakes: { if let record = result.record { autosaveDrafts(); onOpenTakes(record.entryId) } },
-            onCopy: { if let preview = result.preview { onCopyVideo(preview) } },
             takes: takes,
             previewedTakeId: previewingTakeId,
             isRenderBlocked: isRenderBlocked,
             onPreviewTake: { autosaveDrafts(); onPreviewTake($0) },
             onUseTake: onUseTake,
-            onCompareTakes: { autosaveDrafts(); onCompareTakes($0, $1) })
+            onCompareTakes: nil)
     }
 
     /// The bridge's honest introduction: which end stands on real footage.
@@ -832,13 +883,23 @@ struct ShotRenderPromptPanel: View {
         }
     }
 
+    private func baseRecipeLabel(_ item: ShotSegmentPromptPlanItem) -> String {
+        takeDraft(item).baseTakeNumber > 0 ? "Use saved recipe" : "Use Defaults"
+    }
+
+    private func recipeIsEdited(_ item: ShotSegmentPromptPlanItem) -> Bool {
+        let draft = takeDraft(item), saved = takeDraft(item, savedOnly: true)
+        return draft.stack != saved.stack || draft.resolution != saved.resolution || draft.prompt != saved.prompt
+            || draft.mode != saved.mode || draft.directionPlan != saved.directionPlan
+    }
+
     private func segmentRenderControls(_ item: ShotSegmentPromptPlanItem) -> some View {
         ShotEditorFlow(spacing: 7) {
             PlateLabel(
-                text: item.hasRenderOverride ? "Override" : (activeClip(item) != nil && item.isAIExtension ? "Saved recipe" : "Shot default"),
-                size: 7.5,
-                weight: item.hasRenderOverride ? .semibold : .regular,
-                color: item.hasRenderOverride ? PlateColor.ink : PlateColor.inkFaint
+                text: recipeIsEdited(item) ? "Edited recipe" : (takeDraft(item).baseTakeNumber > 0 ? "Saved recipe" : "Shot default"),
+                size: 10,
+                weight: .regular,
+                color: PlateColor.ink.opacity(0.72)
             )
             modelMenu(
                 stack: item.renderStack,
@@ -847,16 +908,24 @@ struct ShotRenderPromptPanel: View {
                 availableModels: item.isAIExtension && item.pair.end != nil
                     ? ShotRenderModel.shotDefaultCases.filter(\.supportsShotEnding)
                     : ShotRenderModel.shotDefaultCases + (item.canUseNativeFootageExtend ? [.ltx23NativeExtend] : []),
+                resolution: takeDraft(item).resolution,
+                onResolution: { model, resolution in
+                    var value = takeDraft(item)
+                    value.stack = item.renderStack.replacingModel(model).rawValue
+                    value.resolution = resolution
+                    takeEdits[value.id] = value
+                },
+                labelOverride: takeDraft(item).renderStack == nil ? "Choose a model…" : nil,
                 onSelect: { setSegmentStack(item, stack: $0) }
             )
-            if item.hasRenderOverride {
-                Button(item.isAIExtension ? "Use saved recipe" : "Use Defaults") {
-                    onSetSegmentRenderStack(item.pair, nil)
+            if recipeIsEdited(item) {
+                Button(baseRecipeLabel(item)) {
+                    let saved = takeDraft(item, savedOnly: true); takeEdits[saved.id] = saved
                 }
                 .buttonStyle(.plain)
                 .font(PlateType.label(9, weight: .regular))
                 .foregroundStyle(PlateColor.inkFaint)
-                .help("Remove this segment's model, length, and audio override")
+                .help("Restore the selected take’s saved direction, model, duration, audio, and resolution")
             }
             Spacer(minLength: 0)
             if item.pair.start == nil, item.renderStack.tailAnchoredModelSelection == nil {
@@ -891,6 +960,9 @@ struct ShotRenderPromptPanel: View {
         /// the pick failed mid-render with a scary provider error).
         allowsNarrationDriven: Bool = true,
         availableModels: [ShotRenderModel] = ShotRenderModel.shotDefaultCases,
+        resolution: String? = nil,
+        onResolution: ((ShotRenderModel, String) -> Void)? = nil,
+        labelOverride: String? = nil,
         onSelect: @escaping (ShotRenderStack) -> Void
     ) -> some View {
         let reasons = Dictionary(uniqueKeysWithValues: availableModels.compactMap { model -> (ShotRenderModel, String)? in
@@ -905,13 +977,16 @@ struct ShotRenderPromptPanel: View {
                 configuredModels: configuredRenderModels, unavailableReasons: reasons,
                 allowsCivitai: shape != .leadIn,
                 requiresEnding: shape == .paired && !allowsNarrationDriven,
-                onSelect: onSelect)
+                onSelect: onSelect, selectedResolution: resolution, onSelectResolution: onResolution, labelOverride: labelOverride)
             ProviderBillingControl(target: .video(stack.model))
         }
     }
 
     private func setSegmentStack(_ item: ShotSegmentPromptPlanItem, stack: ShotRenderStack) {
-        onSetSegmentRenderStack(item.pair, item.isAIExtension ? stack : (stack == shot.renderStack ? nil : stack))
+        var value = takeDraft(item)
+        value.stack = stack.rawValue
+        if let resolution = value.resolution, !Hailuo3ResolutionPreference.choices(for: stack.model).contains(resolution) { value.resolution = nil }
+        takeEdits[value.id] = value
     }
 
     /// A lead-in row renders only when its effective stack has a tail-anchored
@@ -994,7 +1069,7 @@ struct ShotRenderPromptPanel: View {
     /// Delegates to the shared pure function so the panel and the inline
     /// render-plan strip persist overrides identically.
     private func computedOverrides() -> [ShotSegmentPromptOverride] {
-        computedSegmentPromptOverrides(drafts: drafts, items: planItems, now: DateFormats.now())
+        computedSegmentPromptOverrides(drafts: Dictionary(uniqueKeysWithValues: planItems.map { ($0.pairKey, draftValue(for: $0)) }), items: planItems, now: DateFormats.now())
     }
 
     // MARK: Retained timing authority
@@ -1005,7 +1080,7 @@ struct ShotRenderPromptPanel: View {
     }
 
     private func modeValue(for item: ShotSegmentPromptPlanItem) -> ShotSegmentPromptMode {
-        modeDrafts[item.pairKey] ?? item.promptMode
+        takeDraft(item).mode
     }
 
     /// The card/clipboard text for a segment: in beats mode the LIVE compiled
@@ -1036,6 +1111,8 @@ struct ShotRenderPromptPanel: View {
 struct Hailuo3ResolutionMenuSection: View {
     let model: ShotRenderModel
     var showsDivider: Bool = true
+    var selectedResolution: String? = nil
+    var onSelectResolution: ((String) -> Void)? = nil
     var onPicked: () -> Void = {}
 
     /// The preference is UserDefaults, not observed — this keeps the
@@ -1050,11 +1127,12 @@ struct Hailuo3ResolutionMenuSection: View {
             }
             ForEach(choices, id: \.self) { choice in
                 Button {
-                    Hailuo3ResolutionPreference.setResolution(choice, for: model)
+                    if let onSelectResolution { onSelectResolution(choice) }
+                    else { Hailuo3ResolutionPreference.setResolution(choice, for: model) }
                     refreshTick += 1
                     onPicked()
                 } label: {
-                    if Hailuo3ResolutionPreference.resolution(for: model) == choice {
+                    if (selectedResolution ?? Hailuo3ResolutionPreference.resolution(for: model)) == choice {
                         Label("Resolution \u{00B7} \(choice)", systemImage: "checkmark")
                     } else {
                         Text("Resolution \u{00B7} \(choice)")

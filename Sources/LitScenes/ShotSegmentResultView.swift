@@ -46,7 +46,7 @@ struct ShotSegmentVideoThumbnail: View {
             if let tile = loader.tile(clipPath: path, rung: 1.0 / 24.0, rungIndex: index, heightPixels: 160) {
                 Image(nsImage: tile).resizable().scaledToFit()
             } else {
-                Image(systemName: "film").foregroundStyle(PlateColor.inkFaint)
+                Image(systemName: "film").foregroundStyle(PlateColor.ink.opacity(0.72))
             }
             if preview != nil {
                 Image(systemName: "play.circle.fill").font(.system(size: 24))
@@ -72,7 +72,6 @@ struct ShotSegmentResultView: View {
     var onSelect: () -> Void
     var onPreview: () -> Void
     var onTakes: () -> Void
-    var onCopy: () -> Void = {}
     /// The placement's takes (≥2 shows the strip); empty for footage rows.
     var takes: [ShotTakeOption] = []
     var previewedTakeId: String? = nil
@@ -83,16 +82,20 @@ struct ShotSegmentResultView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text("\(ordinal) · \(result.title)".uppercased())
-                .font(PlateType.label(9, weight: .semibold)).foregroundStyle(PlateColor.inkFaint)
+                .font(PlateType.label(10, weight: .semibold)).foregroundStyle(PlateColor.ink.opacity(0.72))
+            if let shown = takes.first(where: { $0.id == previewedTakeId }) ?? shotInFilmTake(takes) {
+                Text("Take \(shown.takeNumber) of \(max(takes.count, takes.map(\.takeNumber).max() ?? 0)) · \(shown.isInFilm ? "In film" : "Not in film")")
+                    .font(PlateType.label(11, weight: .semibold)).foregroundStyle(PlateColor.ink)
+            }
             HStack(alignment: .top, spacing: 10) {
                 Button(action: onSelect) { ShotSegmentStatusThumbnail(result: result, width: 128, height: 72) }
-                    .buttonStyle(.plain).help("Select this segment in the Shot timeline")
+                    .buttonStyle(.plain).help("Preview this saved video")
                 VStack(alignment: .leading, spacing: 5) {
                     if let clip = result.clip {
                         Text(shotClipModelShortLabel(provider: clip.provider, model: clip.model))
                             .font(PlateType.label(10, weight: .semibold))
                         Text(String(format: "Saved video · %.1fs", result.preview?.durationSeconds ?? 0))
-                            .font(PlateType.label(9, weight: .regular)).foregroundStyle(PlateColor.inkFaint)
+                            .font(PlateType.label(10, weight: .regular)).foregroundStyle(PlateColor.ink.opacity(0.72))
                         if takes.count == 1, let only = takes.first, only.isInFilm {
                             Text("TAKE 1 · IN FILM").font(PlateType.label(8, weight: .semibold))
                         } else if takes.isEmpty, let take = result.record?.selectedTake {
@@ -107,7 +110,6 @@ struct ShotSegmentResultView: View {
                     ShotEditorFlow(spacing: 6) {
                         if result.clip != nil {
                             Button("Preview Clip", action: onPreview).disabled(!result.isPlayable)
-                            Button("Copy Video", action: onCopy).disabled(!result.isPlayable)
                         }
                         if let record = result.record, takes.count < 2 {
                             Button("Takes (\(record.takes.count))", action: onTakes)
@@ -138,7 +140,7 @@ struct ShotSegmentResultView: View {
     private var statusCaptions: some View {
         if let progress = result.progress, progress.stage != .saved {
             Text(progress.label + (progress.errorMessage.isEmpty ? "" : " · " + progress.errorMessage))
-                .font(.caption).foregroundStyle(progress.stage == .failed ? CanonColor.rust : PlateColor.inkFaint)
+                .font(.caption).foregroundStyle(progress.stage == .failed ? CanonColor.rust : PlateColor.ink.opacity(0.72))
                 .fixedSize(horizontal: false, vertical: true)
         }
         if isStale {
@@ -149,7 +151,7 @@ struct ShotSegmentResultView: View {
            let record = result.record, let attempt = record.renderingTake ?? record.sortedTakes.last,
            attempt.takeId != record.selectedTakeId {
             Text("\(attempt.takeStatus == .ready ? "Alternate take" : "Take") \(attempt.takeNumber) · \(attempt.takeStatus.rawValue)\(attempt.errorMessage.isEmpty ? "" : " · " + attempt.errorMessage)")
-                .font(.caption).foregroundStyle(attempt.takeStatus == .failed ? CanonColor.rust : PlateColor.inkFaint)
+                .font(.caption).foregroundStyle(attempt.takeStatus == .failed ? CanonColor.rust : PlateColor.ink.opacity(0.72))
                 .fixedSize(horizontal: false, vertical: true)
         }
     }

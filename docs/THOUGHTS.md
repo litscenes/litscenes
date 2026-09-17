@@ -111,3 +111,12 @@
 2026-09-16T03:12:34Z The assembly's continuation rung stays gated on AI-extension entries while the presentation resolver is ungated; the divergence predates takes and is left as is.
 2026-09-16T03:12:34Z Whole-shot history numerals left the player bar: a per-segment take strip answers the same question without a look-alike read-only mode, and the render history plate keeps provenance. Escape now returns a take preview or comparison to the full shot before it closes the sheet.
 2026-09-16T03:12:34Z Compare is picture only: two muted players on one host clock, the longer take leading the loop. Sound stays in single-take preview.
+
+2026-09-17T02:21:46Z Copy Video writes a nonstructural saved clip but the Shot-row menu accepts only frame-pair cards; the take browser also combines fixed cream with inherited dark-appearance labels.
+
+2026-09-17T02:42:47Z Saved-video paste uses registered footage plus an immutable placement-keyed seed, so continuations need no invented keyframe pair; picture snapshots now include seed records to restore paste accurately through undo and redo.
+
+2026-09-17T03:20:02Z The prior card actions followed the in-film take while playback followed the inspected take; the viewer must own media actions, and full-shot sharing must flatten the actual edited output.
+
+2026-09-17T04:01:41Z Film membership and inspection are independent: viewer actions and next-take drafts follow inspection, while only Use in Film changes membership; saved prompt initialization must prefer immutable provenance over an inferred default.
+2026-09-17T04:01:41Z Reusing the established flattening path preserves edited Full Shot picture and audio; fingerprint and clipboard-revision checks prevent asynchronous preparation from acting on a changed context.

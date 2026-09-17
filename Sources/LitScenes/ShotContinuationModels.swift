@@ -187,6 +187,8 @@ func shotContinuationAnchorFingerprint(
 /// immutable snapshot and identify it by `continuationTakeId`.
 struct ShotContinuationTake: Codable, Hashable, Sendable, Identifiable {
     var takeId: String = ""
+    var baseTakeId: String? = nil
+    var resolutionOverride: String? = nil
     var takeNumber: Int = 0
     var status: String = ""
     var anchor: ShotContinuationAnchor = ShotContinuationAnchor()
@@ -208,7 +210,7 @@ struct ShotContinuationTake: Codable, Hashable, Sendable, Identifiable {
     var id: String { takeId }
 
     private enum CodingKeys: String, CodingKey {
-        case takeId, takeNumber, status, anchor, targetFrame, prompt, mode, stack
+        case takeId, takeNumber, status, anchor, targetFrame, prompt, mode, stack, baseTakeId, resolutionOverride
         case segmentClip, finalFramePath, providerOutputPath, workflowStep, outputFingerprint, requestId, traceId
         case errorMessage, createdAt, updatedAt
     }
@@ -250,6 +252,8 @@ struct ShotContinuationTake: Codable, Hashable, Sendable, Identifiable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         takeId = try container.decodeIfPresent(String.self, forKey: .takeId) ?? ""
+        baseTakeId = try container.decodeIfPresent(String.self, forKey: .baseTakeId)
+        resolutionOverride = try container.decodeIfPresent(String.self, forKey: .resolutionOverride)
         takeNumber = try container.decodeIfPresent(Int.self, forKey: .takeNumber) ?? 0
         status = try container.decodeIfPresent(String.self, forKey: .status) ?? ""
         anchor = ((try? container.decodeIfPresent(ShotContinuationAnchor.self, forKey: .anchor)) ?? nil)
@@ -486,6 +490,8 @@ struct ShotContinuationAvailability: Sendable {
     }
     /// Review intent is transient; immutable take recipes remain the ledger.
     var requestedMode: ShotContinuationMode? = nil
+    var baseTakeId: String? = nil
+    var resolutionOverride: String? = nil
     var preferredMode: ShotContinuationMode {
         if targetFrame != nil { return .arriveAtFrame }
         if requestedMode == .outFrame, outFrameAvailable { return .outFrame }
@@ -500,6 +506,8 @@ struct ShotContinuationRequest: Codable, Sendable {
     var prompt: String
     var preparedAnchor: ShotContinuationAnchor
     var targetFrame: ShotContinuationTargetFrame? = nil
+    var baseTakeId: String? = nil
+    var resolutionOverride: String? = nil
 }
 
 /// Runtime source for LTX Native Extend. Placed Footage resolves through the

@@ -6,6 +6,9 @@ struct ShotSegmentPromptEditor<RenderAction: View>: View {
     let shot: ProjectShot
     let item: ShotSegmentPromptPlanItem
     @Binding var draft: ShotPromptDraft
+    var baseIdentity: String = ""
+    var savedPrompt: String? = nil
+    var onRevertRecipe: (() -> Void)? = nil
     var canAssist: Bool
     var onAssist: (ShotPromptAssistanceRequest) async -> ShotPromptAssistanceOutcome
     @ViewBuilder var renderAction: () -> RenderAction
@@ -18,10 +21,10 @@ struct ShotSegmentPromptEditor<RenderAction: View>: View {
     @State private var undoDrafts: [ShotPromptDraft] = []
 
     private var sourceIdentity: String {
-        ShotPromptAssistanceRequest(shot: shot, item: item, intent: .suggest, text: "").sourceIdentity
+        baseIdentity + "|" + ShotPromptAssistanceRequest(shot: shot, item: item, intent: .suggest, text: "").sourceIdentity
     }
     private var revertText: String {
-        shotSavedSegmentClip(shot: shot, pair: item.pair)?.prompt.trimmed.nilIfEmpty
+        savedPrompt ?? shotSavedSegmentClip(shot: shot, pair: item.pair)?.prompt.trimmed.nilIfEmpty
             ?? shotSegmentPrompt(pair: item.pair)
     }
 
@@ -32,9 +35,8 @@ struct ShotSegmentPromptEditor<RenderAction: View>: View {
                 HStack(spacing: 8) {
                     assistanceLink(.improve)
                     assistanceLink(.suggest)
-                    Button("Revert") { replacePrompt(revertText) }
-                        .disabled(draft.text == revertText)
-                        .help("Restore the saved take's prompt, or the initial direction for an unrendered segment")
+                    Button("Revert") { replacePrompt(revertText); onRevertRecipe?() }
+                        .help("Restore the selected take’s saved prompt and recipe")
                     if !undoDrafts.isEmpty {
                         Button("Undo") {
                             if let previous = undoDrafts.popLast() { draft = previous; candidate = nil; error = "" }
@@ -83,7 +85,7 @@ struct ShotSegmentPromptEditor<RenderAction: View>: View {
                 .overlay(RoundedRectangle(cornerRadius: 3).stroke(CanonColor.hairlinePaper))
                 .environment(\.colorScheme, .light)
         }
-        .onChange(of: sourceIdentity) { _, _ in contextRevision += 1 }
+        .onChange(of: sourceIdentity) { _, _ in contextRevision += 1; requestId = nil; candidate = nil; error = ""; undoDrafts = [] }
         .onDisappear { requestId = nil }
     }
 
