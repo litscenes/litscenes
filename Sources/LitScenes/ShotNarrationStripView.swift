@@ -129,7 +129,7 @@ struct ShotNarrationStrip: View {
         speedDraft = narration?.effectiveVoiceSpeed ?? StoryAudioVoiceCatalog.defaultSpeed
     }
 
-    var body: some View {
+    private var narrationContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             chipsSection
             actionRow
@@ -138,15 +138,21 @@ struct ShotNarrationStrip: View {
         .background(RoundedRectangle(cornerRadius: 9).fill(CanonColor.paperInset.opacity(0.45)))
         .overlay(RoundedRectangle(cornerRadius: 9).stroke(CanonColor.hairlinePaper.opacity(0.9), lineWidth: 1))
         .frame(maxWidth: 640, alignment: .leading)
+    }
+
+    var body: some View {
+        narrationContent
         .animation(.easeOut(duration: 0.18), value: effectiveMessaging)
         .animation(.easeOut(duration: 0.18), value: narrationReady)
         .onAppear {
             seedEditor()
             syncSpeedFromNarration()
-            if (shot.narrationChips?.statements.isEmpty ?? true) && !isLoadingChips {
+            if shot.sortedNarrationTakes.isEmpty && !shot.entries.isEmpty
+                && (shot.narrationChips?.statements.isEmpty ?? true) && !isLoadingChips {
                 onGenerateChips(false)
             }
         }
+        .onChange(of: narration?.takeId ?? "") { _, _ in syncTakeSelection() }
         .onChange(of: narration?.script ?? "") { seedEditor() }
         .onChange(of: narrationReady) { seedEditor() }
         .onChange(of: effectiveMessaging) { seedEditor() }
@@ -158,6 +164,13 @@ struct ShotNarrationStrip: View {
                 syncSpeedFromNarration()
             }
         }
+    }
+
+    private func syncTakeSelection() {
+        selectedMessaging = ""
+        voicePresetId = narration?.voicePresetId ?? ""
+        seedEditor()
+        syncSpeedFromNarration()
     }
 
     // MARK: Meaning-message chips
@@ -427,13 +440,13 @@ struct ShotNarrationStrip: View {
                 Text("(what the audio says)")
                     .font(CanonType.archive(6.5))
                     .foregroundStyle(CanonColor.muted.opacity(0.6))
-                let versionCount = narration?.titleVersions.count ?? 0
+                let versionCount = shot.sortedNarrationTakes.filter(\.isReady).count
                 if versionCount > 1 {
-                    Text("V\(versionCount)")
+                    Text("\(versionCount) TAKES")
                         .font(CanonType.archive(6.5, weight: .bold))
                         .kerning(0.5)
                         .foregroundStyle(CanonColor.brass.opacity(0.85))
-                        .help("This narration has \(versionCount) voiced versions")
+                        .help("\(versionCount) saved audio takes are available above")
                 }
                 Spacer(minLength: 0)
             }
@@ -630,23 +643,23 @@ struct ShotNarrationStrip: View {
         Button {
             player.toggle(path: narration.audioPath)
         } label: {
-            Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+            Image(systemName: player.isPlaying(path: narration.audioPath) ? "pause.circle.fill" : "play.circle.fill")
                 .font(.system(size: 20, weight: .regular))
                 .foregroundStyle(CanonColor.brass)
         }
         .buttonStyle(.plain)
-        .help(player.isPlaying ? "Pause narration" : "Play narration")
+        .help(player.isPlaying(path: narration.audioPath) ? "Pause narration" : "Play narration")
 
         ZStack(alignment: .leading) {
             Capsule()
                 .fill(CanonColor.hairlinePaper)
             Capsule()
                 .fill(CanonColor.brass)
-                .frame(width: max(0, 110 * player.progress))
+                .frame(width: max(0, 110 * (player.isLoaded(path: narration.audioPath) ? player.progress : 0)))
         }
         .frame(width: 110, height: 3)
 
-        Text("\(timeLabel(player.currentTime)) / \(timeLabel(playerDuration(narration)))")
+        Text("\(timeLabel(player.isLoaded(path: narration.audioPath) ? player.currentTime : 0)) / \(timeLabel(playerDuration(narration)))")
             .font(CanonType.archive(8, weight: .medium))
             .foregroundStyle(CanonColor.muted)
             .monospacedDigit()

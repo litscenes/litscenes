@@ -109,8 +109,7 @@ struct ChatTranscriptView<EmptyState: View>: View {
                         VStack(alignment: .leading, spacing: 3) {
                             if let image = NSImage(contentsOfFile: item.thumbnailPath) {
                                 Image(nsImage: image)
-                                    .resizable()
-                                    .scaledToFill()
+                                    .fittedThumbnail()
                                     .frame(width: 72, height: 50)
                                     .clipShape(RoundedRectangle(cornerRadius: 5))
                             } else {

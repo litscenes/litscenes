@@ -52,6 +52,7 @@ struct CutRenderPlanStrip: View {
 
     @State private var promptSaveError = ""
     @State private var drafts: [String: String] = [:]
+    @State private var draftItems: [String: ShotSegmentPromptPlanItem] = [:]
     @State private var modeDrafts: [String: ShotSegmentPromptMode] = [:]
     @State private var autosaveTask: Task<Void, Never>?
     /// Local face verdict for the narration anchor (nil while checking). The
@@ -106,10 +107,19 @@ struct CutRenderPlanStrip: View {
 
     @ViewBuilder
     var body: some View {
-        if cut.renderStack.isNarrationDriven {
-            narrationDrivenPlan
-        } else {
-            standardPlan
+        Group {
+            if cut.renderStack.isNarrationDriven {
+                narrationDrivenPlan
+            } else {
+                standardPlan
+            }
+        }
+        .onChange(of: drafts) { scheduleAutosave() }
+        .onChange(of: modeDrafts) { scheduleAutosave() }
+        .onChange(of: cut.renderStack) { _, _ in autosaveDrafts() }
+        .onDisappear {
+            autosaveTask?.cancel()
+            autosaveDrafts()
         }
     }
 
@@ -219,16 +229,7 @@ struct CutRenderPlanStrip: View {
                 .stroke(hairline(0.9), lineWidth: 1)
         )
         .frame(maxWidth: 720, alignment: .leading)
-        // Crash-safe drafts: a debounced upsert-only autosave (see
-        // mergedAutosavePromptOverrides — deletion stays a confirm/RESET
-        // behavior) keyed off the raw dictionary so plan recomputes can't
-        // loop it, flushed when the strip collapses.
-        .onChange(of: drafts) { scheduleAutosave() }
-        .onChange(of: modeDrafts) { scheduleAutosave() }
-        .onDisappear {
-            autosaveTask?.cancel()
-            autosaveDrafts()
-        }
+
     }
 
     private func scheduleAutosave() {
@@ -254,22 +255,7 @@ struct CutRenderPlanStrip: View {
         }
     }
 
-    private var narrationDriverSeconds: Double? {
-        guard let narration = cut.narrationArtifact,
-              narration.isReady,
-              narration.provider == "elevenlabs_tts",
-              FileManager.default.fileExists(atPath: narration.audioPath) else {
-            return nil
-        }
-        if let region = cut.audioRegions.map({ $0.normalized() }).first(where: {
-            $0.laneId == ShotAudioLaneId.narration
-                && $0.provenance == "active_narration"
-        }) {
-            return max(region.startSeconds, 0) + max(region.durationSeconds, 0)
-        }
-        return cut.audioMix.lane(ShotAudioLaneId.narration).effectiveStartSeconds
-            + narration.durationSeconds
-    }
+    private var narrationDriverSeconds: Double? { cut.authoredNarrationDriverSeconds }
 
     private var narrationPromptItem: ShotSegmentPromptPlanItem? {
         guard let anchor = narrationAnchor else { return nil }
@@ -293,7 +279,7 @@ struct CutRenderPlanStrip: View {
 
     private var narrationDrivenPlan: some View {
         let seconds = narrationDriverSeconds
-        let validDuration = seconds.map { $0 >= 2 && $0 <= 20 } == true
+        let validDuration = seconds.map(ShotNarrationDuration.isValid) == true
         let anchor = narrationAnchor
         let hasAnchor = anchor != nil
         let overrideApplies = anchor.map {
@@ -319,16 +305,7 @@ struct CutRenderPlanStrip: View {
             cut.entries.filter { !$0.isSkipped && !$0.isClip }.count - 1,
             0
         )
-        let narrationIsStale = cut.activeRenderVersion.map {
-            $0.model == VideoModelSelection.falLTX23AudioToVideo.providerModelId
-                && (
-                    (!$0.sourceNarrationFingerprint.isEmpty
-                        && $0.sourceNarrationFingerprint
-                            != ShotNarrationDriverBuilder.currentFingerprint(shot: cut))
-                    || (!$0.sourceNarrationTraceId.isEmpty
-                        && $0.sourceNarrationTraceId != cut.narrationArtifact?.traceId)
-                )
-        } == true
+        let narrationIsStale = cut.narrationVideoNeedsSync
 
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
@@ -336,7 +313,8 @@ struct CutRenderPlanStrip: View {
                     .font(CanonType.archive(7.5, weight: .semibold))
                     .kerning(1.1)
                     .foregroundStyle(labelInk)
-                Text("LTX 2.3 · one shot-wide clip")
+                renderStackChip
+                Text("one shot-wide clip")
                     .font(CanonType.interface(10.5))
                     .foregroundStyle(bodyInk(0.65))
                 Spacer(minLength: 0)
@@ -348,7 +326,7 @@ struct CutRenderPlanStrip: View {
             }
 
             if let seconds {
-                Text("\(String(format: "%.1f", seconds))s authored narration drives the clip")
+                Text("\(ShotNarrationDuration.label(seconds)) authored narration drives the clip")
                     .font(CanonType.interface(10.5))
                     .foregroundStyle(validDuration ? bodyInk(0.72) : Color.red.opacity(0.8))
             } else {
@@ -363,7 +341,7 @@ struct CutRenderPlanStrip: View {
 
             if !validDuration {
                 HStack(spacing: 8) {
-                    Text("LTX accepts 2–20 seconds. Adjust the narration region or voice speed; LitScenes will not split or trim it automatically.")
+                    Text(seconds.flatMap(ShotNarrationDuration.refusal) ?? "Choose a ready narration take, or select another video model.")
                         .font(CanonType.interface(10))
                         .foregroundStyle(bodyInk(0.64))
                     Button("OPEN NARRATION") {
@@ -375,6 +353,14 @@ struct CutRenderPlanStrip: View {
                 }
             }
 
+            if !isConfigured {
+                Text("Add a FAL API key in App Settings, or choose a configured video model.")
+                    .font(CanonType.interface(10)).foregroundStyle(CanonColor.rust)
+            }
+            if !hasAnchor {
+                Text("Add a ready Frame to anchor the LTX video.")
+                    .font(CanonType.interface(10)).foregroundStyle(CanonColor.rust)
+            }
             if laterFrameCount > 0 {
                 Text("\(laterFrameCount) other frame card\(laterFrameCount == 1 ? "" : "s") stay in the cut, but LTX uses only the ANCHOR frame above.")
                     .font(CanonType.interface(10))
@@ -445,9 +431,10 @@ struct CutRenderPlanStrip: View {
                         || promptItem == nil
                         || anchorBlocked
                 )
-                .help(anchorBlocked
-                    ? (anchorFaceVerdict.flatMap { shotAnchorLipSyncRefusal(verdict: $0) } ?? "")
-                    : "One paid LTX 2.3 request for the whole shot")
+                .help(seconds.flatMap(ShotNarrationDuration.refusal)
+                    ?? (anchorBlocked
+                        ? (anchorFaceVerdict.flatMap { shotAnchorLipSyncRefusal(verdict: $0) } ?? "")
+                        : "One paid LTX 2.3 request for the whole shot"))
             }
         }
         .padding(12)
@@ -591,7 +578,10 @@ struct CutRenderPlanStrip: View {
     @discardableResult
     private func persistPromptDrafts(requireText: Bool = false) -> Bool {
         let changed = Set(drafts.keys).union(modeDrafts.keys)
-        let items = plan.generatedItems.filter { changed.contains($0.pairKey) }
+        var candidates = Dictionary(plan.generatedItems.map { ($0.pairKey, $0) }, uniquingKeysWith: { first, _ in first })
+        if let narration = narrationPromptItem { candidates[narration.pairKey] = narration }
+        candidates.merge(draftItems) { _, edited in edited }
+        let items = changed.sorted().compactMap { candidates[$0] }
         if requireText, items.contains(where: { draftValue(for: $0).trimmed.isEmpty }) {
             promptSaveError = "Enter a direction or use Suggest before rendering."
             return false
@@ -606,7 +596,7 @@ struct CutRenderPlanStrip: View {
 
     private func promptDraftBinding(_ item: ShotSegmentPromptPlanItem) -> Binding<ShotPromptDraft> {
         Binding(get: { ShotPromptDraft.current(item: item, text: drafts[item.pairKey], mode: modeValue(for: item)) },
-            set: { drafts[item.pairKey] = $0.text; modeDrafts[item.pairKey] = $0.mode })
+            set: { draftItems[item.pairKey] = item; drafts[item.pairKey] = $0.text; modeDrafts[item.pairKey] = $0.mode })
     }
 
     /// Confirm only after text and retained timing authority are saved together.
@@ -668,11 +658,20 @@ struct CutRenderPlanStrip: View {
     /// The NEXT-render stack picker on the plate — the same items as the
     /// row's chip, labelled NEXT whenever it disagrees with what the playable
     /// version was actually rendered with.
+    private var modelSelectionActions: CutStripActions {
+        var value = actions
+        value.onSetRenderStack = { shotId, stack in
+            guard persistPromptDrafts() else { return }
+            actions.onSetRenderStack(shotId, stack)
+        }
+        return value
+    }
+
     private var renderStackChip: some View {
         let provenance = cut.playableRenderVersion.map { shotRenderProvenanceSummary(version: $0) }
         let nextDiffers = provenance.map { $0 != cut.renderStack.shortLabel } ?? false
         return Menu {
-            ShotRenderStackMenuContent(cut: cut, actions: actions, onBrowseCivitai: { showingCivitai = true })
+            ShotRenderStackMenuContent(cut: cut, actions: modelSelectionActions, onBrowseCivitai: { showingCivitai = true })
         } label: {
             HStack(spacing: 5) {
                 Text(nextDiffers ? "NEXT · \(cut.renderStack.shortLabel)" : cut.renderStack.shortLabel)
@@ -1237,8 +1236,7 @@ struct CutRenderPlanStrip: View {
             } else if !frame.imagePath.trimmed.isEmpty,
                       let image = NSImage(contentsOfFile: frame.imagePath) {
                 Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .fittedThumbnail()
             } else {
                 Image(systemName: "photo")
                     .font(.system(size: 9, weight: .semibold))
@@ -1267,7 +1265,7 @@ struct CutRenderPlanStrip: View {
     private func draftBinding(for item: ShotSegmentPromptPlanItem) -> Binding<String> {
         Binding(
             get: { draftValue(for: item) },
-            set: { drafts[item.pairKey] = $0 }
+            set: { draftItems[item.pairKey] = item; drafts[item.pairKey] = $0 }
         )
     }
 

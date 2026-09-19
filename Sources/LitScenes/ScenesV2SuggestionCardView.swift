@@ -102,8 +102,7 @@ struct ScenesV2SuggestionCardView: View {
             if !mark.avatarImagePath.isEmpty,
                let image = StripThumbnailCache.shared.image(path: mark.avatarImagePath, maxPixel: 120) {
                 Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .fittedThumbnail(circular: true)
                     .frame(width: 40, height: 40)
                     .clipShape(Circle())
             } else {

@@ -4,10 +4,20 @@ import Foundation
 
 /// The persisted record of a shot's narration. The spoken text (`script`) is
 /// the meaning-message title followed by its LLM-drafted body (or the user's
-/// edited version of the whole); `bodyText` records the body component last
-/// drafted (provenance, never a display source), and every voiced script lands
-/// in `titleVersions` (latest last — no browser yet).
-struct ShotNarrationArtifact: Codable, Hashable, Sendable {
+/// edited version of the whole). Each generation has its own take identity;
+/// `titleVersions` remains legacy text provenance, not audio history.
+struct ShotNarrationArtifact: Codable, Hashable, Sendable, Identifiable {
+    var takeId: String = ""
+    var speechTraceId: String = ""
+    var runId: String = ""
+    var traceGroupId: String = ""
+    var sourceProjectId: String = ""
+    var sourceShotId: String = ""
+    var sourceTakeId: String = ""
+    var copiedAt: String = ""
+    var id: String { takeId }
+    var effectiveSpeechTraceId: String { speechTraceId.nilIfEmpty ?? traceId }
+
     var provider: String = "elevenlabs_tts"
     var model: String = ElevenLabsSpeechModels.defaultModelId
     var status: String = ""          // "generating" | "ready" | "failed"
@@ -59,6 +69,14 @@ struct ShotNarrationArtifact: Codable, Hashable, Sendable {
 
     func normalized() -> ShotNarrationArtifact {
         var value = self
+        value.takeId = value.takeId.trimmed
+        value.speechTraceId = value.speechTraceId.trimmed
+        value.runId = value.runId.trimmed
+        value.traceGroupId = value.traceGroupId.trimmed
+        value.sourceProjectId = value.sourceProjectId.trimmed
+        value.sourceShotId = value.sourceShotId.trimmed
+        value.sourceTakeId = value.sourceTakeId.trimmed
+        value.copiedAt = value.copiedAt.trimmed
         value.provider = value.provider.trimmed.isEmpty ? "elevenlabs_tts" : value.provider.trimmed.lowercased()
         value.model = value.model.trimmed.isEmpty ? ElevenLabsSpeechModels.defaultModelId : value.model.trimmed
         value.status = value.status.trimmed
@@ -85,6 +103,7 @@ struct ShotNarrationArtifact: Codable, Hashable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
+        case takeId, speechTraceId, runId, traceGroupId, sourceProjectId, sourceShotId, sourceTakeId, copiedAt
         case provider
         case model
         case status
@@ -131,8 +150,24 @@ struct ShotNarrationArtifact: Codable, Hashable, Sendable {
         traceId: String = "",
         errorMessage: String = "",
         generatedAt: String = "",
-        updatedAt: String = DateFormats.now()
+        updatedAt: String = DateFormats.now(),
+        takeId: String = "",
+        speechTraceId: String = "",
+        runId: String = "",
+        traceGroupId: String = "",
+        sourceProjectId: String = "",
+        sourceShotId: String = "",
+        sourceTakeId: String = "",
+        copiedAt: String = ""
     ) {
+        self.takeId = takeId
+        self.speechTraceId = speechTraceId
+        self.runId = runId
+        self.traceGroupId = traceGroupId
+        self.sourceProjectId = sourceProjectId
+        self.sourceShotId = sourceShotId
+        self.sourceTakeId = sourceTakeId
+        self.copiedAt = copiedAt
         self.provider = provider
         self.model = model
         self.status = status
@@ -159,6 +194,14 @@ struct ShotNarrationArtifact: Codable, Hashable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        takeId = try container.decodeIfPresent(String.self, forKey: .takeId) ?? ""
+        speechTraceId = try container.decodeIfPresent(String.self, forKey: .speechTraceId) ?? ""
+        runId = try container.decodeIfPresent(String.self, forKey: .runId) ?? ""
+        traceGroupId = try container.decodeIfPresent(String.self, forKey: .traceGroupId) ?? ""
+        sourceProjectId = try container.decodeIfPresent(String.self, forKey: .sourceProjectId) ?? ""
+        sourceShotId = try container.decodeIfPresent(String.self, forKey: .sourceShotId) ?? ""
+        sourceTakeId = try container.decodeIfPresent(String.self, forKey: .sourceTakeId) ?? ""
+        copiedAt = try container.decodeIfPresent(String.self, forKey: .copiedAt) ?? ""
         provider = try container.decodeIfPresent(String.self, forKey: .provider) ?? "elevenlabs_tts"
         model = try container.decodeIfPresent(String.self, forKey: .model)
             ?? ElevenLabsSpeechModels.legacyMissingModelId

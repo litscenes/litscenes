@@ -268,7 +268,7 @@ struct LensStyleBrowserPanel: View {
                 AsyncImage(url: URL(string: style.url)) { phase in
                     switch phase {
                     case .success(let image):
-                        image.resizable().aspectRatio(contentMode: .fill)
+                        image.fittedThumbnail()
                     default:
                         CanonColor.paperInset
                     }

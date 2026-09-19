@@ -85,6 +85,7 @@ struct ShotOutputEdits: Codable, Hashable, Sendable {
         result.audioRegions = audioRegions
         result.sourceSegmentAudio = sourceSegmentAudio
         result.narrationArtifact = narrationArtifact
+        result.activeNarrationTakeId = narrationArtifact?.isReady == true ? narrationArtifact?.takeId ?? "" : ""
         result.activeLookVersionId = activeLookVersionId
         return result
     }
@@ -174,6 +175,7 @@ extension ProjectShot {
         result.reverseProxies = edited.reverseProxies
         result.joinBridgeVersions = edited.joinBridgeVersions
         result.lookVersions = edited.lookVersions
+        result.narrationTakes = edited.narrationTakes
         return result
     }
 }

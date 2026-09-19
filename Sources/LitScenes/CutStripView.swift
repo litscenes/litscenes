@@ -36,6 +36,7 @@ struct CutStripActions {
     var configuredRenderModels: Set<ShotRenderModel> = []
     var activeShotNarrationId = ""
     var activeShotNarrationSpeedId = ""
+    var activeShotNarrationSpeedIds: Set<String> = []
     var activeShotChipsIds: Set<String> = []
     var accountVoiceOptions: [StoryAudioVoiceOption] = []
     /// Voice ids curated out of the render-time voice menus (Voices tab).
@@ -55,6 +56,11 @@ struct CutStripActions {
     var onUncombine: (String) -> Void = { _ in }
     var onAddToFinals: (String) -> Void = { _ in }
     var onOpenJovilabe: (String) -> Void = { _ in }
+    var projectId: String = ""
+    var onUseNarrationTake: (String, String) -> ShotNarrationStateEdit? = { _, _ in nil }
+    var onPasteNarration: (String, ShotNarrationClipboardPayload) -> ShotNarrationStateEdit? = { _, _ in nil }
+    var narrationPasteAvailability: (String) -> ShotNarrationPasteAvailability = { _ in .unavailable("Copy a narration take first.") }
+    var onRestoreNarration: (String, ShotNarrationStateSnapshot) -> Bool = { _, _ in false }
     var onSetRenderStack: (String, ShotRenderStack) -> Void = { _, _ in }
     /// Segment-scoped recipe persistence uses placement identity so repeated
     /// appearances of the same frame or clip never share an override.
@@ -293,6 +299,10 @@ struct CutStripView: View {
         isPlate ? ScenesV2StageDress.insetFill : CanonColor.paperInset.opacity(legacyOpacity)
     }
 
+    @Environment(\.undoManager) private var narrationUndoManager
+    @StateObject private var narrationUndo = ShotNarrationUndoCoordinator()
+    @ObservedObject private var narrationClipboard = ShotClipboardState.shared
+    @FocusState private var narrationRowFocused: Bool
     @State private var pictureClipboardRevision = 0
     @State private var expandedNarration = false
     @State private var expandedRenderPlan = false
@@ -351,6 +361,43 @@ struct CutStripView: View {
         return index >= tail
     }
 
+    private var narrationIsBusy: Bool {
+        actions.activeShotNarrationIds.contains(cut.shotId) || actions.activeShotNarrationSpeedIds.contains(cut.shotId)
+    }
+
+    private var narrationPasteAvailability: ShotNarrationPasteAvailability {
+        let _ = narrationClipboard.revision
+        return actions.narrationPasteAvailability(cut.shotId)
+    }
+
+    private var canPasteNarration: Bool { narrationPasteAvailability.payload != nil }
+
+    private func registerNarrationEdit(_ edit: ShotNarrationStateEdit?, name: String) {
+        guard let edit else { return }
+        narrationUndo.applyState = actions.onRestoreNarration
+        narrationUndo.register(shotId: cut.shotId, edit: edit, name: name, undoManager: narrationUndoManager)
+        actions.onTouchCut(cut.shotId)
+    }
+
+    private func pasteNarration() {
+        guard let payload = narrationPasteAvailability.payload else {
+            actions.onTouchCut(cut.shotId)
+            expandedNarration = true
+            return
+        }
+        narrationPlayer.stop()
+        let edit = actions.onPasteNarration(cut.shotId, payload)
+        registerNarrationEdit(edit, name: "Paste Narration")
+        if edit != nil { expandedNarration = true }
+    }
+
+    @ViewBuilder
+    private var narrationPasteMenu: some View {
+        Button("Paste Narration", action: pasteNarration)
+            .disabled(!canPasteNarration)
+        if let refusal = narrationPasteAvailability.refusal { Text(refusal).font(.caption) }
+    }
+
     @ViewBuilder
     private var pasteSegmentMenuItem: some View {
         let _ = pictureClipboardRevision
@@ -386,7 +433,15 @@ struct CutStripView: View {
         )
         // Right-click paste target: "onto another cut row". The menu content
         // builds at open, so the clipboard read is always fresh.
-        .contextMenu { pasteSegmentMenuItem }
+        .contextMenu { pasteSegmentMenuItem; narrationPasteMenu }
+        .focusable()
+        .focusEffectDisabled()
+        .focused($narrationRowFocused)
+        .onTapGesture { narrationRowFocused = true }
+        .onPasteCommand(of: [ShotNarrationClipboard.utType, ShotAudioClipboard.utType]) { _ in
+            guard !(NSApp.keyWindow?.firstResponder is NSTextView) else { return }
+            pasteNarration()
+        }
         .onReceive(NotificationCenter.default.publisher(for: ShotPictureClipboard.didChange)) { _ in
             pictureClipboardRevision += 1
         }
@@ -411,6 +466,10 @@ struct CutStripView: View {
             seedBoxRenderPlan()
             consumeNarrationFocusRequest()
             consumeRenderPlanFocusRequest()
+        }
+        .onChange(of: cut.activeNarrationTakeId) { _, takeId in
+            narrationPlayer.stop()
+            if !takeId.isEmpty { expandedNarration = true }
         }
         .onChange(of: cut.shotId) { _, _ in
             seedBoxRenderPlan()
@@ -470,7 +529,10 @@ struct CutStripView: View {
         }
         .frame(minHeight: 26)
         .contentShape(Rectangle())
-        .onTapGesture { actions.onTouchCut(cut.shotId) }
+        .onTapGesture {
+            narrationRowFocused = true
+            actions.onTouchCut(cut.shotId)
+        }
         .dropDestination(for: ShotFrameTransfer.self) { items, _ in
             guard let transfer = items.first else { return false }
             let end = cut.entries.count
@@ -517,6 +579,13 @@ struct CutStripView: View {
                     .padding(.leading, 4)
                 }
             }
+            if !cut.sortedNarrationTakes.isEmpty {
+                ShotNarrationTakeBrowser(shot: cut, projectId: actions.projectId,
+                    isBusy: narrationIsBusy, pasteRefusal: narrationPasteAvailability.refusal, player: narrationPlayer,
+                    onUse: { takeId in
+                        registerNarrationEdit(actions.onUseNarrationTake(cut.shotId, takeId), name: "Use Narration Take")
+                    }, onPaste: pasteNarration)
+            }
             if expandedRenderPlan, !actions.activeShotRenderIds.contains(cut.shotId), cut.renderArtifact?.status != "generating" {
                 CutRenderPlanStrip(
                     cut: cut,
@@ -538,11 +607,21 @@ struct CutStripView: View {
                 )
             }
             if expandedNarration {
+                HStack {
+                    Button("PASTE NARRATION", action: pasteNarration)
+                        .disabled(!canPasteNarration)
+                        .help(narrationPasteAvailability.refusal ?? "Paste the whole narration at the start of this Shot")
+                    Spacer()
+                }
+                .font(CanonType.archive(7.5, weight: .semibold))
+                if let refusal = narrationPasteAvailability.refusal {
+                    Text(refusal).font(CanonType.interface(11)).foregroundStyle(CanonColor.muted)
+                }
                 ShotNarrationStrip(
                     shot: cut,
                     isLoadingChips: actions.activeShotChipsIds.contains(cut.shotId),
                     isNarrating: actions.activeShotNarrationIds.contains(cut.shotId) || cut.narrationArtifact?.status == "generating",
-                    isRemixingSpeed: actions.activeShotNarrationSpeedId == cut.shotId,
+                    isRemixingSpeed: actions.activeShotNarrationSpeedIds.contains(cut.shotId),
                     extraVoices: actions.accountVoiceOptions,
                     hiddenVoiceIds: actions.hiddenNarrationVoiceIds,
                     player: narrationPlayer,
@@ -907,9 +986,6 @@ struct CutStripView: View {
         let isReady = cut.narrationArtifact?.isReady == true
         return Button {
             expandedNarration.toggle()
-            if expandedNarration {
-                expandedRenderPlan = false
-            }
             narrationPlayer.stop()
         } label: {
             HStack(spacing: 4) {
@@ -927,12 +1003,7 @@ struct CutStripView: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .disabled(cut.entries.isEmpty)
-        .help(
-            cut.entries.isEmpty
-                ? "Add Frames to narrate this Shot"
-                : (expandedNarration ? "Close the narration strip" : "Narrate this Shot")
-        )
+        .help(expandedNarration ? "Close the narration composer" : "Create or paste narration for this Shot")
         .padding(.top, 2)
     }
 
@@ -1285,8 +1356,14 @@ struct CutStripView: View {
                     pricing: actions.falPricing,
                     isFetchingRates: actions.isFetchingVideoPricing
                 )
-                let title = (!toggle.actsImmediately && estimate.headlineLabel != nil)
-                    ? "\(toggle.title) · \(estimate.headlineLabel ?? "")"
+                let headline: String? = cut.renderStack.isNarrationDriven
+                    ? cut.authoredNarrationDriverSeconds.flatMap { seconds in
+                        ShotRenderCostEstimate.narrationDrivenUSD(stack: cut.renderStack,
+                            durationSeconds: seconds, pricing: actions.falPricing)
+                    }.map { "EST. " + String(format: "$%.2f", $0) }
+                    : estimate.headlineLabel
+                let title = (!toggle.actsImmediately && headline != nil)
+                    ? "\(toggle.title) · \(headline ?? "")"
                     : toggle.title
                 let disabledReason = cut.entries.isEmpty
                     ? "Add Frames to render this Shot"
@@ -1454,7 +1531,7 @@ struct CutStripView: View {
             videoActions(tile)
         }
         .frame(width: Self.cellSize.width)
-        .contextMenu { pasteSegmentMenuItem }
+        .contextMenu { pasteSegmentMenuItem; narrationPasteMenu }
         .popover(isPresented: Binding(get: { tile.result.record != nil && takeBrowserEntryId == tile.result.record?.entryId },
             set: { if !$0 { takeBrowserEntryId = "" } }), arrowEdge: .bottom) {
                 if let record = tile.result.record { continuationTakeBrowser(entryId: record.entryId) }
@@ -1702,8 +1779,7 @@ struct CutStripView: View {
             if let frame, frame.status == "ready", !frame.imagePath.trimmed.isEmpty,
                let image = StripThumbnailCache.shared.image(path: frame.imagePath) {
                 Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .fittedThumbnail()
             } else if layout == .box, let frame, frame.isPlanFulfillmentCandidate {
                 // A plan is not a queue: no spinner for work that isn't
                 // running. Candidates can carry status "queued", so this
@@ -1775,8 +1851,7 @@ struct CutStripView: View {
             CanonColor.paperInset.opacity(0.4)
             if let image = take.flatMap({ StripThumbnailCache.shared.image(path: $0.finalFramePath) }) {
                 Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .fittedThumbnail()
             }
             VStack(spacing: 5) {
                 if rendering != nil {
@@ -1915,8 +1990,7 @@ struct CutStripView: View {
                let image = (media.videoStripPath.flatMap { StripThumbnailCache.shared.image(path: $0) })
                 ?? StripThumbnailCache.shared.image(path: media.thumbnailPath) {
                 Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .fittedThumbnail()
             } else {
                 VStack(spacing: 4) {
                     Image(systemName: "film.stack")

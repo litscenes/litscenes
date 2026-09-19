@@ -237,8 +237,7 @@ struct ScenesSequenceRowView: View {
             .first
         if let image {
             Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
+                .fittedThumbnail()
                 .frame(width: Self.thumbSize.width, height: Self.thumbSize.height)
                 .clipShape(RoundedRectangle(cornerRadius: 5))
         } else {

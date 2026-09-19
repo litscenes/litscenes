@@ -211,6 +211,7 @@ struct ElevenLabsAudioResponse {
     var characterCost: String
     var characterCount: String
     var responseBodySHA256: String
+    var traceId: String = ""
 }
 
 /// One voice from the account's GET /v1/voices listing.
@@ -297,7 +298,10 @@ struct ElevenLabsClient {
         outputFormat: String = "mp3_44100_128",
         voiceSettings: ElevenLabsVoiceSettings? = nil,
         projectId: String = "",
-        runId: String = ""
+        runId: String = "",
+        traceGroupId: String = "",
+        parentTraceId: String = "",
+        artifactId: String = ""
     ) async throws -> ElevenLabsAudioResponse {
         let url = try url(
             path: "/v1/text-to-speech/\(voiceId)",
@@ -322,6 +326,12 @@ struct ElevenLabsClient {
                 operation: "text_to_speech",
                 projectId: projectId,
                 runId: runId,
+                traceGroupId: traceGroupId,
+                parentTraceId: parentTraceId,
+                workflowName: artifactId.isEmpty ? "" : "shot_narration",
+                workflowStep: "speech",
+                artifactType: artifactId.isEmpty ? "" : "narration_take",
+                artifactId: artifactId,
                 model: modelId,
                 requestBodyFormat: "application/json",
                 responseBodyFormatHint: "audio/mpeg",
@@ -454,7 +464,8 @@ struct ElevenLabsClient {
             requestId: requestId,
             characterCost: header("character-cost", in: httpResponse) ?? "",
             characterCount: header("x-character-count", in: httpResponse) ?? "",
-            responseBodySHA256: sha256Hex(data)
+            responseBodySHA256: sha256Hex(data),
+            traceId: result.traceId
         )
     }
 

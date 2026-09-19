@@ -232,7 +232,7 @@ struct DeletedShotsShelfView: View {
                                    frameLookup: frameLookup,
                                    mediaLookup: mediaLookup
                                ) {
-                                Image(nsImage: poster).resizable().aspectRatio(contentMode: .fill)
+                                Image(nsImage: poster).fittedThumbnail()
                             } else {
                                 Image(systemName: "film")
                                     .foregroundStyle(CanonColor.muted.opacity(0.6))

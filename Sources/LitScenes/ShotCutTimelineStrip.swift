@@ -2474,7 +2474,9 @@ private struct ShotFilmstripBandFill: View {
             )
             if let path = band.fillImagePath,
                let placeholder = StripThumbnailCache.shared.image(path: path, maxPixel: 800) {
-                context.draw(Image(nsImage: placeholder), in: CGRect(origin: .zero, size: size))
+                if let fitted = SheetImageFit.fittedRect(source: placeholder.size, in: CGRect(origin: .zero, size: size)) {
+                    context.draw(Image(nsImage: placeholder), in: fitted)
+                }
             }
             for tile in tiles {
                 guard let image = loader.tile(
@@ -2486,24 +2488,9 @@ private struct ShotFilmstripBandFill: View {
                 let rect = CGRect(x: tile.x, y: 0, width: tile.width, height: size.height)
                 let imageSize = image.size
                 guard imageSize.width > 0, imageSize.height > 0 else { continue }
-                // Aspect-fill crop into the slot: a copied context scopes the
-                // clip to this tile.
-                var tileContext = context
-                tileContext.clip(to: Path(rect))
-                let fillScale = max(rect.width / imageSize.width, rect.height / imageSize.height)
-                let drawSize = CGSize(
-                    width: imageSize.width * fillScale,
-                    height: imageSize.height * fillScale
-                )
-                tileContext.draw(
-                    Image(nsImage: image),
-                    in: CGRect(
-                        x: rect.midX - drawSize.width / 2,
-                        y: rect.midY - drawSize.height / 2,
-                        width: drawSize.width,
-                        height: drawSize.height
-                    )
-                )
+                if let fitted = SheetImageFit.fittedRect(source: imageSize, in: rect) {
+                    context.draw(Image(nsImage: image), in: fitted)
+                }
             }
         }
         .task(id: tilePlanKey) {

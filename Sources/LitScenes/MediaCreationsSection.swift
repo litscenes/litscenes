@@ -265,8 +265,7 @@ struct MediaCreationsSection: View {
                 Group {
                     if let nsImage = NSImage(contentsOfFile: path) {
                         Image(nsImage: nsImage)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
+                            .fittedThumbnail()
                     } else {
                         CanonColor.paperInset
                     }

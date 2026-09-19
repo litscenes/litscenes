@@ -486,8 +486,7 @@ struct PoolTileView: View {
                         )
                 } else if let image = StripThumbnailCache.shared.image(path: thumbPath, maxPixel: 340) {
                     Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
+                        .fittedThumbnail()
                         .frame(minWidth: 0, maxWidth: .infinity)
                         .frame(height: 76)
                         .clipShape(RoundedRectangle(cornerRadius: 6))

@@ -245,8 +245,7 @@ struct ShotContinuationReviewView: View {
                 if let path = availability.anchor?.framePath,
                    let image = StripThumbnailCache.shared.image(path: path) {
                     Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
+                        .fittedThumbnail()
                 } else {
                     Image(systemName: "photo")
                         .foregroundStyle(ShotReviewPalette.ink.opacity(0.65))
@@ -550,7 +549,7 @@ struct ShotContinuationTakeBrowserView: View {
             ZStack {
                 CanonColor.mediaCardHover
                 if let image = StripThumbnailCache.shared.image(path: take.finalFramePath) {
-                    Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+                    Image(nsImage: image).fittedThumbnail()
                 } else if [.queued, .generating].contains(take.takeStatus) {
                     ProgressView().controlSize(.small).tint(CanonColor.bone)
                 } else {

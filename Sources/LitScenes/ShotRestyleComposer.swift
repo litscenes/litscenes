@@ -13,7 +13,7 @@ struct ShotLookStyleChipRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 9) {
                     AsyncImage(url: URL(string: selection.url)) { image in
-                        image.resizable().aspectRatio(contentMode: .fill)
+                        image.fittedThumbnail()
                     } placeholder: {
                         Rectangle().fill(PlateColor.creamDeep)
                     }
@@ -313,7 +313,7 @@ struct ShotRestyleComposer: View {
         HStack(alignment: .top, spacing: 12) {
             if let selection = styleSelection {
                 AsyncImage(url: URL(string: selection.url)) { image in
-                    image.resizable().aspectRatio(contentMode: .fill)
+                    image.fittedThumbnail()
                 } placeholder: {
                     Rectangle().fill(PlateColor.creamDeep)
                 }

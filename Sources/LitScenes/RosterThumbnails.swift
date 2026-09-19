@@ -4,15 +4,14 @@ import SwiftUI
 // identity group headers. (Casting is implicit — a character is in a scene when they
 // have a take there — so there is no separate cast-editing surface.)
 
-/// A media item's thumbnail (or source image) filled into a rounded square.
+/// A media item's thumbnail (or source image) fitted inside a rounded square.
 func mediaItemThumbnail(_ item: MediaItemRecord, side: CGFloat) -> some View {
     Color.clear
         .overlay(
             Group {
                 if let nsImage = NSImage(contentsOfFile: item.thumbnailPath.isEmpty ? item.path : item.thumbnailPath) {
                     Image(nsImage: nsImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
+                        .fittedThumbnail()
                 } else {
                     CanonColor.paperInset
                 }

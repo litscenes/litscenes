@@ -327,3 +327,141 @@ import Testing
     let resolved = StoryAudioVoiceCatalog.option(for: "v_custom", customVoiceId: nil, extraVoices: extras)
     #expect(resolved.voiceId == "v_custom")
 }
+
+
+// MARK: Independent narration history and transfer
+
+/// Two unrelated projects exercise the same transfer without relying on any
+/// words, voices, props, or brands from a reported narration fixture.
+@Test(arguments: ["The glacier reveals an older shoreline.", "Fold the paper along the marked edge."])
+func narrationHistoryAndTransferRemainIndependent(script: String) throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let source = directory.appendingPathComponent("original.mp3")
+    let speed = directory.appendingPathComponent("slower.m4a")
+    let bytes = Data([1, 4, 9, 16])
+    try bytes.write(to: source)
+    try Data([2, 3, 5, 7]).write(to: speed)
+    let first = ShotNarrationArtifact(status: "ready", audioPath: speed.path, sourceAudioPath: source.path,
+        script: script, voiceName: "Voice", durationSeconds: 4, sourceDurationSeconds: 3,
+        voiceSpeed: 0.75, requestId: "speech-request", traceId: "draft-trace", takeId: "take-a", speechTraceId: "speech-trace")
+    var sourceShot = ProjectShot(shotId: "source").settingNarrationArtifact(first, now: "a")
+    var attempt = ShotNarrationArtifact(status: "generating", script: script, updatedAt: "b", takeId: "take-b")
+    sourceShot = sourceShot.settingNarrationArtifact(attempt, now: "b")
+    #expect(sourceShot.narrationArtifact == first)
+    attempt.status = "failed"
+    sourceShot = sourceShot.settingNarrationArtifact(attempt, now: "c")
+    #expect(sourceShot.narrationArtifact == first)
+    #expect(sourceShot.narrationTakes.count == 2)
+    let decoded = try JSONCoding.decoder.decode(ProjectShot.self, from: JSONCoding.encoder.encode(sourceShot))
+    #expect(decoded.activeNarrationTakeId == "take-a")
+    #expect(decoded.narrationTakes.last?.status == "failed")
+
+    let payload = ShotNarrationClipboardPayload(take: first, sourceProjectId: "expedition", sourceShotId: sourceShot.shotId)
+    let imported = try payload.materialized(in: directory.appendingPathComponent("destination"), now: "d")
+    var destination = ProjectShot(shotId: "destination", audioMix: ShotAudioMix().settingNarrationStartSeconds(7))
+    let before = ShotNarrationStateSnapshot(shot: destination, projectId: "instructions")
+    destination = destination.recordingNarrationTake(imported, now: "d")
+        .activatingNarrationTake(imported.takeId, atStart: true, now: "d")
+    let after = ShotNarrationStateSnapshot(shot: destination, projectId: "instructions")
+    #expect(destination.entries.isEmpty)
+    #expect(destination.narrationArtifact?.script == script)
+    #expect(destination.narrationArtifact?.durationSeconds == 4)
+    #expect(destination.audioMix.lane(ShotAudioLaneId.narration).effectiveStartSeconds == 0)
+    #expect(imported.takeId != first.takeId)
+    #expect(imported.sourceTakeId == first.takeId)
+    #expect(imported.speechTraceId == "speech-trace")
+    try FileManager.default.removeItem(at: source)
+    try FileManager.default.removeItem(at: speed)
+    #expect(try Data(contentsOf: URL(fileURLWithPath: imported.sourceAudioPath)) == bytes)
+    #expect(try Data(contentsOf: URL(fileURLWithPath: imported.audioPath)) == Data([2, 3, 5, 7]))
+    let undone = before.applying(to: destination, now: "e")
+    #expect(undone.narrationTakes.isEmpty)
+    #expect(undone.narrationArtifact == nil)
+    let redone = after.applying(to: undone, now: "f")
+    #expect(redone.narrationArtifact?.takeId == imported.takeId)
+    let regular = redone.settingPreferredRenderStack(.fallback, now: "g")
+    #expect(regular.narrationArtifact == redone.narrationArtifact)
+    #expect(regular.narrationTakes == redone.narrationTakes)
+    #expect(regular.duplicated(now: "h").narrationTakes.isEmpty)
+}
+
+@Test func narrationLegacyMigrationKeepsOnlyRecordedAudio() throws {
+    let artifact = ShotNarrationArtifact(status: "ready", audioPath: "/saved/narration.mp3",
+        script: "Current recording", titleVersions: ["Older transcript", "Current recording"], durationSeconds: 3)
+    let legacy = ProjectShot(shotId: "legacy", narrationArtifact: artifact)
+    let decoded = try JSONCoding.decoder.decode(ProjectShot.self, from: JSONCoding.encoder.encode(legacy))
+    #expect(decoded.narrationTakes.count == 1)
+    #expect(!decoded.activeNarrationTakeId.isEmpty)
+    #expect(decoded.normalized().narrationTakes == decoded.narrationTakes)
+    let cleared = decoded.settingNarrationArtifact(nil, now: "later").normalized()
+    #expect(cleared.narrationArtifact == nil)
+    #expect(cleared.activeNarrationTakeId.isEmpty)
+    #expect(cleared.narrationTakes.count == 1)
+}
+
+@Test func firstNarrationFailureStopsGeneratingAndRetryGetsAnotherIdentity() {
+    let pending = ShotNarrationArtifact(status: "generating", takeId: "attempt-a")
+    var shot = ProjectShot(shotId: "empty").settingNarrationArtifact(pending, now: "a")
+    var failed = pending
+    failed.status = "canceled"
+    shot = shot.recordingNarrationTake(failed, now: "b").normalized()
+    #expect(shot.narrationArtifact?.status == "canceled")
+    let ready = ShotNarrationArtifact(status: "ready", audioPath: "/audio/b.mp3", durationSeconds: 3, takeId: "attempt-b")
+    shot = shot.settingNarrationArtifact(ready, now: "c")
+    #expect(shot.narrationTakes.count == 2)
+    #expect(shot.activeNarrationTakeId == "attempt-b")
+}
+
+@Test func narrationScopeRetainsItsSelectedAudioWhenAnotherTakeChanges() {
+    let first = ShotNarrationArtifact(status: "ready", audioPath: "/audio/a.mp3", durationSeconds: 3, takeId: "a")
+    let second = ShotNarrationArtifact(status: "ready", audioPath: "/audio/b.mp3", durationSeconds: 4, takeId: "b")
+    var shot = ProjectShot(shotId: "scope").settingNarrationArtifact(first, now: "a")
+    let scope = ShotOutputScope(shot: shot, segmentKeys: [])
+    shot = shot.settingNarrationArtifact(second, now: "b")
+    let preserved = scope.project(from: shot).normalized()
+    #expect(preserved.narrationArtifact?.audioPath == first.audioPath)
+    #expect(preserved.activeNarrationTakeId == first.takeId)
+    #expect(preserved.narrationTakes.count == 2)
+}
+
+@Test func narrationDurationExplainsRoundedBoundaryFailures() {
+    #expect(!ShotNarrationDuration.isValid(1.959))
+    #expect(ShotNarrationDuration.refusal(1.959)?.contains("1.959s") == true)
+    #expect(ShotNarrationDuration.label(1.9999) == "1.9999s")
+    #expect(ShotNarrationDuration.label(20.0001) == "20.0001s")
+    #expect(ShotNarrationDuration.isValid(2))
+    #expect(ShotNarrationDuration.isValid(20))
+    #expect(!ShotNarrationDuration.isValid(20.001))
+    #expect(!ShotNarrationDuration.isValid(.nan))
+}
+
+@Test func narrationLifecycleIsReadableInOperationalHistory() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = InferenceTraceStore(databaseURL: directory.appendingPathComponent("traces.sqlite"))
+    let request = URLRequest(url: URL(string: "https://example.invalid/speech")!)
+    let prompt = "Fold the paper along the marked edge."
+    for state in ["ready", "failed", "interrupted", "canceled"] {
+        let metadata = InferenceTraceRequestMetadata(provider: "elevenlabs", apiFamily: "audio",
+            operation: "speech", projectId: "instructions", runId: "run", traceGroupId: "job",
+            parentTraceId: "script", workflowName: "shot_narration", workflowStep: "speech",
+            artifactType: "narration_take", artifactId: "take", model: "speech-model",
+            requestTextJSON: inferenceTraceJSONString(["text": prompt, "model_id": "speech-model"]),
+            responseTextJSON: inferenceTraceJSONString(["status": state, "take_id": "take"]),
+            mediaRefsJSON: inferenceTraceJSONString(["take_id": "take", "sha256": sha256Hex(Data(prompt.utf8))]),
+            captureRequestBody: false, captureResponseBody: false)
+        let error: Error? = state == "ready" ? nil : ScreenGraphError.capture(state)
+        let id = await store.record(request: request, metadata: metadata,
+            response: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil),
+            responseBody: nil, latencyMs: 1, error: error)
+        let records = try await store.workflowTraceRecords(ids: [id])
+        let record = try #require(records.first)
+        #expect(record.inputFields.contains { $0.value == prompt })
+        #expect(record.response.contains(state))
+        #expect(record.rawJSON.contains("take"))
+        #expect(record.rawJSON.contains("sha256"))
+        #expect(state == "ready" ? record.error.isEmpty : !record.error.isEmpty)
+    }
+}

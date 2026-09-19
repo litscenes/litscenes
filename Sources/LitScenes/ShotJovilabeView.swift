@@ -280,8 +280,7 @@ struct ShotJovilabeModal: View {
             if let frame, frame.status == "ready", !frame.imagePath.trimmed.isEmpty,
                let image = NSImage(contentsOfFile: frame.imagePath) {
                 Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .fittedThumbnail()
             } else {
                 VStack(spacing: 3) {
                     Image(systemName: frame == nil ? "questionmark.square.dashed" : (frame?.status == "generating" ? "hourglass" : "exclamationmark.triangle"))

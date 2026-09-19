@@ -251,8 +251,7 @@ struct ShotJoinRepairPopover: View {
             Rectangle().fill(Color.black.opacity(0.9))
             if let url, let image = NSImage(contentsOf: url) {
                 Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .fittedThumbnail()
             } else if isPreparingFrames {
                 ProgressView().controlSize(.small).tint(PlateColor.cream)
             } else {

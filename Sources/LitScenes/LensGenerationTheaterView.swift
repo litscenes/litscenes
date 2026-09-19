@@ -1201,8 +1201,7 @@ struct LensGenerationTheaterView: View {
         ZStack {
             if image.status == "ready", let nsImage = StripThumbnailCache.shared.image(path: image.imagePath) {
                 Image(nsImage: nsImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .fittedThumbnail()
             } else {
                 CanonColor.paperInset.opacity(0.72)
                 VStack(spacing: 6) {
@@ -1294,8 +1293,7 @@ struct LensGenerationTheaterView: View {
         ZStack {
             if image.status == "ready", let nsImage = StripThumbnailCache.shared.image(path: image.imagePath, maxPixel: 160) {
                 Image(nsImage: nsImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .fittedThumbnail()
             } else {
                 CanonColor.paperInset
                 if image.status == "generating" {
@@ -1330,8 +1328,7 @@ struct LensGenerationTheaterView: View {
                         maxPixel: Int(max(size.width, size.height) * 2)
                     ) {
                         Image(nsImage: nsImage)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
+                            .fittedThumbnail()
                     } else {
                         CanonColor.paperInset
                     }

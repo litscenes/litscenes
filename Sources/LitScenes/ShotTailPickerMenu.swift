@@ -197,7 +197,7 @@ struct ShotTailPickerMenu: View {
             VStack(alignment: .leading, spacing: 4) {
                 ZStack(alignment: .bottomLeading) {
                     if let image = StripThumbnailCache.shared.image(path: path) {
-                        Image(nsImage: image).resizable().scaledToFill()
+                        Image(nsImage: image).fittedThumbnail()
                     } else { Rectangle().fill(CanonColor.paperInset).overlay(Image(systemName: input.isClip ? "film" : "photo")) }
                     if alreadyPlaced { Text("IN SHOT").font(.caption2).padding(3).background(CanonColor.paper) }
                 }.frame(width: 102, height: 57).clipped()

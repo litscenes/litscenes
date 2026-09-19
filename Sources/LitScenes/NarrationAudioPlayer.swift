@@ -14,12 +14,15 @@ final class NarrationAudioPlayer: NSObject, ObservableObject, AVAudioPlayerDeleg
     private var loadedPath = ""
 
     func toggle(path: String) {
-        if isPlaying {
+        if isPlaying && loadedPath == path {
             pause()
         } else {
             play(path: path)
         }
     }
+
+    func isPlaying(path: String) -> Bool { isPlaying && loadedPath == path }
+    func isLoaded(path: String) -> Bool { loadedPath == path }
 
     func play(path: String) {
         if loadedPath != path || player == nil {

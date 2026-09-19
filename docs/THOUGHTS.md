@@ -120,3 +120,15 @@
 
 2026-09-17T04:01:41Z Film membership and inspection are independent: viewer actions and next-take drafts follow inspection, while only Use in Film changes membership; saved prompt initialization must prefer immutable provenance over an inferred default.
 2026-09-17T04:01:41Z Reusing the established flattening path preserves edited Full Shot picture and audio; fingerprint and clipboard-revision checks prevent asynchronous preparation from acting on a changed context.
+
+2026-09-18T02:50:45Z The LTX panel omits the shared model picker, and a rounded duration can look valid while failing its exact minimum; narration history and clipboard state must remain independent of the video recipe.
+
+2026-09-18T03:22:00Z narration-takes-and-copy-paste: LTX has a hard provider duration prerequisite, so exact bounds must be visible while ordinary video rendering remains independent; prior transcript strings cannot establish recoverable historical audio.
+
+2026-09-18T05:01:52Z Native multi-image adapters exist but non-OpenAI Frame Creator submissions demote style attachments to text; UI capability and executable attachment composition must agree, and fitting must account for circular masks and Canvas drawing as well as image scaling.
+
+2026-09-18T05:24:51Z Restyle now resolves native style-plus-source capacity before UI selection and submission; one-image composites remain Describe-only for restyling. Source presence is a hard prerequisite because an absent source cannot be restyled. Fixed thumbnail wells fit safely within circle borders, while filmstrip samples fit independently to preserve time positions.
+
+2026-09-18T17:43:03Z narration-clipboard-compatibility: the existing timeline Copy publishes an audio-region payload while row Paste Narration accepts a whole take; both representations must travel together without changing region paste semantics.
+
+2026-09-18T17:56:07Z narration-clipboard-compatibility: creating an item provider is not proof of a successful clipboard write; keyboard confirmation and Cut deletion now wait for matching data under a changed pasteboard revision.

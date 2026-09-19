@@ -110,9 +110,7 @@ struct TrimRangeBar: View {
         // Through the decode cache — a raw NSImage(contentsOfFile:) here
         // re-decoded the strip JPEG on every SwiftUI pass.
         if let stripPath, let image = StripThumbnailCache.shared.image(path: stripPath, maxPixel: 1600) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFill()
+            FittedVideoStrip(image: image)
                 .frame(width: width, height: height)
                 .clipped()
         } else {

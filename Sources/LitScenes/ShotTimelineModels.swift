@@ -725,6 +725,8 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
     /// the shot itself is never changed), so there is no active pointer.
     var clipLookVersions: [ShotRestyleArtifact] = []
     var narrationArtifact: ShotNarrationArtifact?
+    var narrationTakes: [ShotNarrationArtifact] = []
+    var activeNarrationTakeId: String = ""
     var narrationChips: ShotNarrationChipSet?
     var audioMix: ShotAudioMix = ShotAudioMix()
     var preferredRenderStack: String = ""
@@ -865,7 +867,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         case lookVersions
         case activeLookVersionId
         case clipLookVersions
-        case narrationArtifact
+        case narrationArtifact, narrationTakes, activeNarrationTakeId
         case narrationChips
         case audioMix
         case preferredRenderStack
@@ -967,6 +969,8 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         activeLookVersionId = try container.decodeIfPresent(String.self, forKey: .activeLookVersionId) ?? ""
         clipLookVersions = ((try? container.decodeIfPresent([ShotRestyleArtifact].self, forKey: .clipLookVersions)) ?? nil) ?? []
         narrationArtifact = (try? container.decodeIfPresent(ShotNarrationArtifact.self, forKey: .narrationArtifact)) ?? nil
+        narrationTakes = (try? container.decodeIfPresent([ShotNarrationArtifact].self, forKey: .narrationTakes)) ?? []
+        activeNarrationTakeId = (try? container.decodeIfPresent(String.self, forKey: .activeNarrationTakeId)) ?? ""
         narrationChips = (try? container.decodeIfPresent(ShotNarrationChipSet.self, forKey: .narrationChips)) ?? nil
         audioMix = ((try? container.decodeIfPresent(ShotAudioMix.self, forKey: .audioMix)) ?? nil) ?? ShotAudioMix()
         preferredRenderStack = try container.decodeIfPresent(String.self, forKey: .preferredRenderStack) ?? ""
@@ -989,6 +993,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         pictureInsertions = ((try? container.decodeIfPresent([ShotPictureInsertion].self, forKey: .pictureInsertions)) ?? nil) ?? []
         createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
         updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt) ?? ""
+        migrateLegacyNarrationIfNeeded()
         migrateLegacyShotRenderPreferencesIfNeeded()
         migrateLegacyRenderArtifactIfNeeded()
         migrateLegacyContinuationRecordsIfNeeded()
@@ -1396,8 +1401,19 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
     /// artifact removes it. Non-regionized shots keep the old behavior.
     func settingNarrationArtifact(_ artifact: ShotNarrationArtifact?, now: String) -> ProjectShot {
         var value = self
-        let priorNarration = narrationArtifact?.normalized()
-        value.narrationArtifact = artifact?.normalized()
+        value.migrateLegacyNarrationIfNeeded()
+        let priorNarration = value.narrationArtifact?.normalized()
+        let recorded = artifact.map { value.identifiedNarrationTake($0) }
+        if let recorded {
+            value = value.recordingNarrationTake(recorded, now: now)
+            // Attempt state never replaces the last usable selection.
+            guard recorded.isReady else {
+                if priorNarration?.isReady != true { value.narrationArtifact = recorded }
+                return value
+            }
+        }
+        value.narrationArtifact = recorded
+        value.activeNarrationTakeId = recorded?.takeId ?? ""
         value.updatedAt = now
         let priorNarrationWasUsable = !(priorNarration?.audioPath.trimmed ?? "").isEmpty
         if let ready = value.narrationArtifact,
@@ -1429,7 +1445,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
                     sourceDurationSeconds: mediaSeconds,
                     provenance: "active_narration"
                 )
-            value.audioRegions[activeIndex].sourceArtifactId = artifact.traceId
+            value.audioRegions[activeIndex].sourceArtifactId = artifact.takeId.nilIfEmpty ?? artifact.effectiveSpeechTraceId
             value.audioRegions[activeIndex].sourceStartSeconds = 0
             value.audioRegions[activeIndex].durationSeconds = max(
                 artifact.durationSeconds,
@@ -1442,7 +1458,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
                 label: "Narration",
                 path: artifact.audioPath,
                 sourceCutId: shotId,
-                sourceArtifactId: artifact.traceId,
+                sourceArtifactId: artifact.takeId.nilIfEmpty ?? artifact.effectiveSpeechTraceId,
                 provenance: "active_narration",
                 startSeconds: audioMix.lane(ShotAudioLaneId.narration).effectiveStartSeconds,
                 durationSeconds: max(artifact.durationSeconds, ShotAudioTiming.frameSeconds),
@@ -1514,6 +1530,8 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
         // CUT is still reversed, and re-bakes as soon as it renders.
         value.reverseProxies = []
         value.narrationArtifact = nil
+        value.narrationTakes = []
+        value.activeNarrationTakeId = ""
         value.narrationChips = nil
         value.audioMix = ShotAudioMix()
         value.seedSegmentClips = []
@@ -1921,6 +1939,7 @@ struct ProjectShot: Codable, Hashable, Identifiable, Sendable {
     func normalized() -> ProjectShot {
         var value = self
         value.shotId = value.shotId.trimmed
+        value.migrateLegacyNarrationIfNeeded()
         value.name = value.name.trimmed
         let referencedEntries = Set(value.renderVersions.flatMap(\.renderedEntryIds))
             .union(value.continuationRecords.map(\.entryId))

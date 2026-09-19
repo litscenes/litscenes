@@ -389,8 +389,7 @@ struct ScenesV2StageSpotlightView: View {
         if let frame = renderedFrames.first,
            let image = StripThumbnailCache.shared.image(path: frame.imagePath, maxPixel: 640) {
             Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
+                .fittedThumbnail()
                 .frame(width: 300, height: 190)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(
@@ -572,8 +571,7 @@ struct ScenesV2StageSpotlightView: View {
                 Group {
                     if let image = StripThumbnailCache.shared.image(path: frame.imagePath, maxPixel: 200) {
                         Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
+                            .fittedThumbnail()
                     } else {
                         CanonColor.mediaCard
                     }

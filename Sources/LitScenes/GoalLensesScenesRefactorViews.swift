@@ -1985,7 +1985,7 @@ struct LensWorkbenchView: View {
                             AsyncImage(url: URL(string: slot.url)) { phase in
                                 switch phase {
                                 case .success(let image):
-                                    image.resizable().aspectRatio(contentMode: .fill)
+                                    image.fittedThumbnail()
                                 default:
                                     CanonColor.paperInset
                                 }
@@ -2067,8 +2067,7 @@ struct LensWorkbenchView: View {
                     Color.clear
                         .overlay(
                             Image(nsImage: nsImage)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
+                                .fittedThumbnail()
                         )
                         .frame(maxWidth: .infinity)
                         .frame(height: 170)
@@ -5098,8 +5097,7 @@ private struct SREFStyleReferenceThumbnail: View {
                             .tint(CanonColor.brass)
                     case .success(let image):
                         image
-                            .resizable()
-                            .scaledToFill()
+                            .fittedThumbnail()
                     case .failure:
                         placeholder
                     @unknown default:
@@ -5555,8 +5553,7 @@ struct LensHeroPreviewVersionToolbar: View {
                 .overlay {
                     if let image = StripThumbnailCache.shared.image(path: item.imagePath, maxPixel: 160) {
                         Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
+                            .fittedThumbnail()
                     } else {
                         CanonColor.paperInset
                     }
@@ -5584,8 +5581,7 @@ struct LensHeroPreviewVersionToolbar: View {
             ZStack(alignment: .topLeading) {
                 if let image = StripThumbnailCache.shared.image(path: item.imagePath) {
                     Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
+                        .fittedThumbnail()
                 } else {
                     CanonColor.paperInset
                 }
@@ -6572,8 +6568,7 @@ struct LensReframePanel: View {
         }
         if let cropPreview {
             Image(nsImage: cropPreview)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
+                .fittedThumbnail()
                 .frame(maxWidth: .infinity)
                 .frame(height: 64)
                 .clipShape(RoundedRectangle(cornerRadius: 5))

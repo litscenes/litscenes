@@ -1650,6 +1650,7 @@ struct ShotRenderPlayerModal: View {
     private func makeLaneStack(inSoundEditor: Bool) -> ShotAudioLaneStack {
         ShotAudioLaneStack(
             shot: shot,
+            projectId: projectId,
             assembly: assembly,
             legacySourcePath: assembly.hasPlayableClips
                 ? nil

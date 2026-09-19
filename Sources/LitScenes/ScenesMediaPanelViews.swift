@@ -325,8 +325,7 @@ private struct ScenesMediaThumb: View {
                     Group {
                         if let image = NSImage(contentsOfFile: path) {
                             Image(nsImage: image)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
+                                .fittedThumbnail()
                         } else {
                             CanonColor.paperInset
                         }
@@ -375,8 +374,7 @@ struct ScenesFootageRow: View {
                     .fill(Color.black.opacity(0.14))
                 if let image = NSImage(contentsOfFile: item.thumbnailPath) {
                     Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
+                        .fittedThumbnail()
                 } else {
                     Image(systemName: "film")
                         .font(.system(size: 11, weight: .semibold))

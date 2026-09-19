@@ -155,8 +155,7 @@ struct SourceMediaCard: View {
                 CanonColor.mediaCardHover
                 if let image = thumbnail {
                     Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
+                        .fittedThumbnail()
                 } else {
                     Image(systemName: item.kind == .video ? "film" : "photo")
                         .font(.system(size: 18, weight: .semibold))

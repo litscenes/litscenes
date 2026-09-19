@@ -161,8 +161,7 @@ func sourceThumbnail(_ item: MediaItemRecord?, side: CGFloat) -> some View {
     return Group {
         if let item, let image = characterThumbnail(item) {
             Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: aspect.letterboxes ? .fit : .fill)
+                .fittedThumbnail()
         } else {
             RoundedRectangle(cornerRadius: 6)
                 .fill(CanonColor.mediaCard)

@@ -292,6 +292,16 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
         <string>public.data</string>
       </array>
     </dict>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>com.litscenes.shot-narration</string>
+      <key>UTTypeDescription</key>
+      <string>LitScenes Narration take clipboard payload</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.data</string>
+      </array>
+    </dict>
   </array>
 </dict>
 </plist>

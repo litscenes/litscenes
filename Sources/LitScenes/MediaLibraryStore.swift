@@ -1116,7 +1116,7 @@ struct MediaLibraryStore {
 
     private func videoStrip(generator: AVAssetImageGenerator, durationSeconds: Double) async throws -> CGImage? {
         guard durationSeconds > 0 else { return nil }
-        let times = [0.08, 0.28, 0.5, 0.72, 0.92].map {
+        let times = VideoStripLayout.sampleFractions.map {
             CMTime(seconds: max(0, min(durationSeconds * $0, durationSeconds - 0.01)), preferredTimescale: 600)
         }
         var images: [CGImage] = []

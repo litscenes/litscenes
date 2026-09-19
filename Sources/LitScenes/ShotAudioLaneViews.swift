@@ -1562,6 +1562,7 @@ struct ShotAudioLaneHeadView<ChipMenu: View>: View {
 /// lane; all edits land as single undoable engine transactions.
 struct ShotAudioLaneStack: View {
     let shot: ProjectShot
+    var projectId: String = ""
     let assembly: ShotCutAssembly
     let legacySourcePath: String?
     let durationSeconds: Double
@@ -1623,6 +1624,7 @@ struct ShotAudioLaneStack: View {
     @Environment(\.undoManager) private var undoManager
     @Environment(\.shotTimelineMetrics) private var metrics
     @StateObject private var regionUndo = ShotAudioRegionUndoCoordinator()
+    @StateObject private var copyFeedback = ShotClipboardCopyFeedback()
     @StateObject private var readabilityProbe = ShotAudioReadabilityProbe()
     @State private var pendingDeleteTake: ShotMicrophoneTake?
     @State private var selectedRegionId: String?
@@ -2031,6 +2033,8 @@ struct ShotAudioLaneStack: View {
                 laneRow(laneId)
             }
             inspectorSlot
+            ShotClipboardFeedbackView(feedback: copyFeedback)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task(id: effectiveAudioRegions.map(\.path).sorted().joined(separator: "|")) {
             readabilityProbe.probe(paths: effectiveAudioRegions.map(\.path))
@@ -2369,24 +2373,26 @@ struct ShotAudioLaneStack: View {
     /// honest path to movable source audio, so copy answers empty for them.
     private func clipboardPayload(for region: ShotAudioRegion) -> ShotAudioRegionClipboardPayload? {
         guard region.laneId != ShotAudioLaneId.source else { return nil }
-        return ShotAudioRegionClipboardPayload(region: region, sourceShotId: shot.shotId)
+        return ShotAudioRegionClipboardPayload(region: region, sourceShotId: shot.shotId, sourceProjectId: projectId)
+    }
+
+    private func clipboardContents(for region: ShotAudioRegion) throws -> ShotClipboardContents {
+        guard let payload = clipboardPayload(for: region) else {
+            throw ScreenGraphError.capture("Detach source audio before copying it.")
+        }
+        let narration = ShotNarrationClipboardPayload.matching(region, in: shot, projectId: projectId)
+        return try ShotAudioClipboard.contents(for: payload, narration: narration)
     }
 
     private func copySelectedProviders() -> [NSItemProvider] {
-        guard let region = selectedRegion,
-              let payload = clipboardPayload(for: region) else { return [] }
-        return ShotAudioClipboard.itemProviders(for: payload)
+        guard let region = selectedRegion else { return [] }
+        return copyFeedback.providers { try clipboardContents(for: region) }
     }
 
-    /// Cut = copy + delete in one gesture; the providers hand SwiftUI the
-    /// pasteboard write, the delete registers as its own named undo action.
     private func cutSelectedProviders() -> [NSItemProvider] {
-        guard let region = selectedRegion,
-              let payload = clipboardPayload(for: region) else { return [] }
-        let providers = ShotAudioClipboard.itemProviders(for: payload)
-        guard !providers.isEmpty else { return [] }
-        commitCutDelete(region)
-        return providers
+        guard let region = selectedRegion else { return [] }
+        return copyFeedback.providers({ try clipboardContents(for: region) },
+                                      onCopied: { commitCutDelete(region) })
     }
 
     private func commitCutDelete(_ region: ShotAudioRegion) {
@@ -2399,16 +2405,13 @@ struct ShotAudioLaneStack: View {
     /// The inspector buttons' direct pasteboard write (buttons can't hand
     /// SwiftUI providers the way the Edit-menu commands do).
     private func copySelectedToClipboard() {
-        guard let region = selectedRegion,
-              let payload = clipboardPayload(for: region) else { return }
-        ShotAudioClipboard.write(payload)
+        guard let region = selectedRegion else { return }
+        copyFeedback.copy { try clipboardContents(for: region) }
     }
 
     private func cutSelectedToClipboard() {
-        guard let region = selectedRegion,
-              let payload = clipboardPayload(for: region) else { return }
-        ShotAudioClipboard.write(payload)
-        commitCutDelete(region)
+        guard let region = selectedRegion else { return }
+        copyFeedback.copy({ try clipboardContents(for: region) }, onCopied: { commitCutDelete(region) })
     }
 
     /// Paste lands at the frame-quantized playhead (the split precedent —
@@ -3057,7 +3060,9 @@ struct ShotAudioLaneStack: View {
                 } label: {
                     PlateLabel(text: "COPY", size: 6.5, weight: .bold, color: PlateColor.inkFaint)
                 }
-                .help("Copy this region (⌘C). Paste lands at the playhead — in this shot or another.")
+                .help(region.laneId == ShotAudioLaneId.narration
+                    ? "Copy this region (⌘C), including its whole narration take when available. Use Paste Narration on another Shot."
+                    : "Copy this region (⌘C). Timeline Paste lands at the playhead in this Shot or another.")
                 Button {
                     cutSelectedToClipboard()
                 } label: {

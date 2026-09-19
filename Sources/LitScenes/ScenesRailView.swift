@@ -272,8 +272,7 @@ struct ScenesRailView: View {
                 : 0
             HStack(spacing: 1) {
                 Image(nsImage: main)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .fittedThumbnail()
                     .frame(
                         width: sliverCount == 0 ? Self.thumbSize.width : 94,
                         height: Self.thumbSize.height
@@ -281,8 +280,7 @@ struct ScenesRailView: View {
                     .clipped()
                 ForEach(1..<images.count, id: \.self) { slot in
                     Image(nsImage: images[slot])
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
+                        .fittedThumbnail()
                         .frame(width: sliverWidth, height: Self.thumbSize.height)
                         .clipped()
                 }

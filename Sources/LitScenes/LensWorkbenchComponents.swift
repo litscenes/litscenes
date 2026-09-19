@@ -131,7 +131,7 @@ struct LensTreatmentOrbitStack: View {
                 AsyncImage(url: URL(string: slot.url)) { phase in
                     switch phase {
                     case .success(let image):
-                        image.resizable().aspectRatio(contentMode: .fill)
+                        image.fittedThumbnail(circular: true)
                     default:
                         Color.black.opacity(0.12)
                     }

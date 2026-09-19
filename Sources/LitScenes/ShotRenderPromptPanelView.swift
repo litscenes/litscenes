@@ -745,8 +745,7 @@ struct ShotRenderPromptPanel: View {
             // Plan pairs only carry ready frames with an image on disk.
             if let image = NSImage(contentsOfFile: frame.imagePath) {
                 Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .fittedThumbnail()
             } else {
                 Image(systemName: "photo")
                     .font(.system(size: 13, weight: .semibold))

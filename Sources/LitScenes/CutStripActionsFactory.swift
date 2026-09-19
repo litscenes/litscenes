@@ -65,6 +65,7 @@ func makeCutStripActions(
     )
     actions.activeShotNarrationId = library.activeShotNarrationId
     actions.activeShotNarrationSpeedId = library.activeShotNarrationSpeedId
+    actions.activeShotNarrationSpeedIds = library.activeShotNarrationSpeedIds
     actions.activeShotChipsIds = library.activeShotChipsIds
     actions.accountVoiceOptions = library.accountVoiceOptions
     actions.hiddenNarrationVoiceIds = library.hiddenNarrationVoiceIds
@@ -87,6 +88,11 @@ func makeCutStripActions(
     actions.onOpenJovilabe = { cutId in
         surface.onOpenJovilabe(cutId)
     }
+    actions.projectId = library.currentProject?.projectId ?? ""
+    actions.onUseNarrationTake = { library.useShotNarrationTake(shotId: $0, takeId: $1) }
+    actions.onPasteNarration = { library.pasteShotNarration(shotId: $0, payload: $1) }
+    actions.narrationPasteAvailability = { library.narrationPasteAvailability(shotId: $0) }
+    actions.onRestoreNarration = { library.restoreShotNarrationState(shotId: $0, snapshot: $1) }
     actions.onSetRenderStack = { cutId, stack in
         library.setShotRenderStack(shotId: cutId, stack: stack)
     }

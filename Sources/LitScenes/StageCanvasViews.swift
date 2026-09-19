@@ -692,8 +692,7 @@ struct StageInputCard: View {
                 if frame.status == "ready", !frame.imagePath.trimmed.isEmpty,
                    let image = StripThumbnailCache.shared.image(path: frame.imagePath) {
                     Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
+                        .fittedThumbnail()
                 } else if frame.status == "generating" || frame.status == "queued" {
                     VStack(spacing: 6) {
                         ProgressView()
@@ -740,8 +739,7 @@ struct StageInputCard: View {
                    let image = (media.videoStripPath.flatMap { StripThumbnailCache.shared.image(path: $0) })
                     ?? StripThumbnailCache.shared.image(path: media.thumbnailPath) {
                     Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
+                        .fittedThumbnail()
                 } else {
                     placeholderGlyph(icon: "film.stack", label: "MISSING FOOTAGE")
                 }
@@ -983,8 +981,7 @@ struct DeletedCutsShelfView: View {
                 if let cut = row.cut,
                    let poster = cutPosterImage(for: cut, frameLookup: frameLookup, mediaLookup: mediaLookup) {
                     Image(nsImage: poster)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
+                        .fittedThumbnail()
                 } else {
                     Image(systemName: "film")
                         .font(.system(size: 12, weight: .semibold))
@@ -1211,8 +1208,7 @@ struct FinalsShelfView: View {
             CanonColor.mediaCardHover
             if let poster = cutPosterImage(for: cut, frameLookup: frameLookup, mediaLookup: mediaLookup) {
                 Image(nsImage: poster)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .fittedThumbnail()
             } else {
                 Image(systemName: "film")
                     .font(.system(size: 16, weight: .semibold))

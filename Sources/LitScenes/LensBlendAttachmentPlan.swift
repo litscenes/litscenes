@@ -226,7 +226,7 @@ struct LensBlendAttachmentPlan: Sendable {
         return plan
     }
 
-    /// OpenAI can execute the selected style and prompt-image controls together. The
+    /// Native multi-image routes execute style and prompt-image controls together. The
     /// style remains first so the preamble and manifest positions describe the payload
     /// exactly; prompt references follow in their original order.
     static func combiningStyleAndPromptReferences(

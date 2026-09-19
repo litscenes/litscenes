@@ -63,34 +63,20 @@ enum ShotAudioClipboard {
     /// read back through the same `read()`.
     static let utType = UTType(exportedAs: "com.litscenes.shot-audio-region")
 
-    /// The item-provider form for SwiftUI's copy/cut commands, which write
-    /// the pasteboard themselves from the returned providers.
-    static func itemProviders(for payload: ShotAudioRegionClipboardPayload) -> [NSItemProvider] {
-        guard let data = try? JSONEncoder().encode(payload) else { return [] }
-        let provider = NSItemProvider()
-        provider.registerDataRepresentation(
-            forTypeIdentifier: utType.identifier,
-            visibility: .all
-        ) { completion in
-            completion(data, nil)
-            return nil
+    @MainActor
+    static func contents(for payload: ShotAudioRegionClipboardPayload,
+                         narration: ShotNarrationClipboardPayload? = nil) throws -> ShotClipboardContents {
+        guard payload.isPasteable else { throw ScreenGraphError.capture("Select a playable audio region to copy.") }
+        var data = [NSPasteboard.PasteboardType.litScenesShotAudioRegion: try JSONEncoder().encode(payload)]
+        if let narration {
+            data.merge(try ShotNarrationClipboard.contents(for: narration).data) { _, new in new }
         }
-        return [provider]
+        return ShotClipboardContents(data: data)
     }
 
-    static func write(_ payload: ShotAudioRegionClipboardPayload) {
-        guard let data = try? JSONEncoder().encode(payload) else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setData(data, forType: .litScenesShotAudioRegion)
-    }
-
-    static func read() -> ShotAudioRegionClipboardPayload? {
-        guard let data = NSPasteboard.general.data(forType: .litScenesShotAudioRegion),
-              let payload = try? JSONDecoder().decode(
-                  ShotAudioRegionClipboardPayload.self,
-                  from: data
-              ),
+    static func read(from pasteboard: NSPasteboard = .general) -> ShotAudioRegionClipboardPayload? {
+        guard let data = pasteboard.data(forType: .litScenesShotAudioRegion),
+              let payload = try? JSONDecoder().decode(ShotAudioRegionClipboardPayload.self, from: data),
               payload.isPasteable else { return nil }
         return payload
     }

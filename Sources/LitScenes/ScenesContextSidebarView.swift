@@ -795,8 +795,7 @@ struct ScenesPlaceDetailView: View {
         Group {
             if let image = NSImage(contentsOfFile: item.path) {
                 Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
+                    .fittedThumbnail()
             } else {
                 Rectangle().fill(CanonColor.paperInset)
             }
@@ -921,8 +920,7 @@ struct ScenesPlaceDetailView: View {
             if frame.status == "ready", !frame.imagePath.isEmpty,
                let image = NSImage(contentsOfFile: frame.imagePath) {
                 Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
+                    .fittedThumbnail()
                     .frame(width: 84, height: 47)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             } else {

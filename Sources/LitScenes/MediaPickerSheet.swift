@@ -36,6 +36,7 @@ struct MediaPickerCapacityContext {
     /// Slots spoken for before these picks (the clip seed). Mention
     /// displacement deliberately stays a reference-well concern.
     var reservedSlots: Int
+    var styleImageReserved: Bool = false
 }
 
 /// Ready takes across all lenses as picker candidates — the roster/Creations
@@ -95,6 +96,7 @@ struct MediaPickerSheet: View {
     /// The active stack's reference capacity, for the footer honesty line and
     /// the over-capacity numeral tint. Nil hides both.
     let capacityContext: MediaPickerCapacityContext?
+    let onUpload: (() async -> [MediaItemRecord])?
     let onConfirm: ([MediaPickerPick]) -> Void
     let onCancel: () -> Void
 
@@ -106,6 +108,8 @@ struct MediaPickerSheet: View {
 
     @State private var scope: Scope = .all
     @State private var search = ""
+    @State private var importedItems: [MediaItemRecord] = []
+    @State private var isUploading = false
     /// Ordered selection of canonical tokens (media ids / take tokens) — order
     /// is meaningful (it becomes attachment order).
     @State private var selectedIds: [String]
@@ -121,6 +125,7 @@ struct MediaPickerSheet: View {
         selectionLimit: Int = 0,
         confirmLabel: String = "Attach",
         capacityContext: MediaPickerCapacityContext? = nil,
+        onUpload: (() async -> [MediaItemRecord])? = nil,
         onConfirm: @escaping ([MediaPickerPick]) -> Void,
         onCancel: @escaping () -> Void
     ) {
@@ -133,6 +138,7 @@ struct MediaPickerSheet: View {
         self.selectionLimit = selectionLimit
         self.confirmLabel = confirmLabel
         self.capacityContext = capacityContext
+        self.onUpload = onUpload
         self.onConfirm = onConfirm
         self.onCancel = onCancel
         // Preselection keeps the caller's order so reopened numerals mirror the
@@ -144,7 +150,28 @@ struct MediaPickerSheet: View {
     }
 
     private var imageItems: [MediaItemRecord] {
-        items.filter { $0.kind == .image }
+        var seen = Set<String>()
+        return (importedItems + items).filter { $0.kind == .image && seen.insert($0.mediaId).inserted }
+    }
+
+    private func uploadImages() {
+        guard let onUpload, !isUploading else { return }
+        isUploading = true
+        Task { @MainActor in
+            defer { isUploading = false }
+            let records = await onUpload().filter { $0.kind == .image }
+            guard !records.isEmpty else { return }
+            for record in records {
+                if !importedItems.contains(where: { $0.mediaId == record.mediaId }) {
+                    importedItems.append(record)
+                }
+                if !selectedIds.contains(record.mediaId), selectionLimit <= 0 || selectedIds.count < selectionLimit {
+                    selectedIds.append(record.mediaId)
+                }
+            }
+            scope = .all
+            search = ""
+        }
     }
 
     private var availableScopes: [Scope] {
@@ -223,6 +250,13 @@ struct MediaPickerSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
+            if onUpload != nil {
+                Button(isUploading ? "Uploading…" : "Upload Images") { uploadImages() }
+                    .buttonStyle(PlateButtonStyle())
+                    .disabled(isUploading)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .help("Import images into the library and select them here; Attach applies your selection")
+            }
             Button {
                 onCancel()
             } label: {
@@ -322,7 +356,7 @@ struct MediaPickerSheet: View {
         if !search.trimmed.isEmpty { return "No images match “\(search.trimmed)”." }
         if scope == .storyInputs { return "No Story Inputs yet — promote images in the Library first." }
         if scope == .generated { return "No generated frames yet — render frames on the FRAMES board first." }
-        return "No library images yet — add media in the Library first."
+        return onUpload == nil ? "No library images yet — add media in the Library first." : "No library images yet — use Upload Images to add references."
     }
 
     private func tile(_ item: MediaItemRecord) -> some View {
@@ -393,8 +427,7 @@ struct MediaPickerSheet: View {
                 Group {
                     if let nsImage = NSImage(contentsOfFile: candidate.image.imagePath) {
                         Image(nsImage: nsImage)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
+                            .fittedThumbnail()
                     } else {
                         CanonColor.paperInset
                     }
@@ -443,6 +476,11 @@ struct MediaPickerSheet: View {
                 Text(selectionSummary)
                     .font(PlateType.figure(9.5, weight: .medium))
                     .foregroundStyle(PlateColor.inkFaint)
+                if capacityContext?.styleImageReserved == true {
+                    Text("The style image uses an additional image slot.")
+                        .font(PlateType.figure(9.5))
+                        .foregroundStyle(PlateColor.inkFaint)
+                }
                 if let line = capacityLine {
                     Text(line.text)
                         .font(PlateType.figure(9.5))
@@ -459,6 +497,7 @@ struct MediaPickerSheet: View {
             }
             .buttonStyle(PlateButtonStyle(isProminent: true))
             .help("Apply the current selection")
+            .disabled(isUploading)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -484,11 +523,11 @@ struct MediaPickerSheet: View {
             let cap = context.capacity.planningCap
             if cap == 1 {
                 if context.reservedSlots > 0 {
-                    return ("\(context.stackLabel) attaches one image — the clip seed holds the slot, so these picks won't ride.", true)
+                    return ("\(context.stackLabel) has one content-reference slot — the source frame holds it, so these picks won't ride.", true)
                 }
-                return ("\(context.stackLabel) attaches one image — the first pick rides.", over)
+                return ("\(context.stackLabel) has one content-reference slot — the first pick rides.", over)
             }
-            let reservedNote = context.reservedSlots > 0 ? " — the clip seed holds one" : ""
+            let reservedNote = context.reservedSlots > 0 ? " — the source frame holds one" : ""
             if cap == budget {
                 // The model's ceiling meets or exceeds the app's shared
                 // budget — attribute the cap to the budget, like `.budget`.
@@ -499,7 +538,7 @@ struct MediaPickerSheet: View {
         case .compositeSheet:
             return ("\(context.stackLabel) combines picks into one labeled sheet (up to \(budget)).", over)
         case .budget:
-            let reservedNote = context.reservedSlots > 0 ? " — the clip seed holds one" : ""
+            let reservedNote = context.reservedSlots > 0 ? " — the source frame holds one" : ""
             return ("\(context.stackLabel) attaches up to \(budget) images\(reservedNote).", over)
         }
     }

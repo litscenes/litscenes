@@ -400,8 +400,7 @@ struct SceneCharactersPanel: View {
             thumbCell {
                 if let nsImage = NSImage(contentsOfFile: image.imagePath) {
                     Image(nsImage: nsImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
+                        .fittedThumbnail()
                 } else {
                     CanonColor.paperInset
                 }

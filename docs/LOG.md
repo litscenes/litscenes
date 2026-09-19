@@ -109,3 +109,15 @@
 2026-09-17T03:20:02Z viewer-video-actions: implement approved viewer-scoped Copy/Finder, remove Compare, and persist selected-take render drafts.
 
 2026-09-17T04:01:41Z viewer-video-actions implemented and Development app packaged; 1,317 existing tests and source hygiene pass. Viewer scope, per-take drafts and local full-film sharing documented in docs/20260917T032002Z_viewer-video-actions.log.md; implementation remains uncommitted.
+
+2026-09-18T02:50:45Z narration-takes-and-copy-paste: begin — implement the approved inline narration history, independent video model selection, precise duration errors, and whole-take copy/paste exclusively in the public checkout.
+
+2026-09-18T03:22:17Z narration-takes-and-copy-paste completed in public checkout: inline retained takes, independent model selection, exact LTX duration feedback, local narration copy/paste and undo, stable speech provenance. All 1,323 tests passed; public development app built and signature verified. See docs/20260918T025045Z_narration-takes-and-copy-paste.log.md. No commit authorized.
+
+2026-09-18T05:01:52Z frame-reference-fidelity: begin approved Restyle attachment defaults, complete fixed-cell thumbnails, and Upload Images in the reference picker using the existing importer.
+
+2026-09-18T05:24:51Z frame-reference-fidelity: completed the approved public working-tree implementation. Final swift build and all 1,325 tests pass, both public/private source-hygiene checks pass (including the pinned consumer hygiene scan), git diff --check passes, and native fitted-thumbnail rendering was visually reviewed. Local ad-hoc signing recovered after freeing only task-created temporary compiler files; disk remains nearly full. No paid provider calls, commits, pushes, or submodule changes. Commit reference pending explicit authorization; REUSE CLI unavailable.
+
+2026-09-18T17:43:03Z narration-clipboard-compatibility: implement approved dual-format narration copy, legacy region compatibility, verified visible feedback and shared paste availability in the public checkout.
+
+2026-09-18T17:56:07Z narration-clipboard-compatibility completed: timeline Copy now interoperates with row Paste Narration and confirms verified success. Legacy clipboard resolution and refusal reasons are wired. Native clipboard diagnostic passed 26 checks; existing suite passed 1,325 tests; public development app built and verified. Work remains uncommitted.

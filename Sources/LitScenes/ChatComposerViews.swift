@@ -154,8 +154,7 @@ private struct ChatAttachmentThumbnail: View {
         Group {
             if kind == .image, let image = NSImage(contentsOfFile: path) {
                 Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
+                    .fittedThumbnail()
             } else {
                 ZStack {
                     CanonColor.paperInset

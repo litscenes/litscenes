@@ -1463,8 +1463,7 @@ struct ProjectRosterView: View {
                 Group {
                     if let nsImage = NSImage(contentsOfFile: hero.imagePath) {
                         Image(nsImage: nsImage)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
+                            .fittedThumbnail()
                     } else {
                         CanonColor.paperInset
                     }

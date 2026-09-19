@@ -166,7 +166,8 @@ func frameCreatorAttachmentPlan(
     seed: LensPromptImageAttachment?,
     direct: [LensPromptImageAttachment],
     mention: [LensPromptImageAttachment],
-    stack: RenderStack
+    stack: RenderStack,
+    styleMode: LensRenderStyleMode = .none
 ) -> FrameCreatorAttachmentPlan {
     let ordered: [(attachment: LensPromptImageAttachment, stratum: FrameCreatorAttachmentStratum)] =
         (seed.map { [($0, FrameCreatorAttachmentStratum.seed)] } ?? [])
@@ -177,7 +178,7 @@ func frameCreatorAttachmentPlan(
         let key = pair.attachment.imagePath.trimmed.nilIfEmpty ?? pair.attachment.sourceId
         return seen.insert(key).inserted
     }
-    let capacity = stack.frameReferenceCapacity
+    let capacity = stack.framePromptReferenceCapacity(styleMode: styleMode)
     let entries: [FrameCreatorAttachmentPlan.Entry]
     switch capacity {
     case .textOnly:
@@ -726,7 +727,7 @@ struct FrameCreatorModal: View {
             MediaPickerSheet(
                 title: "Add reference images",
                 subtitle: "Chosen images — library uploads or generated frames — attach to this render as visual references; the written prompt stays primary.",
-                items: referenceLibraryItems,
+                items: referenceLibraryItems + referenceItems.filter { item in !referenceLibraryItems.contains { $0.mediaId == item.mediaId } },
                 observationsById: moodObservationsById,
                 storyInputMediaIds: Set(moodboardItems.map(\.mediaId)),
                 generatedFrameCandidates: onAdoptGeneratedFrame == nil ? [] : generatedFrameCandidates,
@@ -734,10 +735,12 @@ struct FrameCreatorModal: View {
                 capacityContext: primaryStack.map {
                     MediaPickerCapacityContext(
                         stackLabel: $0.label,
-                        capacity: $0.frameReferenceCapacity,
-                        reservedSlots: seedPromptAttachment == nil ? 0 : 1
+                        capacity: $0.framePromptReferenceCapacity(styleMode: effectiveStyleMode(for: $0)),
+                        reservedSlots: seedPromptAttachment == nil ? 0 : 1,
+                        styleImageReserved: effectiveStyleMode(for: $0) == .attachStyleImage
                     )
                 },
+                onUpload: onUploadReferences,
                 onConfirm: { picks in
                     isReferencePickerPresented = false
                     applyReferencePicks(picks)
@@ -1356,7 +1359,7 @@ struct FrameCreatorModal: View {
                         .disabled(isUploadingReferences)
                         .help("Import image files from disk — they join the library and attach as references in one step")
                     }
-                    if !referenceLibraryItems.isEmpty || !generatedFrameCandidates.isEmpty {
+                    if onUploadReferences != nil || !referenceLibraryItems.isEmpty || !generatedFrameCandidates.isEmpty {
                         Button("Add reference…") {
                             referenceAdoptionFailureNotes = []
                             isReferencePickerPresented = true
@@ -1732,15 +1735,12 @@ struct FrameCreatorModal: View {
             seed: seedPromptAttachment,
             direct: directReferenceAttachments(),
             mention: mention.attachments,
-            stack: stack
+            stack: stack,
+            styleMode: effectiveStyleMode(for: stack)
         )
-        var notes = plan.notes
-        if !plan.attachments.isEmpty, effectiveStyleMode(for: stack) == .attachStyleImage,
-           !stack.isOpenAI {
-            // Non-OpenAI providers have one image-input set: references fill
-            // it, so the engine demotes their style image to prose. OpenAI
-            // attaches the style image AND the references together — no note.
-            notes.append("References fill \(stack.label)'s image inputs, so the style image can't attach too — the style will be described in the prompt instead.")
+        var notes = plan.notes + mention.notes
+        if effectiveStyleMode(for: stack) == .attachStyleImage {
+            notes.append("One additional image slot is reserved for the selected style.")
         }
         return (plan, notes)
     }
@@ -2613,7 +2613,7 @@ struct FrameCreatorModal: View {
     /// The stack row's one-glance reference capacity: how many planned images
     /// this stack can carry, before the user commits to it.
     private func stackCapacityHint(_ stack: RenderStack) -> String {
-        switch stack.frameReferenceCapacity {
+        switch stack.framePromptReferenceCapacity(styleMode: effectiveStyleMode(for: stack)) {
         case .textOnly: "text-only"
         case .slots(let count): "refs · \(min(max(count, 0), FrameReferenceCapacity.attachmentBudget))"
         case .compositeSheet: "refs · sheet"
@@ -2695,6 +2695,12 @@ struct FrameCreatorModal: View {
                 }
             }
             styleModeControl(stack)
+            if currentStyleSlot != nil, let reason = styleAttachDisabledReason(for: stack) {
+                Text(reason)
+                    .font(PlateType.label(8.5))
+                    .foregroundStyle(PlateColor.inkFaint)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if stack.isFAL {
                 PlateLabel(text: "Parameters", size: 7.5, weight: .bold, color: PlateColor.inkFaint)
                     .padding(.top, 2)
@@ -2727,6 +2733,7 @@ struct FrameCreatorModal: View {
         let selected = effectiveStyleMode(for: stack)
         return HStack(spacing: 4) {
             ForEach(styleModeOptions(for: stack), id: \.self) { mode in
+                let disabledReason = mode == .attachStyleImage ? styleAttachDisabledReason(for: stack) : nil
                 Button {
                     styleModeByStack[stack.id] = mode
                     if stack.isFAL {
@@ -2750,6 +2757,10 @@ struct FrameCreatorModal: View {
                         .overlay(RoundedRectangle(cornerRadius: 2).stroke(PlateColor.hairline, lineWidth: 0.75))
                 }
                 .buttonStyle(.plain)
+                .disabled(disabledReason != nil)
+                .opacity(disabledReason == nil ? 1 : 0.4)
+                .help(disabledReason ?? mode.label)
+                .accessibilityHint(disabledReason ?? mode.label)
             }
         }
     }
@@ -2880,6 +2891,7 @@ struct FrameCreatorModal: View {
     }
 
     private func startBlocker(for stack: RenderStack) -> String? {
+        if isRestyle, seedPromptAttachment == nil { return "The source frame is missing. Restore it before restyling." }
         if prompt.trimmed.isEmpty { return "A Form prompt is required." }
         if let credentialBlocker = credentialBlocker(for: stack) { return credentialBlocker }
         let styleMode = effectiveStyleMode(for: stack)
@@ -2897,25 +2909,32 @@ struct FrameCreatorModal: View {
         return nil
     }
 
+    private var isRestyle: Bool {
+        if case .restyle = context { return true }
+        return false
+    }
+
+    private func styleAttachDisabledReason(for stack: RenderStack) -> String? {
+        guard currentStyleSlot != nil else { return "Choose a style first." }
+        return stack.styleAttachmentUnavailableReason(hasPromptImages: plannedReferenceCount > 0)
+    }
+
     private func styleModeOptions(for stack: RenderStack) -> [LensRenderStyleMode] {
-        if isStyleDisabled { return [.none] }
-        guard currentStyleSlot != nil else { return [.none] }
-        var modes: [LensRenderStyleMode] = [.none, .describeStyleInPrompt]
-        if stack.styleImageAttachSupported {
-            modes.append(.attachStyleImage)
-        }
-        return modes
+        currentStyleSlot == nil ? [.none] : [.none, .describeStyleInPrompt, .attachStyleImage]
     }
 
     private func effectiveStyleMode(for stack: RenderStack) -> LensRenderStyleMode {
-        if isStyleDisabled { return .none }
-        let fallback: LensRenderStyleMode = currentStyleSlot == nil ? .none : .describeStyleInPrompt
-        let selected = styleModeByStack[stack.id] ?? fallback
-        return styleModeOptions(for: stack).contains(selected) ? selected : fallback
+        stack.frameStyleMode(
+            hasStyle: currentStyleSlot != nil,
+            isRestyle: isRestyle,
+            preferred: styleModeByStack[stack.id],
+            hasPromptImages: plannedReferenceCount > 0
+        )
     }
 
     private func providerStyleMode(for stack: RenderStack, selectedStyleMode: LensRenderStyleMode? = nil) -> LensRenderStyleMode {
-        selectedStyleMode ?? effectiveStyleMode(for: stack)
+        if stack.isFAL, stack.supportsPromptImages, plannedReferenceCount > 0 { return .attachStyleImage }
+        return selectedStyleMode ?? effectiveStyleMode(for: stack)
     }
 
     private func debugParameters(for stack: RenderStack) -> String {
@@ -3039,8 +3058,7 @@ struct FrameCreatorModal: View {
             PlateColor.creamDeep
             if let image = NSImage(contentsOfFile: path) {
                 Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .fittedThumbnail()
             } else {
                 Image(systemName: "photo")
                     .font(.system(size: 16, weight: .semibold))
@@ -3050,8 +3068,7 @@ struct FrameCreatorModal: View {
         .clipped()
     }
 
-    /// Like `plateThumbnail` but fitted rather than filled — for surfaces whose
-    /// job is to show the whole image, where a crop would hide the subject.
+    /// An unpadded full-image preview for larger inspection surfaces.
     private func plateFittedImage(path: String) -> some View {
         ZStack {
             if let image = NSImage(contentsOfFile: path) {
@@ -3074,7 +3091,7 @@ struct FrameCreatorModal: View {
             AsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image):
-                    image.resizable().aspectRatio(contentMode: .fill)
+                    image.fittedThumbnail()
                 default:
                     PlateColor.creamDeep
                 }
@@ -3523,7 +3540,7 @@ private struct FrameCreatorStyleWheel: View {
                     AsyncImage(url: URL(string: style.url)) { phase in
                         switch phase {
                         case .success(let image):
-                            image.resizable().aspectRatio(contentMode: .fill)
+                            image.fittedThumbnail(circular: true)
                         case .failure:
                             Image(systemName: "photo")
                                 .font(.system(size: 14))

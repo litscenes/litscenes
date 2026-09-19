@@ -13994,7 +13994,7 @@ private struct ExtractedFrameTileView: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            ThumbnailImage(path: frame.thumbnailPath, kind: .image, fit: true)
+            ThumbnailImage(path: frame.thumbnailPath, kind: .image)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
 
@@ -14085,7 +14085,7 @@ private struct MediaTileView: View {
     private var tileContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack(alignment: .topTrailing) {
-                ThumbnailImage(path: item.thumbnailPath, kind: item.kind, fit: true)
+                ThumbnailImage(path: item.thumbnailPath, kind: item.kind)
                     .aspectRatio(tileAspect.tileAspect, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
 
@@ -14395,22 +14395,12 @@ private struct OriginalMediaImage: View {
 private struct ThumbnailImage: View {
     let path: String
     let kind: MediaKind
-    /// Fit shows the whole picture on the matte; fill (the default) crops to the frame.
-    var fit: Bool = false
 
     var body: some View {
         ZStack {
             CanonColor.mediaCardHover
             if let image = NSImage(contentsOfFile: path) {
-                if fit {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFit()
-                } else {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFill()
-                }
+                Image(nsImage: image).fittedThumbnail()
             } else {
                 VStack(spacing: 6) {
                     Image(systemName: kind == .video ? "film" : "photo")

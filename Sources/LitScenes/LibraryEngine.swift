@@ -304,6 +304,7 @@ private struct LensHeroGenerationJob: Sendable {
     var provider: LensHeroImageProvider
     var stack: RenderStack? = nil
     var styleMode: LensRenderStyleMode = .none
+    var selectedStyleMode: LensRenderStyleMode? = nil
     var debugParametersJSON: String = ""
     var promptImageReferenceMode: Bool = false
     /// Original references represented by the provider attachment. Stability can
@@ -475,7 +476,7 @@ private enum LensHeroImageRunner {
                 let civitaiSource = [sourcePrompt, job.mediumBlock.trimmed, job.moodInfluenceBlock.trimmed, job.allowsMultiPanelLayout ? "" : lensSingleFrameGuard]
                     .filter { !$0.isEmpty }
                     .joined(separator: "\n\n")
-                let finalPrompt = [civitaiWANPrompt(sourcePrompt: civitaiSource, styleSummary: job.styleSummary), job.attachmentManifest.trimmed]
+                let finalPrompt = [job.promptPreamble.trimmed, civitaiWANPrompt(sourcePrompt: civitaiSource, styleSummary: job.styleSummary), job.attachmentManifest.trimmed]
                     .filter { !$0.isEmpty }.joined(separator: "\n\n")
                 let result = try await generateImageData(
                     job: job,
@@ -511,7 +512,7 @@ private enum LensHeroImageRunner {
                     errorMessage: "",
                     generatedAt: generatedAt,
                     updatedAt: generatedAt,
-                    renderRecipe: nil
+                    renderRecipe: result.renderRecipe?.recordingStyleMode(job.selectedStyleMode)
                 )
             }
             if job.skipPromptEnrichment {
@@ -560,7 +561,7 @@ private enum LensHeroImageRunner {
                     errorMessage: "",
                     generatedAt: generatedAt,
                     updatedAt: generatedAt,
-                    renderRecipe: result.renderRecipe
+                    renderRecipe: result.renderRecipe?.recordingStyleMode(job.selectedStyleMode)
                 )
             }
             guard let openAIClient else {
@@ -635,7 +636,7 @@ private enum LensHeroImageRunner {
                 errorMessage: "",
                 generatedAt: generatedAt,
                 updatedAt: generatedAt,
-                renderRecipe: result.renderRecipe
+                renderRecipe: result.renderRecipe?.recordingStyleMode(job.selectedStyleMode)
             )
         } catch {
             let failedAt = DateFormats.now()
@@ -7355,18 +7356,10 @@ final class LibraryEngine: ObservableObject {
                     lastError = aestheticStatus
                     return false
                 }
-                // OpenAI executes the style image and prompt references TOGETHER
-                // (combiningStyleAndPromptReferences below — style first, refs
-                // after, one manifest). Other providers have one image-input set:
-                // references fill it, so their style image demotes to prose.
-                if renderRequest.styleMode == .attachStyleImage, stack.heroProvider != .openAI {
-                    renderRequest.styleMode = .describeStyleInPrompt
-                }
             }
-            let supportsAttachment = stack.styleImageAttachSupported
-            if promptAttachments.isEmpty, renderRequest.styleMode == .attachStyleImage, !supportsAttachment {
-                aestheticStatus = "\(stack.label) does not support prompt-aware style image attachments"
-                lastError = aestheticStatus
+            if let reason = stack.frameStyleRequestError(styleMode: renderRequest.styleMode, promptImageCount: promptAttachments.count) {
+                aestheticStatus = reason
+                lastError = reason
                 return false
             }
             for promptAttachment in promptAttachments {
@@ -7412,7 +7405,7 @@ final class LibraryEngine: ObservableObject {
                 )
             }
             let hasStyleReference = selectedStyle != nil || !(sourceImage?.styleAuthorities.isEmpty ?? true)
-            if promptAttachments.isEmpty, renderRequest.styleMode == .attachStyleImage, !hasStyleReference {
+            if renderRequest.styleMode == .attachStyleImage, !hasStyleReference {
                 aestheticStatus = "No style image is available for this take"
                 lastError = aestheticStatus
                 return false
@@ -7592,6 +7585,43 @@ final class LibraryEngine: ObservableObject {
                     ).normalized(order: dependencies.count))
                 }
             }
+            // Stamp the RESOLVED character id (not just the template's raw stamp) so
+            // implicit casting and grouping can attribute this take even when the template
+            // predates characterId stamping and resolves by label.
+            let newTakeCharacterId = isCharacterStudy
+                ? (sourceImage.map { lensResolvedTakeCharacterId(for: $0, lens: lens, cast: lensCompositeCast(for: lens)) } ?? "")
+                : (sourceImage?.characterId ?? "")
+            let promptAttachmentPlan = providerPromptAttachments.isEmpty
+                ? nil
+                : lensPromptImageAttachmentPlan(
+                    providerPromptAttachments,
+                    descriptorOverrides: renderRequest.reframe.map { reframeAttachmentDescriptors(for: $0, attachmentCount: providerPromptAttachments.count) } ?? []
+                )
+            var stylePlan = renderRequest.styleMode == .attachStyleImage
+                ? lensBlendAttachmentPlan(
+                    lens: renderLens,
+                    catalog: styleCatalog,
+                    assignedStyleId: sourceAestheticIds.first,
+                    characterScopeId: promptAttachments.isEmpty ? newTakeCharacterId : nil,
+                    continuityURLs: []
+                )
+                : LensBlendAttachmentPlan()
+            if provider != .openAI { stylePlan.entries = stylePlan.styleEntries }
+            if renderRequest.styleMode == .attachStyleImage, stylePlan.styleEntries.isEmpty {
+                aestheticStatus = "The selected style image is unavailable. Choose a style or use Describe."
+                lastError = aestheticStatus
+                return false
+            }
+            let combinedPlan = promptAttachmentPlan.map {
+                LensBlendAttachmentPlan.combiningStyleAndPromptReferences(stylePlan: stylePlan, promptPlan: $0)
+            } ?? stylePlan
+            let attachmentEntries = combinedPlan.entries
+            let attachmentManifest = combinedPlan.manifestText
+            let attachmentManifestEntries = combinedPlan.manifestEntryLinesText
+            let attachmentStylePolicy = combinedPlan.manifestPolicyText
+            let styleSummary = renderRequest.styleMode == .describeStyleInPrompt
+                ? takeStyleSummary(styleAuthorities: styleAuthorities, preferredStyleId: sourceAestheticIds.first)
+                : stylePlan.styleSummaryText
             let renderRecipe: LensRenderRecipeSnapshot
             if stack.isFAL {
                 renderRecipe = stack.renderRecipeSnapshot(
@@ -7606,7 +7636,7 @@ final class LibraryEngine: ObservableObject {
                     hasStyleReferences: (renderRequest.styleMode == .attachStyleImage && !styleAuthorities.isEmpty) || !promptAttachments.isEmpty,
                     seed: civitaiSeed,
                     stack: stack,
-                    sourceImageCount: promptAttachments.isEmpty && renderRequest.styleMode == .attachStyleImage ? 1 : promptAttachments.count,
+                    sourceImageCount: usesCompositePromptImage ? promptAttachments.count : attachmentEntries.count,
                     usesCompositeImage: usesCompositePromptImage
                 )
             }
@@ -7616,12 +7646,6 @@ final class LibraryEngine: ObservableObject {
                 explicitLabel: renderRequest.label,
                 stack: stack
             )
-            // Stamp the RESOLVED character id (not just the template's raw stamp) so
-            // implicit casting and grouping can attribute this take even when the template
-            // predates characterId stamping and resolves by label.
-            let newTakeCharacterId = isCharacterStudy
-                ? (sourceImage.map { lensResolvedTakeCharacterId(for: $0, lens: lens, cast: lensCompositeCast(for: lens)) } ?? "")
-                : (sourceImage?.characterId ?? "")
             var newTake = ProjectLensHeroImage(
                 imageId: newImageId,
                 imageIndex: (heroImages.map(\.imageIndex).max() ?? sourceImage?.imageIndex ?? -1) + 1,
@@ -7639,7 +7663,7 @@ final class LibraryEngine: ObservableObject {
                 sourceAestheticIds: sourceAestheticIds,
                 subject: generatedTakeSubject(routeKey: newRouteKey, prompt: renderRequest.prompt),
                 styleAuthorities: styleAuthorities,
-                renderRecipe: renderRecipe,
+                renderRecipe: renderRecipe.recordingStyleMode(renderRequest.styleMode),
                 sourceDependencies: dependencies,
                 reframe: renderRequest.reframe,
                 imageKind: sourceImage?.imageKind ?? category.taxonomyImageKind,
@@ -7731,73 +7755,6 @@ final class LibraryEngine: ObservableObject {
                 : "jpg"
             let outputURL = contextStore.aestheticProofDirectory(for: project)
                 .appendingPathComponent("\(runId)_\(safeIdentifier(lensId))_\(safeIdentifier(newImageId)).\(outputExtension)")
-            let promptAttachmentPlan = providerPromptAttachments.isEmpty
-                ? nil
-                : lensPromptImageAttachmentPlan(
-                    providerPromptAttachments,
-                    descriptorOverrides: renderRequest.reframe.map { reframeAttachmentDescriptors(for: $0, attachmentCount: providerPromptAttachments.count) } ?? []
-                )
-            let usesStyleAttachmentPlan = renderRequest.styleMode == .attachStyleImage && (provider == .openAI || provider == .fal || provider == .stability)
-            let stylePlan = usesStyleAttachmentPlan
-                ? lensBlendAttachmentPlan(
-                    lens: renderLens,
-                    catalog: styleCatalog,
-                    assignedStyleId: sourceAestheticIds.first,
-                    // Explicit prompt attachments already carry their referenced subjects;
-                    // avoid re-attaching the study's implicit character references.
-                    characterScopeId: promptAttachments.isEmpty ? newTake.characterId : nil,
-                    continuityURLs: []
-                )
-                : LensBlendAttachmentPlan()
-            let openAIPlan: LensBlendAttachmentPlan
-            if provider == .openAI, let promptAttachmentPlan {
-                openAIPlan = LensBlendAttachmentPlan.combiningStyleAndPromptReferences(
-                    stylePlan: stylePlan,
-                    promptPlan: promptAttachmentPlan
-                )
-            } else if provider == .openAI {
-                openAIPlan = stylePlan
-            } else {
-                openAIPlan = LensBlendAttachmentPlan()
-            }
-            let attachmentEntries: [LensBlendAttachmentEntry]
-            if provider == .openAI {
-                attachmentEntries = openAIPlan.entries
-            } else if let promptAttachmentPlan {
-                attachmentEntries = promptAttachmentPlan.entries
-            } else if provider == .fal || provider == .stability {
-                attachmentEntries = stylePlan.styleEntries
-            } else {
-                attachmentEntries = stylePlan.entries
-            }
-            let attachmentManifest: String
-            let attachmentManifestEntries: String
-            let attachmentStylePolicy: String
-            if provider == .openAI {
-                attachmentManifest = openAIPlan.manifestText
-                attachmentManifestEntries = openAIPlan.manifestEntryLinesText
-                attachmentStylePolicy = openAIPlan.manifestPolicyText
-            } else if let promptAttachmentPlan {
-                attachmentManifest = promptAttachmentPlan.manifestText
-                attachmentManifestEntries = promptAttachmentPlan.manifestEntryLinesText
-                attachmentStylePolicy = ""
-            } else if provider == .fal || provider == .stability {
-                attachmentManifest = ""
-                attachmentManifestEntries = ""
-                attachmentStylePolicy = ""
-            } else {
-                attachmentManifest = stylePlan.manifestText
-                attachmentManifestEntries = stylePlan.manifestEntryLinesText
-                attachmentStylePolicy = stylePlan.manifestPolicyText
-            }
-            let styleSummary: String
-            if renderRequest.styleMode == .describeStyleInPrompt {
-                styleSummary = takeStyleSummary(styleAuthorities: styleAuthorities, preferredStyleId: sourceAestheticIds.first)
-            } else if renderRequest.styleMode == .attachStyleImage, provider == .openAI || provider == .stability {
-                styleSummary = stylePlan.styleSummaryText
-            } else {
-                styleSummary = ""
-            }
             // Mood influences ride in the job only: the persisted take prompt/sourcePrompt
             // stay the user's text so future takes seeded from this one never inherit them.
             let moodLines = (renderRequest.moodInfluences ?? []).map(\.line).filter { !$0.isEmpty }
@@ -7811,11 +7768,10 @@ final class LibraryEngine: ObservableObject {
                 provider: provider,
                 stack: stack,
                 styleMode: providerStyleMode,
+                selectedStyleMode: renderRequest.styleMode,
                 debugParametersJSON: renderRequest.debugParametersJSON,
                 promptImageReferenceMode: !promptAttachments.isEmpty,
-                sourceImageCount: provider == .openAI
-                    ? attachmentEntries.count
-                    : (promptAttachments.isEmpty && renderRequest.styleMode == .attachStyleImage ? attachmentEntries.count : promptAttachments.count),
+                sourceImageCount: usesCompositePromptImage ? promptAttachments.count : attachmentEntries.count,
                 usesCompositeImage: usesCompositePromptImage,
                 // Verbatim mode: the operator's per-frame choice OR a reframe
                 // (which never enriches, by design) — same skip branch.
@@ -7824,7 +7780,7 @@ final class LibraryEngine: ObservableObject {
                 sourcePrompt: newTake.sourcePrompt,
                 negativePrompt: newTake.negativePrompt,
                 attachments: attachmentEntries,
-                promptPreamble: provider == .openAI ? openAIPlan.promptPreamble : (promptAttachments.isEmpty && renderRequest.styleMode == .attachStyleImage ? stylePlan.promptPreamble : ""),
+                promptPreamble: combinedPlan.promptPreamble,
                 attachmentManifest: attachmentManifest,
                 styleSummary: styleSummary,
                 moodInfluenceBlock: moodInfluenceBlock,
@@ -32015,7 +31971,7 @@ final class LibraryEngine: ObservableObject {
             segmentCount: 1,
             progressText: "PREPARING NARRATION DRIVER",
             renderedEntryIds: shot.entries.map(\.entryId),
-            sourceNarrationTraceId: narration.traceId,
+            sourceNarrationTraceId: narration.effectiveSpeechTraceId,
             sourceEntryId: anchorEntry.entryId,
             generatedAt: now,
             updatedAt: now
@@ -33141,12 +33097,15 @@ final class LibraryEngine: ObservableObject {
                     }
                 }
             }
-            if var narration = shot.narrationArtifact, narration.status == "generating" {
-                narration.status = "failed"
-                narration.errorMessage = "Interrupted before completion"
+            for var narration in shot.sortedNarrationTakes where narration.status == "generating" {
+                narration.status = "interrupted"
+                narration.errorMessage = "Interrupted before completion. Review before generating another take."
                 narration.updatedAt = now
                 updated = updated.settingNarrationArtifact(narration, now: now)
                 changed = true
+                let interrupted = narration
+                Task { await recordNarrationTakeEvent(interrupted, shotId: shot.shotId,
+                    projectId: project.projectId, phase: "interrupted") }
             }
             document.shots[index] = updated
         }
@@ -33431,12 +33390,132 @@ final class LibraryEngine: ObservableObject {
         }
     }
 
-    /// Voices a shot's narration: the SPOKEN text is the meaning-message title
-    /// followed by a freshly drafted duration-scaled body (title alone when no
-    /// OpenAI key or the draft fails), or the user's inline edit via
-    /// `scriptOverride` verbatim. The drafted body is recorded in `bodyText`;
-    /// every voiced script appends to `titleVersions`. Playback overlays the
-    /// shot video non-destructively — the rendered mp4 is never touched.
+    /// Save each attempt against its owning project without replacing another
+    /// ready take while a provider or local processing step is unfinished.
+    @discardableResult
+    private func persistNarrationTake(_ take: ShotNarrationArtifact, shotId: String,
+                                      project: ProjectRecord, activate: Bool = true) -> Bool {
+        let document = currentProject?.projectId == project.projectId
+            ? shotTimeline : contextStore.loadShotTimeline(for: project)
+        guard document.shots.contains(where: { $0.shotId == shotId }) else {
+            lastError = "The narration's Shot is unavailable; its saved audio remains on disk."
+            return false
+        }
+        return persistShotTimeline(document.updatingShot(shotId: shotId, now: take.updatedAt) {
+            activate ? $0.settingNarrationArtifact(take, now: take.updatedAt)
+                : $0.recordingNarrationTake(take, now: take.updatedAt)
+        }, for: project)
+    }
+
+    private func recordNarrationTakeEvent(_ take: ShotNarrationArtifact, shotId: String,
+                                         projectId: String, phase: String) async {
+        let media = inferenceTraceJSONString([
+            "shot_id": shotId, "take_id": take.takeId,
+            "audio_file": take.audioPath.isEmpty ? "" : URL(fileURLWithPath: take.audioPath).lastPathComponent,
+            "source_file": take.effectiveSourceAudioPath.isEmpty ? "" : URL(fileURLWithPath: take.effectiveSourceAudioPath).lastPathComponent
+        ])
+        let metadata = InferenceTraceRequestMetadata(provider: "local", apiFamily: "audio",
+            operation: phase, projectId: projectId, runId: take.runId,
+            traceGroupId: take.traceGroupId, parentTraceId: take.effectiveSpeechTraceId,
+            workflowName: "shot_narration", workflowStep: phase,
+            artifactType: "narration_take", artifactId: take.takeId, model: take.model,
+            requestTextJSON: inferenceTraceJSONString(["shot_id": shotId, "take_id": take.takeId]),
+            responseTextJSON: inferenceTraceJSONString([
+                "status": take.status, "duration_seconds": take.durationSeconds,
+                "error": WorkflowPrivacy.text(take.errorMessage)
+            ]), mediaRefsJSON: media, captureRequestBody: false, captureResponseBody: false)
+        let request = URLRequest(url: URL(string: "litscenes://narration/take")!)
+        let traceId: String
+        if ["failed", "interrupted", "canceled"].contains(take.status) || phase == "stopped" {
+            traceId = await InferenceTraceStore.shared.record(request: request, metadata: metadata,
+                response: nil, responseBody: nil, latencyMs: 0,
+                error: ScreenGraphError.capture(take.errorMessage))
+        } else {
+            traceId = await InferenceTraceStore.shared.recordEvent(request: request, metadata: metadata)
+        }
+        if !traceId.isEmpty {
+            await WorkflowCoordinator.shared.transition(take.traceGroupId, phase: phase,
+                message: "Narration take: " + take.status, traceId: traceId)
+        }
+    }
+
+    func useShotNarrationTake(shotId: String, takeId: String) -> ShotNarrationStateEdit? {
+        guard let project = currentProject, let shot = shotForEditing(shotId: shotId),
+              !activeShotNarrationIds.contains(shotId), !activeShotNarrationSpeedIds.contains(shotId),
+              let take = shot.narrationTakes.first(where: { $0.takeId == takeId && $0.isReady }) else { return nil }
+        guard FileManager.default.fileExists(atPath: take.audioPath) else {
+            lastError = "This narration audio is missing. Restore its file or choose another take."
+            return nil
+        }
+        let now = DateFormats.now()
+        let updated = shot.activatingNarrationTake(takeId, now: now)
+        let edit = ShotNarrationStateEdit(before: .init(shot: shot, projectId: project.projectId),
+                                         after: .init(shot: updated, projectId: project.projectId))
+        guard persistShotTimeline(shotTimeline.updatingShot(shotId: shotId, now: now) { _ in updated }, for: project) else { return nil }
+        aestheticStatus = "Narration take selected"
+        return edit
+    }
+
+    func narrationPasteAvailability(shotId: String) -> ShotNarrationPasteAvailability {
+        let availability = ShotNarrationClipboard.availability { [self] copied in
+            guard let current = currentProject else { return nil }
+            let sourceProject = copied.sourceProjectId.isEmpty || copied.sourceProjectId == current.projectId
+                ? current : projects.first { $0.projectId == copied.sourceProjectId }
+            guard let sourceProject else { return nil }
+            let document = sourceProject.projectId == current.projectId
+                ? shotTimeline : contextStore.loadShotTimeline(for: sourceProject)
+            guard let source = document.shots.first(where: { $0.shotId == copied.sourceShotId }) else { return nil }
+            return ShotNarrationClipboardPayload.matching(copied.region, in: source, projectId: sourceProject.projectId)
+        }
+        guard let payload = availability.payload else { return availability }
+        if let refusal = narrationPasteRefusal(shotId: shotId, payload: payload) { return .unavailable(refusal) }
+        return availability
+    }
+
+    private func narrationPasteRefusal(shotId: String, payload: ShotNarrationClipboardPayload) -> String? {
+        guard currentProject != nil, shotForEditing(shotId: shotId) != nil else {
+            return "Select an available Shot before pasting narration."
+        }
+        guard !activeShotNarrationIds.contains(shotId), !activeShotNarrationSpeedIds.contains(shotId) else {
+            return "Wait for this Shot’s narration or speed update to finish before pasting."
+        }
+        return payload.pasteRefusal
+    }
+
+    func pasteShotNarration(shotId: String, payload: ShotNarrationClipboardPayload) -> ShotNarrationStateEdit? {
+        if let refusal = narrationPasteRefusal(shotId: shotId, payload: payload) {
+            lastError = refusal
+            return nil
+        }
+        guard let project = currentProject, let shot = shotForEditing(shotId: shotId) else { return nil }
+        do {
+            let now = DateFormats.now()
+            let copied = try payload.materialized(in: contextStore.aestheticProofDirectory(for: project)
+                .appendingPathComponent("narration_copies", isDirectory: true), now: now)
+            let updated = shot.recordingNarrationTake(copied, now: now)
+                .activatingNarrationTake(copied.takeId, atStart: true, now: now)
+            let edit = ShotNarrationStateEdit(before: .init(shot: shot, projectId: project.projectId),
+                                             after: .init(shot: updated, projectId: project.projectId))
+            guard persistShotTimeline(shotTimeline.updatingShot(shotId: shotId, now: now) { _ in updated }, for: project) else { return nil }
+            aestheticStatus = "Narration pasted at the start of the Shot"
+            return edit
+        } catch {
+            lastError = error.localizedDescription
+            aestheticStatus = "Narration could not be pasted"
+            return nil
+        }
+    }
+
+    func restoreShotNarrationState(shotId: String, snapshot: ShotNarrationStateSnapshot) -> Bool {
+        guard let project = currentProject, project.projectId == snapshot.projectId,
+              shotForEditing(shotId: shotId) != nil,
+              !activeShotNarrationIds.contains(shotId), !activeShotNarrationSpeedIds.contains(shotId) else { return false }
+        let now = DateFormats.now()
+        return persistShotTimeline(shotTimeline.updatingShot(shotId: shotId, now: now) {
+            snapshot.applying(to: $0, now: now)
+        }, for: project)
+    }
+
     @discardableResult
     func startShotNarration(
         shotId: String,
@@ -33444,253 +33523,138 @@ final class LibraryEngine: ObservableObject {
         voicePresetId: String,
         scriptOverride: String? = nil
     ) async -> Bool {
-        return await WorkflowCoordinator.shared.run(project: currentProject, workflow: "start_shot_narration", artifactType: "shot", artifactId: shotId, lane: .audio, recipeJSON: workflowRecipe(["shotId": String(describing: shotId), "messagingText": String(describing: messagingText), "voicePresetId": String(describing: voicePresetId)]), failure: false) { [self] in
-            guard let project = currentProject else {
-                aestheticStatus = "Create or select a project first"
-                return false
-            }
+        await WorkflowCoordinator.shared.run(project: currentProject, workflow: "start_shot_narration",
+            artifactType: "shot", artifactId: shotId, lane: .audio,
+            recipeJSON: workflowRecipe(["shotId": shotId, "messagingText": messagingText,
+                "voicePresetId": voicePresetId, "scriptOverride": scriptOverride ?? ""]), failure: false) { [self] in
+            guard let project = currentProject, let shot = shotForEditing(shotId: shotId) else { return false }
             guard !activeShotNarrationIds.contains(shotId), !activeShotNarrationSpeedIds.contains(shotId) else {
                 aestheticStatus = "Shot narration is already running"
                 return false
             }
-            guard !isGenerationPaused else {
-                aestheticStatus = "Generation is paused — resume to continue"
-                return false
-            }
-            guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
-                  let lens = projectLenses.lenses.first else {
-                aestheticStatus = "Shot not found"
-                return false
-            }
-            guard !shot.entries.isEmpty else {
-                aestheticStatus = "Add frames before narrating this shot"
-                return false
-            }
             let messaging = messagingText.trimmed
             guard !messaging.isEmpty else {
-                aestheticStatus = "Pick a meaning message before narrating"
+                aestheticStatus = "Pick a meaning message or enter narration text first"
                 return false
             }
             guard ElevenLabsSettingsStore.hasResolvedAPIKey() else {
-                aestheticStatus = "Add an ElevenLabs API key in App Settings before narrating"
-                lastError = aestheticStatus
+                lastError = "Add an ElevenLabs API key in App Settings before narrating"
                 return false
             }
-            let voiceOption = StoryAudioVoiceCatalog.option(
-                for: voicePresetId,
-                customVoiceId: ElevenLabsSettingsStore.resolvedCustomVoiceId(),
-                extraVoices: accountVoiceOptions
-            )
-            guard let resolvedVoiceId = voiceOption.voiceId?.trimmed.nilIfEmpty else {
-                aestheticStatus = "Select Archer/Lucy or configure Custom Voice ID before narrating"
-                lastError = aestheticStatus
+            let voice = StoryAudioVoiceCatalog.option(for: voicePresetId,
+                customVoiceId: ElevenLabsSettingsStore.resolvedCustomVoiceId(), extraVoices: accountVoiceOptions)
+            guard let voiceId = voice.voiceId?.trimmed.nilIfEmpty else {
+                lastError = "Select a configured narration voice first"
                 return false
             }
-            let speechModelId = ElevenLabsSpeechModels.defaultModelId
-            let retainedVoiceSpeed = shot.narrationArtifact?.effectiveVoiceSpeed
-                ?? StoryAudioVoiceCatalog.defaultSpeed
-
-            let frameLookup = Dictionary(
-                lens.sortedHeroImages.map { ($0.imageId, $0) },
-                uniquingKeysWith: { first, _ in first }
-            )
-            let frameGists = shotNarrationFrameGists(shot: shot, frameLookup: frameLookup)
-            // Gists only feed the body draft — verbatim text (THE QUICK SUBMIT)
-            // needs no frames, so footage-only and not-yet-framed shots can still
-            // author the narration that drives an LTX render.
-            if scriptOverride == nil {
-                guard !frameGists.isEmpty else {
-                    aestheticStatus = "This shot has no rendered frames to narrate"
-                    return false
-                }
+            let frameLookup = Dictionary((projectLenses.lenses.first?.sortedHeroImages ?? []).map { ($0.imageId, $0) },
+                                        uniquingKeysWith: { first, _ in first })
+            let gists = shotNarrationFrameGists(shot: shot, frameLookup: frameLookup)
+            guard scriptOverride != nil || !gists.isEmpty else {
+                lastError = "Add a ready Frame to draft narration, or type the narration yourself."
+                return false
             }
-            let strands = deriveMeaningStrands(
-                shots: [shot],
-                frameLookup: frameLookup,
-                meaningNodes: lensContext.promptPacket().meaningNodes
-            )
-
+            let strands = deriveMeaningStrands(shots: [shot], frameLookup: frameLookup,
+                                               meaningNodes: lensContext.promptPacket().meaningNodes)
+            let brief = projectGoalV2.activeBrief
+            let spendLabel = spendContextLabel(shotId: shotId)
+            let retainedSpeed = shot.narrationArtifact?.effectiveVoiceSpeed ?? StoryAudioVoiceCatalog.defaultSpeed
             activeShotNarrationIds.insert(shotId)
             defer { activeShotNarrationIds.remove(shotId) }
-
             let now = DateFormats.now()
-            persistShotTimeline(
-                shotTimeline.updatingShot(shotId: shotId, now: now) {
-                    $0.settingNarrationArtifact(
-                        ShotNarrationArtifact(
-                            model: speechModelId,
-                            status: "generating",
-                            messagingText: messaging,
-                            audioPath: shot.narrationArtifact?.audioPath ?? "",
-                            sourceAudioPath: shot.narrationArtifact?.sourceAudioPath ?? "",
-                            script: shot.narrationArtifact?.script ?? "",
-                            bodyText: shot.narrationArtifact?.bodyText ?? "",
-                            titleVersions: shot.narrationArtifact?.titleVersions ?? [],
-                            voicePresetId: voiceOption.id,
-                            voiceName: voiceOption.name,
-                            voiceId: resolvedVoiceId,
-                            durationSeconds: shot.narrationArtifact?.durationSeconds ?? 0,
-                            sourceDurationSeconds: shot.narrationArtifact?.sourceDurationSeconds ?? 0,
-                            voiceSpeed: retainedVoiceSpeed,
-                            audioProcessor: shot.narrationArtifact?.audioProcessor ?? "",
-                            updatedAt: now
-                        ),
-                        now: now
-                    )
-                },
-                for: project
-            )
-            aestheticStatus = "Narrating shot"
-
-            let runId = "shot_narration_\(shortHash("\(project.projectId):\(shotId):\(now)", length: 14))"
+            let takeId = "narration_\(UUID().uuidString.lowercased())"
+            let runId = "shot_\(takeId)"
+            var take = ShotNarrationArtifact(model: ElevenLabsSpeechModels.defaultModelId, status: "generating",
+                messagingText: messaging, script: scriptOverride?.trimmed ?? "",
+                titleVersions: shot.narrationArtifact?.titleVersions ?? [],
+                voicePresetId: voice.id, voiceName: voice.name, voiceId: voiceId,
+                updatedAt: now, takeId: takeId, runId: runId,
+                traceGroupId: WorkflowContext.current?.jobId ?? runId)
+            guard persistNarrationTake(take, shotId: shotId, project: project) else { return false }
+            await recordNarrationTakeEvent(take, shotId: shotId, projectId: project.projectId, phase: "started")
             do {
-                // The spoken text is the thesis title followed by a body drafted
-                // in THIS run (a stale body may serve a different chip's thesis);
-                // a user edit via `scriptOverride` is voiced verbatim instead.
-                var draftedBody = ""
-                var bodyResponseId = ""
-                var bodyTraceId = ""
-                if scriptOverride == nil, let openAIClient = try? OpenAIClient.fromEnvironment() {
-                    // Body drafting is best-effort — no key or a failed draft
-                    // never blocks the voice; the title alone is spoken.
-                    let renderReady = shot.renderArtifact?.status == "ready"
-                    let bodyPrompt = ShotNarrationComposer.scriptPrompt(
-                        messaging: messaging,
-                        shotName: shot.name,
-                        frameGists: frameGists,
-                        strandLabels: strands.filter { $0.kind == .meaning }.map(\.label),
-                        brief: projectGoalV2.activeBrief,
-                        targetSeconds: renderReady ? (shot.renderArtifact?.totalSeconds ?? 0) : 0
-                    )
+                try WorkflowCoordinator.shared.checkStopRequested()
+                if scriptOverride == nil, let client = try? OpenAIClient.fromEnvironment() {
                     aestheticStatus = "Writing narration body"
-                    if let draft = try? await openAIClient.draftShotNarration(
-                        prompt: bodyPrompt,
-                        projectId: project.projectId,
-                        runId: runId
-                    ) {
-                        draftedBody = draft.script
-                        bodyResponseId = draft.responseId
-                        bodyTraceId = draft.traceId
+                    let prompt = ShotNarrationComposer.scriptPrompt(messaging: messaging, shotName: shot.name,
+                        frameGists: gists, strandLabels: strands.filter { $0.kind == .meaning }.map(\.label), brief: brief,
+                        targetSeconds: shot.renderArtifact?.isReady == true ? shot.renderArtifact?.totalSeconds ?? 0 : 0)
+                    if let draft = try? await client.draftShotNarration(prompt: prompt, projectId: project.projectId, runId: runId) {
+                        take.bodyText = draft.script
+                        take.scriptResponseId = draft.responseId
+                        take.traceId = draft.traceId
+                        await InferenceTraceStore.shared.enrichContext(traceId: draft.traceId,
+                            traceGroupId: take.traceGroupId, workflowName: "shot_narration", workflowStep: "script",
+                            artifactType: "narration_take", artifactId: takeId)
                     }
-                    guard currentProject?.projectId == project.projectId else { return false }
+                } else if scriptOverride != nil {
+                    take.bodyText = shot.narrationArtifact?.bodyText ?? ""
+                    take.scriptResponseId = shot.narrationArtifact?.scriptResponseId ?? ""
+                    take.traceId = shot.narrationArtifact?.traceId ?? ""
                 }
-                let spokenText = scriptOverride?.trimmed.nilIfEmpty
-                    ?? ShotNarrationComposer.spokenScript(title: messaging, body: draftedBody)
-                // An override is voiced verbatim; the prior drafted body and its
-                // provenance stay on record untouched.
-                let bodyText = scriptOverride == nil ? draftedBody : (shot.narrationArtifact?.bodyText ?? "")
-                if scriptOverride != nil {
-                    bodyResponseId = shot.narrationArtifact?.scriptResponseId ?? ""
-                    bodyTraceId = shot.narrationArtifact?.traceId ?? ""
+                take.script = scriptOverride?.trimmed.nilIfEmpty
+                    ?? ShotNarrationComposer.spokenScript(title: messaging, body: take.bodyText)
+                if take.titleVersions.last != take.script { take.titleVersions.append(take.script) }
+                take.updatedAt = DateFormats.now()
+                guard persistNarrationTake(take, shotId: shotId, project: project) else {
+                    throw ScreenGraphError.capture("Narration could not be saved before voicing. No speech request was sent.")
                 }
-
-                var titleVersions = (shot.narrationArtifact?.titleVersions ?? [])
-                    .map { $0.trimmed }
-                    .filter { !$0.isEmpty }
-                if titleVersions.last != spokenText {
-                    titleVersions.append(spokenText)
-                }
-
+                try WorkflowCoordinator.shared.checkStopRequested()
                 aestheticStatus = "Voicing shot narration"
-                let elevenClient = ElevenLabsClient(apiKey: try ElevenLabsSettingsStore.resolvedAPIKeyOrThrow())
-                let speech = try await elevenClient.createSpeech(
-                    voiceId: resolvedVoiceId,
-                    text: spokenText,
-                    modelId: speechModelId,
-                    projectId: project.projectId,
-                    runId: runId
-                )
-                guard currentProject?.projectId == project.projectId else { return false }
-                recordSpend(SpendLedgerEntry(
-                    kind: "narration_tts",
-                    provider: "elevenlabs_tts",
-                    model: speechModelId,
-                    requestId: speech.requestId,
-                    contextLabel: spendContextLabel(shotId: shotId),
-                    shotId: shotId,
-                    unit: "characters",
-                    unitCount: Double(speech.characterCount) ?? 0,
-                    estimatedCredits: Double(speech.characterCost),
-                    pricingNote: "elevenlabs character-cost header"
-                ))
-
-                try ensureDirectory(contextStore.aestheticProofDirectory(for: project))
-                let audioURL = contextStore.aestheticProofDirectory(for: project)
-                    .appendingPathComponent("\(runId)_\(safeIdentifier(shotId))_narration.mp3")
-                try speech.data.write(to: audioURL, options: [.atomic])
-                let duration = await lensNarrationDuration(url: audioURL)
-
-                let readyAt = DateFormats.now()
-                var readyNarration = ShotNarrationArtifact(
-                    model: speechModelId,
-                    status: "ready",
-                    messagingText: messaging,
-                    audioPath: audioURL.path,
-                    sourceAudioPath: audioURL.path,
-                    script: spokenText,
-                    bodyText: bodyText,
-                    titleVersions: titleVersions,
-                    voicePresetId: voiceOption.id,
-                    voiceName: voiceOption.name,
-                    voiceId: resolvedVoiceId,
-                    durationSeconds: duration,
-                    sourceDurationSeconds: duration,
-                    voiceSpeed: StoryAudioVoiceCatalog.defaultSpeed,
-                    scriptResponseId: bodyResponseId,
-                    requestId: speech.requestId,
-                    traceId: bodyTraceId,
-                    errorMessage: "",
-                    generatedAt: readyAt,
-                    updatedAt: readyAt
-                )
-                if abs(retainedVoiceSpeed - StoryAudioVoiceCatalog.defaultSpeed) > 0.001 {
-                    readyNarration = try await applyingShotNarrationSpeed(
-                        readyNarration,
-                        targetSpeed: retainedVoiceSpeed,
-                        projectId: project.projectId
-                    )
+                let speech = try await ElevenLabsClient(apiKey: ElevenLabsSettingsStore.resolvedAPIKeyOrThrow())
+                    .createSpeech(voiceId: voiceId, text: take.script, modelId: take.model,
+                        projectId: project.projectId, runId: runId, traceGroupId: take.traceGroupId,
+                        parentTraceId: take.traceId, artifactId: takeId)
+                take.requestId = speech.requestId
+                take.speechTraceId = speech.traceId
+                recordSpend(SpendLedgerEntry(kind: "narration_tts", provider: "elevenlabs_tts", model: take.model,
+                    requestId: speech.requestId, contextLabel: spendLabel, shotId: shotId, unit: "characters",
+                    unitCount: Double(speech.characterCount) ?? 0, estimatedCredits: Double(speech.characterCost),
+                    pricingNote: "elevenlabs character-cost header"), for: project)
+                let directory = contextStore.aestheticProofDirectory(for: project)
+                try ensureDirectory(directory)
+                let url = directory.appendingPathComponent("\(runId)_\(safeIdentifier(shotId))_narration.mp3")
+                try speech.data.write(to: url, options: [.atomic])
+                take.audioPath = url.path
+                take.sourceAudioPath = url.path
+                take.durationSeconds = await lensNarrationDuration(url: url)
+                take.sourceDurationSeconds = take.durationSeconds
+                take.generatedAt = DateFormats.now()
+                take.updatedAt = take.generatedAt
+                take.status = "ready"
+                await InferenceTraceStore.shared.enrichContext(traceId: speech.traceId,
+                    mediaRefsJSON: inferenceTraceJSONString(["shot_id": shotId, "take_id": takeId,
+                        "audio_file": url.lastPathComponent, "sha256": speech.responseBodySHA256]))
+                // Preserve completed provider audio before optional local processing.
+                guard persistNarrationTake(take, shotId: shotId, project: project, activate: false) else {
+                    throw ScreenGraphError.capture("Speech audio was saved, but the take could not be recorded. Check project storage before generating again.")
                 }
-                guard currentProject?.projectId == project.projectId else { return false }
-                persistShotTimeline(
-                    shotTimeline.updatingShot(shotId: shotId, now: readyAt) {
-                        $0.settingNarrationArtifact(readyNarration, now: readyAt)
-                    },
-                    for: project
-                )
-                aestheticStatus = "Shot narration ready"
+                if abs(retainedSpeed - StoryAudioVoiceCatalog.defaultSpeed) > 0.001 {
+                    do {
+                        take = try await applyingShotNarrationSpeed(take, targetSpeed: retainedSpeed, projectId: project.projectId)
+                    } catch {
+                        take.errorMessage = "Original audio saved at 1×; speed processing failed. Adjust speed to retry locally."
+                    }
+                }
+                take.updatedAt = DateFormats.now()
+                guard persistNarrationTake(take, shotId: shotId, project: project) else {
+                    throw ScreenGraphError.capture("The saved narration take could not be activated. Reopen the Shot before generating again.")
+                }
+                await recordNarrationTakeEvent(take, shotId: shotId, projectId: project.projectId, phase: "saved")
+                if currentProject?.projectId == project.projectId { aestheticStatus = "Shot narration ready" }
                 return true
             } catch {
-                guard currentProject?.projectId == project.projectId else { return false }
-                let failedAt = DateFormats.now()
-                persistShotTimeline(
-                    shotTimeline.updatingShot(shotId: shotId, now: failedAt) {
-                        $0.settingNarrationArtifact(
-                            ShotNarrationArtifact(
-                                model: speechModelId,
-                                status: "failed",
-                                messagingText: messaging,
-                                audioPath: shot.narrationArtifact?.audioPath ?? "",
-                                sourceAudioPath: shot.narrationArtifact?.sourceAudioPath ?? "",
-                                script: shot.narrationArtifact?.script ?? "",
-                                bodyText: shot.narrationArtifact?.bodyText ?? "",
-                                titleVersions: shot.narrationArtifact?.titleVersions ?? [],
-                                voicePresetId: voiceOption.id,
-                                voiceName: voiceOption.name,
-                                voiceId: resolvedVoiceId,
-                                durationSeconds: shot.narrationArtifact?.durationSeconds ?? 0,
-                                sourceDurationSeconds: shot.narrationArtifact?.sourceDurationSeconds ?? 0,
-                                voiceSpeed: retainedVoiceSpeed,
-                                audioProcessor: shot.narrationArtifact?.audioProcessor ?? "",
-                                errorMessage: error.localizedDescription,
-                                updatedAt: failedAt
-                            ),
-                            now: failedAt
-                        )
-                    },
-                    for: project
-                )
-                aestheticStatus = "Shot narration failed"
-                lastError = error.localizedDescription
+                // A completed response remains a ready take even when a later
+                // storage or activation step failed; never resubmit it implicitly.
+                if !take.isReady { take.status = error is CancellationError ? "canceled" : "failed" }
+                take.errorMessage = WorkflowPrivacy.text(error.localizedDescription)
+                take.updatedAt = DateFormats.now()
+                _ = persistNarrationTake(take, shotId: shotId, project: project, activate: false)
+                await recordNarrationTakeEvent(take, shotId: shotId, projectId: project.projectId, phase: "stopped")
+                if currentProject?.projectId == project.projectId {
+                    aestheticStatus = take.isReady ? "Narration saved; review its take" : "Shot narration stopped"
+                    lastError = take.errorMessage
+                }
                 return false
             }
         }
@@ -33707,7 +33671,7 @@ final class LibraryEngine: ObservableObject {
                 aestheticStatus = "Shot narration is already running"
                 return false
             }
-            guard let shot = shotTimeline.shots.first(where: { $0.shotId == shotId }),
+            guard let shot = shotForEditing(shotId: shotId),
                   let narration = shot.narrationArtifact,
                   narration.isReady else {
                 aestheticStatus = "Generate narration before changing speed"
@@ -33728,18 +33692,13 @@ final class LibraryEngine: ObservableObject {
                     targetSpeed: targetSpeed,
                     projectId: project.projectId
                 )
-                guard currentProject?.projectId == project.projectId else { return false }
-                let now = DateFormats.now()
                 updated.errorMessage = ""
-                updated.updatedAt = now
-                persistShotTimeline(
-                    shotTimeline.updatingShot(shotId: shotId, now: now) {
-                        $0.settingNarrationArtifact(updated, now: now)
-                    },
-                    for: project
-                )
-                aestheticStatus = "Narration speed updated"
-                touchCurrentProject()
+                updated.updatedAt = DateFormats.now()
+                guard persistNarrationTake(updated, shotId: shotId, project: project) else { return false }
+                if currentProject?.projectId == project.projectId {
+                    aestheticStatus = "Narration speed updated"
+                    touchCurrentProject()
+                }
                 return true
             } catch {
                 guard currentProject?.projectId == project.projectId else { return false }
@@ -33775,10 +33734,11 @@ final class LibraryEngine: ObservableObject {
 
         let sourceURL = URL(fileURLWithPath: sourcePath)
         let stem = sourceURL.deletingPathExtension().lastPathComponent
+        let derivativeId = UUID().uuidString.lowercased()
         let derivativeURL = sourceURL.deletingLastPathComponent()
-            .appendingPathComponent("\(stem)__speed.m4a")
+            .appendingPathComponent("\(stem)__speed_\(derivativeId).m4a")
         let temporaryURL = sourceURL.deletingLastPathComponent()
-            .appendingPathComponent("\(stem)__speed_tmp.m4a")
+            .appendingPathComponent("\(stem)__speed_\(derivativeId)_tmp.m4a")
 
         do {
             let duration = try await LocalAudioRetime.export(
@@ -33786,12 +33746,6 @@ final class LibraryEngine: ObservableObject {
                 outputURL: temporaryURL,
                 playbackRate: speed
             )
-            guard currentProject?.projectId == projectId else {
-                if FileManager.default.fileExists(atPath: temporaryURL.path) {
-                    try? FileManager.default.removeItem(at: temporaryURL)
-                }
-                throw ScreenGraphError.capture("Shot narration project changed before speed processing finished.")
-            }
             if FileManager.default.fileExists(atPath: derivativeURL.path) {
                 _ = try FileManager.default.replaceItemAt(
                     derivativeURL,

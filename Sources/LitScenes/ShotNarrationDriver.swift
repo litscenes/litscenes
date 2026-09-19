@@ -36,7 +36,7 @@ enum ShotNarrationDriverBuilder {
                 ?? shot.audioMix.lane(ShotAudioLaneId.narration).effectiveStartSeconds),
             String(format: "%.6f", region?.sourceStartSeconds ?? 0),
             String(format: "%.6f", region?.durationSeconds ?? narration.durationSeconds),
-            narration.traceId,
+            narration.effectiveSpeechTraceId,
         ].joined(separator: "|")
         return sha256Hex(Data(geometry.utf8) + bytes)
     }
@@ -106,9 +106,9 @@ enum ShotNarrationDriverBuilder {
             at: CMTime(seconds: timelineStart, preferredTimescale: 600)
         )
         let outputSeconds = timelineStart + selectedSeconds
-        guard outputSeconds >= 2, outputSeconds <= 20 else {
+        guard ShotNarrationDuration.isValid(outputSeconds) else {
             throw ScreenGraphError.capture(
-                "LTX 2.3 accepts 2–20 seconds of narration. This authored narration is \(durationLabel(outputSeconds)); adjust its region or speed in Narration."
+                ShotNarrationDuration.refusal(outputSeconds) ?? "Open Narration to repair the audio duration."
             )
         }
 
@@ -138,11 +138,8 @@ enum ShotNarrationDriverBuilder {
             durationSeconds: outputSeconds,
             regionId: activeRegion?.regionId ?? "",
             fingerprint: fingerprint,
-            sourceTraceId: narration.traceId
+            sourceTraceId: narration.effectiveSpeechTraceId
         )
     }
 
-    private static func durationLabel(_ seconds: Double) -> String {
-        String(format: "%.1fs", seconds)
-    }
 }
