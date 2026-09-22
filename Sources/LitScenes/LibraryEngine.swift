@@ -2171,6 +2171,7 @@ final class LibraryEngine: ObservableObject {
         }
     }
     @Published private(set) var diskUsageNotice: DiskUsageNoticeRecord = .empty
+    @Published private(set) var acknowledgedAnnouncementIDs: Set<String> = []
     @Published private(set) var isMeasuringDiskUsage = false
     /// Growth reading for the current project; nil until measured.
     @Published private(set) var projectVitals: ProjectVitals?
@@ -16089,7 +16090,9 @@ final class LibraryEngine: ObservableObject {
     func bootstrapAppNoticesOnLaunch() {
         guard !hasBootstrappedAppNotices else { return }
         hasBootstrappedAppNotices = true
-        diskUsageNotice = appNoticesStore.load().diskUsage
+        let notices = appNoticesStore.load()
+        diskUsageNotice = notices.diskUsage
+        acknowledgedAnnouncementIDs = Set(notices.acknowledgedAnnouncementIDs)
         Task { [weak self] in
             await self?.refreshDiskUsageNotice()
         }
@@ -16147,9 +16150,17 @@ final class LibraryEngine: ObservableObject {
         persistAppNotices()
     }
 
+    func acknowledgeAnnouncements(_ ids: [String]) {
+        let updated = acknowledgedAnnouncementIDs.union(ids)
+        guard updated != acknowledgedAnnouncementIDs else { return }
+        acknowledgedAnnouncementIDs = updated
+        persistAppNotices()
+    }
+
     private func persistAppNotices() {
         do {
-            try appNoticesStore.save(AppNoticesStateDocument(diskUsage: diskUsageNotice))
+            try appNoticesStore.save(AppNoticesStateDocument(diskUsage: diskUsageNotice,
+                acknowledgedAnnouncementIDs: acknowledgedAnnouncementIDs.sorted()))
         } catch {
             lastError = error.localizedDescription
         }

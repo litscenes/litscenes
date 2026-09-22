@@ -45,9 +45,10 @@ struct ProviderBillingSnapshot: Codable, Sendable {
 
     static func capture() -> Self {
         let values = UserDefaults.standard.dictionary(forKey: ProviderBilling.preferenceKey) ?? [:]
+        let membershipsEnabled = GoAvailability.membershipsEnabled
         return Self(defaultSource: GoConnection.isManaged ? .go : .personal,
             overrides: values.reduce(into: [:]) { result, pair in
-                if let raw = pair.value as? String, let source = ProviderBillingSource(rawValue: raw) { result[pair.key] = source }
+                if let raw = pair.value as? String, let source = ProviderBillingSource(rawValue: raw) { result[pair.key] = membershipsEnabled ? source : .personal }
             })
     }
     func source(for target: ProviderBillingTarget) -> ProviderBillingSource {
@@ -71,7 +72,7 @@ enum ProviderBilling {
         (snapshot ?? ProviderBillingSnapshot.capture()).source(for: target)
     }
     static func select(_ source: ProviderBillingSource, for target: ProviderBillingTarget) {
-        guard target.supportsGo else { return }
+        guard target.supportsGo, source != .go || GoAvailability.membershipsEnabled else { return }
         var values = UserDefaults.standard.dictionary(forKey: preferenceKey) ?? [:]
         values[target.id] = source.rawValue
         UserDefaults.standard.set(values, forKey: preferenceKey)
@@ -100,7 +101,7 @@ struct ProviderBillingControl: View {
         let _ = revision
         let source = ProviderBilling.source(for: target)
         VStack(alignment: .leading, spacing: 5) {
-            if target.supportsGo {
+            if target.supportsGo && GoAvailability.membershipsEnabled {
                 Picker("Pay with", selection: Binding(get: { source }, set: { ProviderBilling.select($0, for: target); revision += 1 })) {
                     ForEach(ProviderBillingSource.allCases, id: \.self) { Text($0.label).tag($0) }
                 }.pickerStyle(.segmented).frame(maxWidth: 290)

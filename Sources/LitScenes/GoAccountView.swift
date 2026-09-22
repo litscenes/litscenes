@@ -102,7 +102,7 @@ struct GoConnectionNotice: View {
     @ObservedObject private var go = GoAccountStore.shared
     @State private var retrying = false
     var body: some View {
-        if !go.connectionIssue.isEmpty {
+        if GoAvailability.membershipsEnabled && !go.connectionIssue.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Text(go.connectionIssue).font(CanonType.interface(12)).foregroundStyle(CanonColor.brass)
                 Button(retrying ? "Connecting…" : "Try again") {
@@ -128,45 +128,49 @@ struct GoAccountView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                GoConnectionNotice()
-                if go.isSignedIn {
-                    if go.hasAccount {
-                        balanceCard
-                    } else {
-                        Text("Your LitScenes account").font(CanonType.interface(16, weight: .semibold))
-                        Text("Connect to Go to check your plan and credit balance. Your saved sign-in is still here.")
-                            .font(CanonType.interface(12)).foregroundStyle(CanonColor.muted)
-                    }
-                    if go.hasAccount && !["active", "trialing", "past_due", "unpaid", "incomplete", "paused"].contains(go.account.string("subscription_status")) && !go.account.bool("subscription_active") {
-                        GoOfferCard(library: library, showPersonalKey: $showPersonalKey)
-                    } else {
-                        SelfServeOption(library: library, isExpanded: $showPersonalKey)
-                    }
-                    if go.account.bool("generation_suspended") {
-                        Text("Generation is paused. You can still manage billing, recover outputs, or use your own API key.").font(CanonType.interface(12)).foregroundStyle(CanonColor.brass)
-                    }
-                    if go.hasAccount && !go.account.bool("email_verified") {
-                        Text("Add a recovery email to use your account on another Mac.")
-                            .font(CanonType.interface(13, weight: .semibold))
-                        signIn
-                    }
-                    jobs
+                if !GoAvailability.membershipsEnabled {
+                    PersonalKeySetupView(library: library)
                 } else {
-                    GoOfferCard(library: library, showPersonalKey: $showPersonalKey)
-                    Button("Already subscribed? Sign in") { showSignIn.toggle() }
-                        .buttonStyle(CanonUtilityButtonStyle())
-                    if showSignIn { signIn }
-                }
-                if go.pendingCheckout {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Your checkout is waiting").font(CanonType.interface(13, weight: .semibold))
-                        Text("You can close this window. Payment connects automatically when you return.")
-                            .font(CanonType.interface(12)).foregroundStyle(CanonColor.muted)
-                        HStack {
-                            Button("Check payment") { Task { await go.checkCheckout() } }
-                            Button("Cancel checkout") { Task { await go.cancelCheckout() } }
-                            Button("Return to checkout") { Task { await go.purchase(GoVault.read("checkout")?.string("sku") ?? "go_monthly") } }
-                        }.buttonStyle(CanonUtilityButtonStyle())
+                    GoConnectionNotice()
+                    if go.isSignedIn {
+                        if go.hasAccount {
+                            balanceCard
+                        } else {
+                            Text("Your LitScenes account").font(CanonType.interface(16, weight: .semibold))
+                            Text("Connect to Go to check your plan and credit balance. Your saved sign-in is still here.")
+                                .font(CanonType.interface(12)).foregroundStyle(CanonColor.muted)
+                        }
+                        if go.hasAccount && !["active", "trialing", "past_due", "unpaid", "incomplete", "paused"].contains(go.account.string("subscription_status")) && !go.account.bool("subscription_active") {
+                            GoOfferCard(library: library, showPersonalKey: $showPersonalKey)
+                        } else {
+                            SelfServeOption(library: library, isExpanded: $showPersonalKey)
+                        }
+                        if go.account.bool("generation_suspended") {
+                            Text("Generation is paused. You can still manage billing, recover outputs, or use your own API key.").font(CanonType.interface(12)).foregroundStyle(CanonColor.brass)
+                        }
+                        if go.hasAccount && !go.account.bool("email_verified") {
+                            Text("Add a recovery email to use your account on another Mac.")
+                                .font(CanonType.interface(13, weight: .semibold))
+                            signIn
+                        }
+                        jobs
+                    } else {
+                        GoOfferCard(library: library, showPersonalKey: $showPersonalKey)
+                        Button("Already subscribed? Sign in") { showSignIn.toggle() }
+                            .buttonStyle(CanonUtilityButtonStyle())
+                        if showSignIn { signIn }
+                    }
+                    if go.pendingCheckout {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Your checkout is waiting").font(CanonType.interface(13, weight: .semibold))
+                            Text("You can close this window. Payment connects automatically when you return.")
+                                .font(CanonType.interface(12)).foregroundStyle(CanonColor.muted)
+                            HStack {
+                                Button("Check payment") { Task { await go.checkCheckout() } }
+                                Button("Cancel checkout") { Task { await go.cancelCheckout() } }
+                                Button("Return to checkout") { Task { await go.purchase(GoVault.read("checkout")?.string("sku") ?? "go_monthly") } }
+                            }.buttonStyle(CanonUtilityButtonStyle())
+                        }
                     }
                 }
                 if let requestedProvider {
@@ -175,14 +179,16 @@ struct GoAccountView: View {
                     Link("Create a \(requestedProvider.label) API key", destination: URL(string: requestedProvider == .fal ? "https://fal.ai/dashboard/keys" : "https://elevenlabs.io/app/settings/api-keys")!)
                 }
                 if !go.hasPersonalOpenAIKey && !go.hasConfirmedPlan {
-                    Text("Choose a plan or add your OpenAI key to finish setup. You can close Settings to explore; we’ll remind you next launch if setup is unfinished.")
+                    Text(GoAvailability.membershipsEnabled
+                        ? "Choose a plan or add your OpenAI key to finish setup. You can close Settings to explore; we’ll remind you next launch if setup is unfinished."
+                        : "Add your OpenAI key to create. You can close Settings to explore your projects first.")
                         .font(CanonType.interface(11)).foregroundStyle(CanonColor.muted)
                 }
-                if GoConnection.isStoreBuild {
+                if GoAvailability.membershipsEnabled && GoConnection.isStoreBuild {
                     Button("Restore purchases") { Task { await store.restore() } }.buttonStyle(CanonUtilityButtonStyle())
                 }
-                if !go.message.isEmpty { Text(go.message).font(CanonType.interface(12)).foregroundStyle(CanonColor.brass).textSelection(.enabled) }
-                if !store.message.isEmpty { Text(store.message).font(CanonType.interface(12)).foregroundStyle(CanonColor.brass) }
+                if GoAvailability.membershipsEnabled && !go.message.isEmpty { Text(go.message).font(CanonType.interface(12)).foregroundStyle(CanonColor.brass).textSelection(.enabled) }
+                if GoAvailability.membershipsEnabled && !store.message.isEmpty { Text(store.message).font(CanonType.interface(12)).foregroundStyle(CanonColor.brass) }
             }.padding(20)
         }
         .background(CanonColor.room)
@@ -191,7 +197,8 @@ struct GoAccountView: View {
         }
         .task {
             showPersonalKey = !go.fundingManaged && go.hasPersonalOpenAIKey
-            guard go.shouldReconnect || go.hasConfiguration else { return }
+            await GoServiceConfiguration.shared.refresh()
+            guard go.shouldReconnect else { return }
             await go.refresh()
             await store.start(configuration: go.configuration)
         }
@@ -371,6 +378,7 @@ struct GoLifecycleModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .task {
+                await GoServiceConfiguration.shared.refresh()
                 guard GoAccountStore.shared.shouldReconnect else { return }
                 await GoAccountStore.shared.refresh()
                 await GoStorePurchaseController.shared.start(configuration: GoAccountStore.shared.configuration)
@@ -384,6 +392,7 @@ struct GoLifecycleModifier: ViewModifier {
             }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 Task {
+                    await GoServiceConfiguration.shared.refresh()
                     guard GoAccountStore.shared.shouldReconnect else { return }
                     await GoAccountStore.shared.refresh()
                     await GoStorePurchaseController.shared.recoverUnfinished()
@@ -456,7 +465,7 @@ struct GoUpgradeBanner: View {
     @ObservedObject private var go = GoAccountStore.shared
     var onOpenAccount: () -> Void
     var body: some View {
-        if !dismissed && !go.fundingManaged {
+        if GoAvailability.membershipsEnabled && !dismissed && !go.fundingManaged {
             HStack(spacing: 12) {
                 Text("Create without API keys. LitScenes Go starts with 750 credits each month.")
                     .font(CanonType.interface(11)).foregroundStyle(CanonColor.muted)

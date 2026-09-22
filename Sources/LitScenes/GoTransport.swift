@@ -46,6 +46,7 @@ enum GoApproval {
     }
 
     static func requireAccount() async throws {
+        try GoConnection.requireMemberships()
         guard GoVault.read("session") == nil else { return }
         NotificationCenter.default.post(name: .goAccountRequested, object: nil)
         throw GoServiceError(code: "sign_in", message: "Choose Go now or sign in in Account & usage, then continue this action.")
@@ -61,6 +62,7 @@ enum GoApproval {
 
     static func waitForCredits(_ maximum: Int) async throws {
         await GoAccountStore.shared.refresh()
+        try GoConnection.requireMemberships()
         if GoAccountStore.shared.account.int("available_credits") >= maximum { return }
         let options = GoAccountStore.shared.canRefill
             ? "Add a one-time credit refill in Account & usage, wait for renewal, or use your own API key."
@@ -71,6 +73,7 @@ enum GoApproval {
             try Task.checkCancellation()
             try await Task.sleep(for: .seconds(3))
             await GoAccountStore.shared.refresh()
+            try GoConnection.requireMemberships()
             if GoAccountStore.shared.account.int("available_credits") >= maximum { return }
 
         }
@@ -79,7 +82,6 @@ enum GoApproval {
 
 enum GoTransport {
     static func send(_ request: URLRequest, metadata: InferenceTraceRequestMetadata) async throws -> TracedHTTPResult {
-        try await GoApproval.requireAccount()
         guard let address = request.url else { throw URLError(.badURL) }
         let path = address.path
         if address.host == "queue.fal.run", let range = path.range(of: "/requests/job_") {
@@ -107,6 +109,7 @@ enum GoTransport {
             }
             return try await result(request, metadata: metadata, object: object, job: job)
         }
+        try await GoApproval.requireAccount()
         guard request.httpMethod == "POST" || address.host == "api.elevenlabs.io" else {
             throw GoServiceError(code: "unsupported", message: "This provider operation requires your own API key.")
         }
@@ -205,6 +208,7 @@ enum GoTransport {
     }
 
     static func submit(_ intent: GoDocument) async throws -> GoDocument {
+        try GoConnection.requireMemberships()
         guard intent.string("account_id") == GoVault.read("session")?.string("account_id") else {
             throw GoServiceError(code: "account_changed", message: "This action belongs to another account. Sign in to that account to continue.")
         }
@@ -229,6 +233,7 @@ enum GoTransport {
     }
 
     static func resumePending() async {
+        guard GoAvailability.membershipsEnabled else { return }
         guard let account = GoVault.read("session")?.string("account_id") else { return }
         for intent in await GoIntentStore.shared.pending() where intent.string("account_id") == account {
             do {

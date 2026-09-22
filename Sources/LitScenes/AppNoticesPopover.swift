@@ -2,34 +2,64 @@ import AppKit
 import SwiftUI
 
 /// The quiet notices inbox: a paper plate hung off the always-visible header
-/// tray button. v1 carries one notice — per-location disk usage of the
-/// generated-output directories — and only informs; pruning stays manual.
-/// Opening it acknowledges the current readings (the badge-dot contract).
+/// tray button. Server announcements and local storage readings only inform;
+/// opening the tray acknowledges the displayed notices.
 struct AppNoticesPopover: View {
     @ObservedObject var library: LibraryEngine
+    @ObservedObject private var service = GoServiceConfiguration.shared
     var onDismiss: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            header
-            if library.diskUsageNotice.locations.isEmpty {
-                Text("Measuring generated-output locations…")
-                    .font(CanonType.interface(11))
-                    .foregroundStyle(CanonColor.muted)
-            } else {
-                storageSection
+        ScrollView {
+            VStack(alignment: .leading, spacing: 13) {
+                header
+                announcementsSection
+                if library.diskUsageNotice.locations.isEmpty {
+                    Text("Measuring generated-output locations…")
+                        .font(CanonType.interface(11))
+                        .foregroundStyle(CanonColor.muted)
+                } else {
+                    storageSection
+                }
+                projectVitalsSection
+                footer
             }
-            projectVitalsSection
-            footer
+            .padding(14)
         }
-        .padding(14)
         .frame(width: 340, alignment: .leading)
+        .frame(maxHeight: 600)
         .background(CanonColor.paper)
         .onAppear {
             library.acknowledgeDiskUsageNotice()
+            library.acknowledgeAnnouncements(service.announcements.map(\.id))
+        }
+        .onChange(of: service.announcements) { _, announcements in
+            library.acknowledgeAnnouncements(announcements.map(\.id))
         }
         .task {
             await library.refreshProjectVitals()
+        }
+    }
+
+    @ViewBuilder
+    private var announcementsSection: some View {
+        if !service.announcements.isEmpty {
+            ForEach(service.announcements) { announcement in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(verbatim: announcement.title)
+                        .font(CanonType.interface(13, weight: .semibold))
+                    Text(verbatim: announcement.body)
+                        .font(CanonType.interface(12))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                    if let url = announcement.url {
+                        Link("Learn more", destination: url)
+                            .font(CanonType.interface(12))
+                    }
+                }
+                .foregroundStyle(CanonColor.ink)
+                Divider()
+            }
         }
     }
 
@@ -63,7 +93,7 @@ struct AppNoticesPopover: View {
                 Text("Notices")
                     .font(CanonType.interface(14, weight: .semibold))
                     .foregroundStyle(CanonColor.ink)
-                Text("APP STORAGE")
+                Text("APP UPDATES & STORAGE")
                     .font(CanonType.archive(9, weight: .semibold))
                     .kerning(0.6)
                     .foregroundStyle(CanonColor.muted)

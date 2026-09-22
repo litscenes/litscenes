@@ -121,3 +121,7 @@
 2026-09-18T17:43:03Z narration-clipboard-compatibility: implement approved dual-format narration copy, legacy region compatibility, verified visible feedback and shared paste availability in the public checkout.
 
 2026-09-18T17:56:07Z narration-clipboard-compatibility completed: timeline Copy now interoperates with row Paste Narration and confirms verified success. Legacy clipboard resolution and refusal reasons are wired. Native clipboard diagnostic passed 26 checks; existing suite passed 1,325 tests; public development app built and verified. Work remains uncommitted.
+
+2026-09-22T01:05:53Z byok-service-configuration — Implement approved server-controlled BYOK setup, shared config fetching and announcements in Notices. Preserve Go code and historical funding snapshots. See plans/20260922T010553Z-byok-service-configuration.md.
+
+2026-09-22T01:48:01Z byok-service-configuration: completed shared server configuration, personal-key setup and Notices announcements; local Development build packaged, 1,325 tests pass serially and source hygiene passes. No commit or publication.

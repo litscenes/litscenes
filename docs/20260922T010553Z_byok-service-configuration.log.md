@@ -1,0 +1,7 @@
+# BYOK service configuration
+
+2026-09-22T01:05:53Z Implement approved server-controlled BYOK setup and announcements in the existing Notices tray. Shared config defaults memberships off, coalesces requests and does not depend on account state. Existing Go code and billing provenance are retained.
+
+Native validation against an empty temporary library and local config fixture confirmed one anonymous config request and the announcement unread dot. Visual review found the workspace GoUpgradeBanner also needed the feature gate; it now follows the same availability flag. The fixture never contacted paid providers or used personal project data.
+
+2026-09-22T01:48:01Z Completed local implementation and packaging. Swift build and all 1,325 existing tests pass with parallel execution disabled; an existing audio scratch-cleanup test passed alone and serially after colliding with concurrent audio work. Temporary harnesses verify coalescing, strict availability, timeouts/failure handling, announcements, captured payer preservation and legacy notice persistence. Source hygiene and code-signature checks pass. REUSE is unavailable locally. Final isolated screenshot confirms the Go upgrade banner is hidden and the announcement dot remains visible. Accessibility was unavailable, so modal/tray interactions were reviewed in source and harnesses. No new test files, paid calls, commits or publication.

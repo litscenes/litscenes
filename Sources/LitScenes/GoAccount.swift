@@ -39,7 +39,7 @@ enum GoConnection {
         return url
     }
     static var isStoreBuild: Bool { Bundle.main.object(forInfoDictionaryKey: "LitScenesDistribution") as? String == "app-store" }
-    static var isManaged: Bool { UserDefaults.standard.string(forKey: "LitScenesFundingMode") == "go" }
+    static var isManaged: Bool { GoAvailability.membershipsEnabled && UserDefaults.standard.string(forKey: "LitScenesFundingMode") == "go" }
     static let marker = "litscenes-managed-routing"
     static func managedCredential(for provider: LitScenesProviderCredential) -> String? {
         ProviderBilling.source(for: ProviderBilling.defaultTarget(for: provider)) == .go ? marker : nil
@@ -47,7 +47,13 @@ enum GoConnection {
     static func selectsManaged(_ request: URLRequest) -> Bool {
         (request.allHTTPHeaderFields ?? [:]).values.contains { $0.contains(marker) }
     }
+    static func requireMemberships() throws {
+        guard GoAvailability.membershipsEnabled else {
+            throw GoServiceError(code: "memberships_disabled", message: "LitScenes Go is unavailable. Add your provider API keys in Settings to create.")
+        }
+    }
     static func selectManaged(_ enabled: Bool) {
+        guard !enabled || GoAvailability.membershipsEnabled else { return }
         UserDefaults.standard.set(enabled ? "go" : "personal", forKey: "LitScenesFundingMode")
         NotificationCenter.default.post(name: .goFundingChanged, object: nil)
     }
@@ -95,10 +101,13 @@ enum GoVault {
 }
 
 enum GoAPI {
-    static func call(_ path: String, method: String = "GET", body: GoDocument? = nil, authenticated: Bool = true) async throws -> GoDocument {
+    static func call(_ path: String, method: String = "GET", body: GoDocument? = nil, authenticated: Bool = true, timeout: TimeInterval = 60) async throws -> GoDocument {
+        if method != "GET", ["checkout", "store/prepare", "quotes", "jobs", "media", "billing/changes/preview", "billing/changes/confirm"].contains(path) {
+            try GoConnection.requireMemberships()
+        }
         var request = URLRequest(url: GoConnection.baseURL.appending(path: path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))))
         request.httpMethod = method
-        request.timeoutInterval = 60
+        request.timeoutInterval = timeout
         request.httpBody = body?.data
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if authenticated, let session = GoVault.read("session") {
@@ -163,7 +172,7 @@ enum GoAPI {
 @MainActor
 final class GoAccountStore: ObservableObject {
     static let shared = GoAccountStore()
-    @Published var configuration = GoDocument(data: Data("{}".utf8))
+    @Published private(set) var configuration = GoDocument(data: Data("{}".utf8))
     @Published var account = GoDocument(data: Data("{}".utf8))
     @Published var recentJobs: [GoDocument] = []
     @Published var message = ""
@@ -184,6 +193,7 @@ final class GoAccountStore: ObservableObject {
 
     // This hint controls onboarding only. Every paid action still requires server authorization.
     var hasConfirmedPlan: Bool {
+        guard GoAvailability.membershipsEnabled else { return false }
         guard let session = GoVault.read("session"), !session.string("account_id").isEmpty else { return false }
         return GoVault.read("setup")?.string("account_id") == session.string("account_id")
     }
@@ -198,19 +208,31 @@ final class GoAccountStore: ObservableObject {
     var isSignedIn: Bool { GoVault.read("session") != nil }
     var hasAccount: Bool { !account.string("account_id").isEmpty }
     var hasConfiguration: Bool { !configuration.string("name").isEmpty }
-    var shouldReconnect: Bool { isSignedIn || pendingCheckout || fundingManaged }
-    var canPurchase: Bool { configuration.string("offer_version") == GoConnection.offerVersion && configuration.bool(GoConnection.isStoreBuild ? "store_available" : "checkout_available") }
+    var shouldReconnect: Bool { GoAvailability.membershipsEnabled && (isSignedIn || pendingCheckout || fundingManaged) }
+    var canPurchase: Bool { GoAvailability.membershipsEnabled && configuration.string("offer_version") == GoConnection.offerVersion && configuration.bool(GoConnection.isStoreBuild ? "store_available" : "checkout_available") }
 
     var canRefill: Bool {
-        !GoConnection.isStoreBuild && isSignedIn && account.bool("refill_eligible")
+        GoAvailability.membershipsEnabled && !GoConnection.isStoreBuild && isSignedIn && account.bool("refill_eligible")
             && !account.bool("generation_suspended") && configuration.bool("refills_available")
             && configuration.string("refill_version") == GoConnection.refillVersion
     }
 
-    func refresh() async {
+    func applyServiceConfiguration(_ value: GoDocument) {
+        configuration = value
+        fundingManaged = GoConnection.isManaged
+        if !GoAvailability.membershipsEnabled {
+            polling?.cancel()
+            polling = nil
+            connectionIssue = ""
+            GoStorePurchaseController.shared.pause()
+        }
+    }
+
+    func refresh(forceConfiguration: Bool = false) async {
         let revision = sessionRevision
+        await GoServiceConfiguration.shared.refresh(force: forceConfiguration)
+        guard GoAvailability.membershipsEnabled else { return }
         do {
-            configuration = try await GoAPI.call("config", authenticated: false)
             guard revision == sessionRevision else { return }
             if let session = GoVault.read("session"), session.int("expires_at") < Int(Date().timeIntervalSince1970) + 300 {
                 let renewed = try await GoAPI.call("auth/refresh", method: "POST",
@@ -257,6 +279,7 @@ final class GoAccountStore: ObservableObject {
 
     func choosePersonal() { GoConnection.selectManaged(false); fundingManaged = false }
     func chooseGo() {
+        guard GoAvailability.membershipsEnabled else { return }
         if !GoConnection.isManaged { GoConnection.selectManaged(true) }
         fundingManaged = true
     }
@@ -267,7 +290,7 @@ final class GoAccountStore: ObservableObject {
         busy = true
         defer { busy = false }
         do {
-            await refresh()
+            await refresh(forceConfiguration: true)
             guard revision == sessionRevision, connectionIssue.isEmpty else { return }
             let isRefill = GoConnection.refillSKUs.contains(sku)
             guard isRefill ? canRefill : canPurchase else {
@@ -352,7 +375,7 @@ final class GoAccountStore: ObservableObject {
     }
 
     private func resumeCheckoutPolling() {
-        guard polling == nil, !GoConnection.isStoreBuild else { return }
+        guard GoAvailability.membershipsEnabled, polling == nil, !GoConnection.isStoreBuild else { return }
         polling = Task { [weak self] in
             for _ in 0..<600 {
                 guard !Task.isCancelled, let self, self.pendingCheckout else { break }

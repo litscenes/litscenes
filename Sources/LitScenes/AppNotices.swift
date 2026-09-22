@@ -138,25 +138,29 @@ struct DiskUsageNoticeRecord: Codable, Hashable, Sendable {
 struct AppNoticesStateDocument: Codable, Hashable, Sendable {
     var schemaVersion: String
     var diskUsage: DiskUsageNoticeRecord
+    var acknowledgedAnnouncementIDs: [String]
 
     static let empty = AppNoticesStateDocument()
 
     init(
         schemaVersion: String = "litscenes.app_notices.v1",
-        diskUsage: DiskUsageNoticeRecord = .empty
+        diskUsage: DiskUsageNoticeRecord = .empty,
+        acknowledgedAnnouncementIDs: [String] = []
     ) {
         self.schemaVersion = schemaVersion
         self.diskUsage = diskUsage
+        self.acknowledgedAnnouncementIDs = acknowledgedAnnouncementIDs
     }
 
     enum CodingKeys: CodingKey {
-        case schemaVersion, diskUsage
+        case schemaVersion, diskUsage, acknowledgedAnnouncementIDs
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try container.decodeIfPresent(String.self, forKey: .schemaVersion) ?? "litscenes.app_notices.v1"
         diskUsage = try container.decodeIfPresent(DiskUsageNoticeRecord.self, forKey: .diskUsage) ?? .empty
+        acknowledgedAnnouncementIDs = try container.decodeIfPresent([String].self, forKey: .acknowledgedAnnouncementIDs) ?? []
     }
 }
 

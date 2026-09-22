@@ -132,3 +132,8 @@
 2026-09-18T17:43:03Z narration-clipboard-compatibility: the existing timeline Copy publishes an audio-region payload while row Paste Narration accepts a whole take; both representations must travel together without changing region paste semantics.
 
 2026-09-18T17:56:07Z narration-clipboard-compatibility: creating an item provider is not proof of a successful clipboard write; keyboard confirmation and Cut deletion now wait for matching data under a changed pasteboard revision.
+
+2026-09-22T01:05:53Z Server configuration must govern feature availability without becoming a prerequisite for local work; missing membership flags disable managed paths while personal provider setup remains available.
+2026-09-22T01:05:53Z Announcement acknowledgments and disk usage share one app-level notice document and must be persisted together so background storage measurements cannot erase read state.
+
+2026-09-22T01:48:01Z Public setup guidance must describe the anonymous config request and default-off memberships consistently; retained subscription instructions are conditional on explicit server availability.

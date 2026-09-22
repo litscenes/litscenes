@@ -9,7 +9,7 @@ final class GoStorePurchaseController: ObservableObject {
     private var updates: Task<Void, Never>?
 
     func start(configuration: GoDocument) async {
-        guard GoConnection.isStoreBuild else { return }
+        guard GoConnection.isStoreBuild, GoAvailability.membershipsEnabled else { return }
         let identifiers = configuration.document("apple_products").object.values.compactMap { $0 as? String }
         do {
             let loaded = try await Product.products(for: identifiers)
@@ -27,11 +27,18 @@ final class GoStorePurchaseController: ObservableObject {
         await recoverUnfinished()
     }
 
+    func pause() {
+        updates?.cancel()
+        updates = nil
+        products = [:]
+    }
+
     func price(_ sku: String, configuration: GoDocument) -> String? {
         products[configuration.document("apple_products").string(sku)]?.displayPrice
     }
 
     func purchase(_ sku: String, configuration: GoDocument) async throws {
+        try GoConnection.requireMemberships()
         let productId = configuration.document("apple_products").string(sku)
         guard let product = products[productId] else {
             throw GoServiceError(code: "store_product", message: "Wait for App Store pricing, then try again.")

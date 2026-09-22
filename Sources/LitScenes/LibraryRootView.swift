@@ -100,6 +100,7 @@ extension View {
 }
 
 struct LibraryRootView: View {
+    @ObservedObject private var service = GoServiceConfiguration.shared
     @ObservedObject private var workflows = WorkflowCoordinator.shared
     @ObservedObject var library: LibraryEngine
     @ObservedObject var recorder: RecorderEngine
@@ -940,7 +941,7 @@ struct LibraryRootView: View {
                 } label: {
                     LitIconView(icon: .notices)
                         .overlay(alignment: .topTrailing) {
-                            if library.diskUsageNeedsAttention {
+                            if library.diskUsageNeedsAttention || service.announcements.contains(where: { !library.acknowledgedAnnouncementIDs.contains($0.id) }) {
                                 Circle()
                                     .fill(CanonColor.brass)
                                     .frame(width: 6, height: 6)
@@ -1382,6 +1383,7 @@ struct LibraryRootView: View {
 }
 
 private struct AppSettingsView: View {
+    @ObservedObject private var service = GoServiceConfiguration.shared
     private enum SettingsTab: String, CaseIterable, Identifiable {
         case account = "Account & usage"
         case credentials = "Advanced providers"
@@ -1428,7 +1430,7 @@ private struct AppSettingsView: View {
             VStack(alignment: .leading, spacing: 0) {
                 Picker("Settings", selection: $selectedTab) {
                     ForEach(SettingsTab.allCases) { tab in
-                        Text(tab.rawValue).tag(tab)
+                        Text(tab == .account && !service.membershipsEnabled ? "API keys" : tab.rawValue).tag(tab)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -1460,7 +1462,9 @@ private struct AppSettingsView: View {
     private var settingsSubtitle: String {
         switch selectedTab {
         case .account:
-            return "Your plan, credits, and account. Changes apply to future creations across your projects."
+            return service.membershipsEnabled
+                ? "Your plan, credits, and account. Changes apply to future creations across your projects."
+                : "Use your own provider accounts. Keys apply to future creations across your projects."
         case .credentials:
             return "Provider credentials are saved to credentials.env or read from process environment variables."
         case .stacks:
@@ -1476,7 +1480,9 @@ private struct AppSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 credentialsFilePanel
-                Text("Personal provider keys work alongside Go. Direct usage is billed by each provider; adding a key does not change your Go subscription.")
+                Text(service.membershipsEnabled
+                    ? "Personal provider keys work alongside Go. Direct usage is billed by each provider; adding a key does not change your Go subscription."
+                    : "Usage is billed directly by each provider. Add the keys for the features and models you want to use.")
                     .font(CanonType.interface(12)).foregroundStyle(CanonColor.muted)
                 Text("Text and analysis").font(CanonType.interface(13, weight: .semibold))
                 ProviderBillingControl(target: .text)
@@ -1812,7 +1818,9 @@ private struct AppSettingsView: View {
                     .foregroundStyle(CanonColor.muted)
             }
 
-            Text("Personal provider settings apply to future runs using your own API key. Go uses its included models and connections.")
+            Text(service.membershipsEnabled
+                ? "Personal provider settings apply to future runs using your own API key. Go uses its included models and connections."
+                : "Personal provider settings apply to future runs using your own API key.")
                 .font(CanonType.interface(11)).foregroundStyle(CanonColor.muted)
 
             Toggle(isOn: Binding(
