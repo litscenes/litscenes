@@ -125,3 +125,7 @@
 2026-09-22T01:05:53Z byok-service-configuration — Implement approved server-controlled BYOK setup, shared config fetching and announcements in Notices. Preserve Go code and historical funding snapshots. See plans/20260922T010553Z-byok-service-configuration.md.
 
 2026-09-22T01:48:01Z byok-service-configuration: completed shared server configuration, personal-key setup and Notices announcements; local Development build packaged, 1,325 tests pass serially and source hygiene passes. No commit or publication.
+
+2026-09-28T20:44:00Z desktop-install-entry: add an owner-requested paste-in source installer in scripts/install.sh and document its prerequisites, destination, and preservation behavior. No commit or publication authorized.
+
+2026-09-29T02:03:43Z installer-publication: Owner explicitly authorized committing and pushing only the prepared source installer and installation documentation to public main as the website release prerequisite. Preserve unrelated Desktop work. Bash syntax and ShellCheck pass; current public main is 894045226270c8b0aec7a895db75ca08549aa588.

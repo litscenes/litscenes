@@ -47,7 +47,34 @@ Expect steady improvement, and see `CONTRIBUTING.md` if you want to help.
 
 ## Install
 
-**Build from source.** Requires macOS 15 or later and Xcode 16.3+ (Swift 6.1).
+**Build from source.** Requires macOS 15+, Swift 6.1+, and a macOS 15+ SDK.
+Use Xcode 16.3+ or compatible Command Line Tools. Finish developer-tool setup
+before running the installer.
+
+Paste this into Terminal:
+
+```sh
+curl -fsSL https://litscenes.ai/install.sh | bash
+```
+
+The [installer](scripts/install.sh) clones this public repository, builds the
+Development channel, and installs `~/Applications/LitScenes Development.app`.
+It needs no sudo and never replaces an existing app. Quit and move an existing
+copy aside before reinstalling. Projects and provider keys stay in
+`~/Library/Application Support/LitScenes/`, including an existing Development
+workspace. Source and build output remain under `~/Library/Caches/LitScenes/`;
+the installer prints the exact folder and source revision. Launch the installed
+app from your Applications folder and configure your provider keys.
+
+To inspect before running, download the canonical script first:
+
+```sh
+curl -fSL https://raw.githubusercontent.com/litscenes/litscenes/main/scripts/install.sh -o litscenes-install.sh
+less litscenes-install.sh
+bash litscenes-install.sh
+```
+
+Or build manually:
 
 ```sh
 git clone https://github.com/litscenes/litscenes.git

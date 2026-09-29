@@ -137,3 +137,7 @@
 2026-09-22T01:05:53Z Announcement acknowledgments and disk usage share one app-level notice document and must be persisted together so background storage measurements cannot erase read state.
 
 2026-09-22T01:48:01Z Public setup guidance must describe the anonymous config request and default-off memberships consistently; retained subscription instructions are conditional on explicit server availability.
+
+2026-09-28T20:44:00Z A paste-in installer must describe its source-build and Xcode requirements, preserve Development identity and existing workspace data, and never imply that an unsigned local build is a notarized Community release.
+
+2026-09-28T20:50:00Z The existing app builds successfully with Command Line Tools (Swift 6.1.2, macOS SDK 15.5), so installer prerequisites now check the actual compiler and SDK instead of requiring full Xcode selection. Existing swift build and all 1,345 tests pass in the canonical working tree.
