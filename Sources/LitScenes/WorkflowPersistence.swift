@@ -52,6 +52,31 @@ extension InferenceTraceStore {
             .compactMap { try? JSONDecoder().decode(WorkflowJob.self, from: Data($0.utf8)) }
     }
 
+    func observedImagePromptConstraints(provider: String, endpoint: String, model: String, billingSource: String, projectId: String) throws -> [ImagePromptConstraint] {
+        try ensureReady()
+        let rows = try workflowRows("""
+            SELECT p.value FROM workflow_jobs j, json_each(j.payload_json, '$.imagePrompts') p
+            WHERE j.project_id=? AND json_extract(p.value, '$.provider')=?
+              AND json_extract(p.value, '$.endpoint')=? AND json_extract(p.value, '$.model')=?
+              AND json_extract(p.value, '$.billingSource')=?
+              AND json_array_length(json_extract(p.value, '$.observedConstraints')) > 0
+            ORDER BY j.updated_at DESC LIMIT 1
+            """, values: [projectId, provider, endpoint, model, billingSource])
+        return rows.first.flatMap { try? JSONDecoder().decode(PreparedImagePrompt.self, from: Data($0.utf8)) }?.observedConstraints ?? []
+    }
+
+    func cachedImagePrompt(fingerprint: String, projectId: String) throws -> PreparedImagePrompt? {
+        try ensureReady()
+        let rows = try workflowRows("""
+            SELECT p.value FROM workflow_jobs j, json_each(j.payload_json, '$.imagePrompts') p
+            WHERE j.project_id=? AND json_extract(p.value, '$.inputFingerprint')=?
+              AND json_extract(p.value, '$.state') IN ('prepared','submitted','canceled')
+            ORDER BY j.updated_at DESC
+            """, values: [projectId, fingerprint])
+        return rows.compactMap { try? JSONDecoder().decode(PreparedImagePrompt.self, from: Data($0.utf8)) }
+            .first { $0.wasShortened && $0.violations.isEmpty }
+    }
+
     func workflowEvents(jobId: String) throws -> [WorkflowEvent] {
         try ensureReady()
         return try workflowRows("SELECT payload_json FROM workflow_events WHERE job_id=? ORDER BY rowid", values: [jobId])
@@ -87,7 +112,7 @@ extension InferenceTraceStore {
         try ensureReady()
         var results: [String] = []
         for id in ids {
-            let rows = try workflowRows("SELECT json_object('trace_id',trace_id,'created_at',created_at,'provider',provider,'model',model,'operation',operation,'request',CASE WHEN request_text_json != '' THEN request_text_json ELSE CAST(request_body AS TEXT) END,'response',CASE WHEN response_text_json != '' THEN response_text_json ELSE CAST(response_body AS TEXT) END,'provider_request_id',provider_request_id,'provider_response_id',provider_response_id,'parsed_output',parsed_output_json,'media_refs',media_refs_json,'status_code',response_status_code,'error',error_message,'latency_ms',latency_ms,'input_tokens',input_tokens,'output_tokens',output_tokens) FROM inference_calls WHERE trace_id=?", values: [id])
+            let rows = try workflowRows("SELECT json_object('trace_id',trace_id,'created_at',created_at,'provider',provider,'model',model,'operation',operation,'parent_trace_id',parent_trace_id,'trace_group_id',trace_group_id,'workflow_name',workflow_name,'workflow_step',workflow_step,'artifact_type',artifact_type,'artifact_id',artifact_id,'request',CASE WHEN request_text_json != '' THEN request_text_json ELSE CAST(request_body AS TEXT) END,'response',CASE WHEN response_text_json != '' THEN response_text_json ELSE CAST(response_body AS TEXT) END,'provider_request_id',provider_request_id,'provider_response_id',provider_response_id,'parsed_output',parsed_output_json,'media_refs',media_refs_json,'status_code',response_status_code,'error',error_message,'latency_ms',latency_ms,'input_tokens',input_tokens,'output_tokens',output_tokens) FROM inference_calls WHERE trace_id=?", values: [id])
             results.append(contentsOf: rows.map(WorkflowPrivacy.json))
         }
         return results.joined(separator: "\n\n")

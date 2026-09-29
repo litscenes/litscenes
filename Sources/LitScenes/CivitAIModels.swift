@@ -200,7 +200,7 @@ struct CivitAIRecipe: Codable, Hashable, Sendable {
     func imageStack() -> RenderStack {
         RenderStack(id: identity, stackId: identity, label: label, detail: "Civitai · My API key", priceNote: "Civitai quote before generation",
             kind: .civitai, credentialProvider: .civitai, order: 100, model: modelId, styleModel: "", canAttachStyleImage: false,
-            workflows: [.frameCreator], promptImageLimitOverride: profile.referenceLimit, promptLimit: profile == .klein4b || profile == .klein9b ? 1000 : 1800,
+            workflows: [.frameCreator], promptImageLimitOverride: profile.referenceLimit, promptLimit: nil,
             outputFormat: "jpeg", imageSize: nil, promptInstructions: "", falInput: [:], debugKeys: [], stabilityInput: [:],
             civitaiInput: [:], civitaiTags: [], civitaiStepPriority: nil, civitaiSeed: seed.map(RenderStackSeed.fixed) ?? .random,
             civitaiRecipe: [], civitaiImageInputMode: profile == .sd1 || profile == .sdxl ? .variantImage : .editImages, catalogRecipe: self)

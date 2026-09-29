@@ -110,7 +110,7 @@ enum CharacterSheetPrompt {
         )
         rendered = rendered.replacingOccurrences(
             of: "{{reference_note}}",
-            with: fill.attachesReferences ? " — match the attached reference images exactly" : ""
+            with: fill.attachesReferences ? " — use attached images as identity evidence and apply the latest explicit changes" : ""
         )
         return collapsingBlankRuns(rendered)
     }

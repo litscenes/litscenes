@@ -758,6 +758,7 @@ struct LibraryRootView: View {
     private var libraryWorkspace: some View {
         VStack(spacing: 0) {
             workspaceHeader
+            ImagePromptNoticeBanner(projectId: library.currentProject?.projectId ?? "")
             if !isWelcomeActive { GoUpgradeBanner { showingAppSettings = true } }
             Rectangle()
                 .fill(CanonColor.hairlineDark)

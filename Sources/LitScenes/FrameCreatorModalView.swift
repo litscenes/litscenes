@@ -1807,7 +1807,9 @@ struct FrameCreatorModal: View {
                     sourceId: item.mediaId,
                     label: plan.usesSheet ? "\(entry.name) — reference sheet" : entry.name,
                     detail: RosterMentionResolver.attachmentDescriptor(for: entry, label: label, isCompositeSheet: plan.usesSheet, isCharacterSheet: plan.isCharacterSheet),
-                    imagePath: item.path
+                    imagePath: item.path,
+                    referencePurpose: plan.isCharacterSheet ? .referenceSheet : (plan.usesSheet ? .compositeIdentity : .sourceImage),
+                    subjectName: entry.name
                 ).normalized())
             }
         }

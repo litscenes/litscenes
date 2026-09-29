@@ -222,19 +222,17 @@ enum RosterMentionResolver {
     /// Treatment-neutral descriptor for roster reference renders: there is no lens
     /// style in play, so the written prompt owns framing and treatment.
     static func characterStudyAttachmentDescriptor(name: String, label: String, isCompositeSheet: Bool, isCharacterSheet: Bool = false) -> String {
-        let descriptor = "CHARACTER identity reference for \"\(name)\": render this same subject; match its form and distinguishing features, applying explicit changes in the written prompt. It is subject matter, not a style reference — follow the written prompt for framing and treatment."
-        return descriptor + descriptorSuffix(name: name, label: label, isCompositeSheet: isCompositeSheet, isCharacterSheet: isCharacterSheet)
+        if isCharacterSheet {
+            return "This generated reference sheet shows views, details, states and materials of \"\(name)\"; apply the latest written changes while preserving unspecified identity traits."
+        }
+        let descriptor = "CHARACTER identity reference for \"\(name)\": visible form and distinguishing features; follow the written prompt for framing and treatment, applying explicit changes."
+        return descriptor + descriptorSuffix(name: name, label: label, isCompositeSheet: isCompositeSheet)
     }
 
-    /// Sheet-lane descriptor for a source image: an INPUT the sheet is built from,
-    /// not a scene subject and not a style reference. With a sheet attached alongside,
-    /// the sheet sets continuity and the photo corrects the likeness.
     static func characterSheetSourceDescriptor(name: String, label: String, hasSheet: Bool) -> String {
-        var descriptor = "SOURCE IMAGE for \"\(name)\": a photo or artwork of this character, an input the sheet is built from — take the visible form, proportions, materials, and distinguishing features from it; apply explicit changes in the written prompt. It is subject matter, not a style or layout reference."
-        if hasSheet {
-            descriptor += " Reconcile it with the attached reference sheet: the sheet sets continuity; this image corrects and completes the likeness."
-        }
-        return descriptor + descriptorSuffix(name: name, label: label, isCompositeSheet: false, isCharacterSheet: false)
+        var descriptor = "SOURCE IMAGE for \"\(name)\": an input the sheet is built from; use its visible form, proportions, materials and distinguishing features."
+        if hasSheet { descriptor += " Alongside this source, the sheet sets continuity; this image clarifies likeness." }
+        return descriptor + descriptorSuffix(name: name, label: label, isCompositeSheet: false)
     }
 
     private static func descriptorSuffix(name: String, label: String, isCompositeSheet: Bool, isCharacterSheet: Bool = false) -> String {

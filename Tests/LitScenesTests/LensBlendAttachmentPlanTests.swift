@@ -310,8 +310,9 @@ func manifestGoldenTextForCanonicalBlendWithCharacterAndContinuity() {
     #expect(plan.promptPreamble == "In the style of the first attached image, generate the following:")
     let expected = """
     Additional attached images, after the style image, in this exact order:
-    2. character-ref-kai-1.png — CHARACTER reference for "Kai": this exact figure appears in the scene; match their appearance, build, and distinguishing features from this image. It is subject matter, not a style reference — render "Kai" in this treatment's style.
-    3. continuity-1-rendered-world.jpg — this same world already rendered: keep its geography, recurring subjects, and staging consistent; this image depicts a different scene. Take NO palette, lighting character, or rendering from it — the style image alone governs rendering.
+    2. character-ref-kai-1.png — character_reference for "Kai": CHARACTER reference for "Kai": this exact figure appears in the scene; match their appearance, build, and distinguishing features from this image. It is subject matter, not a style reference — render "Kai" in this treatment's style.
+    3. continuity-1-rendered-world.jpg — continuity: this same world already rendered: keep its geography, recurring subjects, and staging consistent; this image depicts a different scene. Take NO palette, lighting character, or rendering from it — the style image alone governs rendering.
+    Use each reference for its stated role. The latest explicit written changes take precedence; preserve unspecified identity traits. Source images clarify likeness; generated sheets establish continuity. Do not copy a reference's layout or style unless its role or the written prompt requests it.
     Match the style image's rendering technique, palette behavior, surface texture, and lighting character exactly. Never copy its subject matter, its composition, or any internal panel borders it contains.
     """
     #expect(plan.manifestText == expected)

@@ -1129,6 +1129,7 @@ struct CivitAIWANImageRequest {
     var projectId: String = ""
     var runId: String = ""
     var workflowName: String = "lenses"
+    var preparedPrompt: PreparedImagePrompt?
 }
 
 struct CivitAIWANImageResult {
@@ -1153,6 +1154,7 @@ struct CivitAIWANImageProvider {
     private let terminalStates: Set<String> = ["succeeded", "failed", "canceled", "cancelled", "expired", "rejected"]
 
     func generateImage(from request: CivitAIWANImageRequest) async throws -> CivitAIWANImageResult {
+        var request = request
         let stack = request.stack
         if let recipe = stack.catalogRecipe { return try await generateCatalogImage(request, recipe: recipe) }
         let apiKey = credentialStore.resolvedCredential(for: .civitai)
@@ -1165,7 +1167,13 @@ struct CivitAIWANImageProvider {
                 throw ScreenGraphError.capture("The planned references exceed this stack's executable image capacity. Review the references before rendering.")
             }
         }
-        let prompt = providerPromptLimited(request.prompt, maxCharacters: stack.promptLimit ?? 1_800)
+        let preparation = try await ImagePromptPreparation.prepare(
+            fields: ["prompt": request.prompt, "negative_prompt": request.negativePrompt], provider: "civitai",
+            endpoint: "/v2/consumer/workflows", model: request.stack.model, references: ImagePromptReference.sources(request.sources),
+            metadata: metadata(context: request, operation: "prepare"))
+        request.preparedPrompt = preparation
+        request.negativePrompt = preparation.providerFields["negative_prompt"] ?? request.negativePrompt
+        let prompt = preparation.prompt
         let images = request.sources.map { "data:" + $0.mimeType + ";base64," + $0.data.base64EncodedString() }
         let (payload, seed) = stack.civitaiPayload(prompt: prompt, requestSeed: request.seed,
             negativePrompt: request.negativePrompt, widthOverride: request.widthOverride,
@@ -1233,19 +1241,26 @@ struct CivitAIWANImageProvider {
     }
 
     private func generateCatalogImage(_ request: CivitAIWANImageRequest, recipe original: CivitAIRecipe) async throws -> CivitAIWANImageResult {
+        var request = request
         var recipe = original
         if let width = request.widthOverride, let height = request.heightOverride { recipe.width = width; recipe.height = height }
         recipe.strength = request.strength ?? recipe.strength
         if recipe.negativePrompt.isEmpty { recipe.negativePrompt = request.negativePrompt }
         guard request.sources.allSatisfy({ imagePixelSize(from: $0.data) != nil }) else { throw ScreenGraphError.capture("A reference image is invalid.") }
-        let prompt = providerPromptLimited(request.prompt, maxCharacters: request.stack.promptLimit ?? 1800)
+        let preparation = try await ImagePromptPreparation.prepare(
+            fields: ["prompt": request.prompt, "negative_prompt": recipe.negativePrompt], provider: "civitai",
+            endpoint: "/v2/consumer/workflows", model: request.stack.model, references: ImagePromptReference.sources(request.sources),
+            metadata: metadata(context: request, operation: "prepare"))
+        request.preparedPrompt = preparation
+        recipe.negativePrompt = preparation.providerFields["negative_prompt"] ?? recipe.negativePrompt
+        let prompt = preparation.prompt
         let seed = recipe.seed ?? request.seed ?? civitaiRequestSeed(runId: request.runId, artifactId: request.artifactId)
         recipe.seed = seed
         let images = request.sources.map { "data:" + $0.mimeType + ";base64," + $0.data.base64EncodedString() }
         let payload = try recipe.payload(prompt: prompt, images: images, resolvedSeed: seed)
         var trace = metadata(context: request, operation: "catalog_image")
         trace.requestTextJSON = inferenceTraceJSONString(["operator_prompt": request.operatorPrompt])
-        let output = try await CivitAIWorkflowClient(credentialStore: credentialStore).run(payload: payload, recipe: recipe, metadata: trace, preferenceRecipe: original)
+        let output = try await CivitAIWorkflowClient(credentialStore: credentialStore).run(payload: payload, recipe: recipe, metadata: trace.recordingImagePrompt(preparation), preferenceRecipe: original)
         guard imagePixelSize(from: output.data) != nil else { throw ScreenGraphError.capture("Civitai output is not a valid image. Recover the existing workflow.") }
         let parameters = [LensRenderRecipeParameter(key: "civitai_recipe", value: recipe.wireValue, valueType: "string"),
             LensRenderRecipeParameter(key: "quoted_buzz", value: output.quote.map { String($0.buzz) } ?? "", valueType: "number")]
@@ -1281,7 +1296,7 @@ struct CivitAIWANImageProvider {
         request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
         var trace = metadata(context: context, operation: "image_submit")
         trace.requestTextJSON = inferenceTraceJSONString(redactedCivitAITracePayload(payload).merging(["billing_source": "personal", "operator_prompt": context.operatorPrompt]) { _, new in new })
-        let result = try await TracedHTTPTransport.send(request: request, metadata: trace)
+        let result = try await TracedHTTPTransport.send(request: request, metadata: trace.recordingImagePrompt(context.preparedPrompt))
         return try await decoded(result, stage: "submission")
     }
 
@@ -1417,28 +1432,7 @@ struct CivitAIWANImageProvider {
         return uniqueNonEmpty(parts, limit: 10).joined(separator: "; ")
     }
 
-    private func providerPromptLimited(_ prompt: String, maxCharacters: Int) -> String {
-        let cleaned = prompt
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { String($0).trimmed }
-            .joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard cleaned.count > maxCharacters else { return cleaned }
-        var prefix = String(cleaned.prefix(maxCharacters))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let boundary = prefix.lastIndex(where: { $0 == "." || $0 == ";" || $0 == "," || $0 == "\n" }),
-           prefix.distance(from: prefix.startIndex, to: boundary) > maxCharacters / 2 {
-            prefix = String(prefix[..<boundary])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        } else if let boundary = prefix.lastIndex(where: { $0 == " " || $0 == "\n" }),
-                  prefix.distance(from: prefix.startIndex, to: boundary) > maxCharacters / 2 {
-            prefix = String(prefix[..<boundary])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return prefix
-    }
+
 
     private func failureDetails(in dictionary: [String: Any]) -> [String] {
         let keys = ["error", "errors", "message", "messages", "reason", "failureReason", "failedReason", "exception"]

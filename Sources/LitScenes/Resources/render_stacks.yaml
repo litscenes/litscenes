@@ -29,7 +29,7 @@
 #                          unbounded, fal/stability 1, civitai 0). Raise it
 #                          only with the provider's documented maximum — the
 #                          count rides straight into paid request payloads.
-#   prompt_limit           max prompt characters sent to the provider (null = none)
+#   prompt_limit           legacy field; verified endpoint/route limits govern execution
 #   output_format          jpeg | png — the saved file's format
 #   image_size             openai only — the gpt-image size string
 #   prompt_instructions    model-aware guidance given to the prompt-enrichment LLM
@@ -88,7 +88,7 @@ stacks:
     can_attach_style_image: true
     reframe_capable: true
     workflows: [frame_creator, reframe_zoom_in, reframe_viewpoint]
-    prompt_limit: 10000
+    prompt_limit: null
     output_format: jpeg
     image_size: null
     prompt_instructions: >-
@@ -115,7 +115,7 @@ stacks:
     can_attach_style_image: false
     reframe_capable: false
     prompt_image_limit: 4
-    prompt_limit: 1800
+    prompt_limit: null
     output_format: jpeg
     prompt_instructions: >-
       Civitai WAN 2.7 prompts describe the desired frame and requested changes.
@@ -163,7 +163,7 @@ stacks:
     can_attach_style_image: false
     reframe_capable: false
     prompt_image_limit: 2
-    prompt_limit: 1000
+    prompt_limit: null
     output_format: jpeg
     prompt_instructions: >-
       Civitai FLUX.2 Klein portrait prompts should describe one clearly framed
@@ -218,7 +218,7 @@ stacks:
     can_attach_style_image: false
     reframe_capable: false
     prompt_image_limit: 1
-    prompt_limit: 1800
+    prompt_limit: null
     output_format: jpeg
     prompt_instructions: >-
       Juggernaut XL v9 should be prompted as a believable live-action frame.
@@ -275,7 +275,7 @@ stacks:
     can_attach_style_image: false
     reframe_capable: false
     prompt_image_limit: 1
-    prompt_limit: 1800
+    prompt_limit: null
     output_format: jpeg
     prompt_instructions: >-
       RealCartoon-XL v6 is for polished animated storytelling with dimensional
@@ -333,7 +333,7 @@ stacks:
     can_attach_style_image: false
     reframe_capable: false
     prompt_image_limit: 1
-    prompt_limit: 1800
+    prompt_limit: null
     output_format: jpeg
     prompt_instructions: >-
       ZavyChromaXL v7 is the expressive editorial and fantasy-art stack. Lead
@@ -391,7 +391,7 @@ stacks:
     can_attach_style_image: false
     reframe_capable: false
     prompt_image_limit: 1
-    prompt_limit: 1800
+    prompt_limit: null
     output_format: jpeg
     prompt_instructions: >-
       Animagine XL 3.1 responds best to concise comma-separated anime tags in a
@@ -445,7 +445,7 @@ stacks:
     style_model: fal-ai/flux/schnell/redux
     can_attach_style_image: false
     reframe_capable: false
-    prompt_limit: 2400
+    prompt_limit: null
     output_format: jpeg
     prompt_instructions: >-
       FAL FLUX Schnell is a fast FLUX text-to-image path. Prompt it with
@@ -481,7 +481,7 @@ stacks:
     # (9 MP total input) in a single edit." The MP ceiling is the provider's;
     # oversized totals surface as honest provider failures (never resubmitted).
     prompt_image_limit: 9
-    prompt_limit: 2400
+    prompt_limit: null
     output_format: jpeg
     prompt_instructions: >-
       FAL FLUX 2 Pro is a streamlined professional image model. It benefits
@@ -515,7 +515,7 @@ stacks:
     # images in a single request for compositing, style matching, or subject
     # transfer."
     prompt_image_limit: 14
-    prompt_limit: 3500
+    prompt_limit: null
     output_format: png
     prompt_instructions: >-
       FAL Nano Banana 2 is a Gemini image model suited to natural-language
@@ -547,7 +547,7 @@ stacks:
     can_attach_style_image: false
     reframe_capable: true
     workflows: [reframe_zoom_out]
-    prompt_limit: 500
+    prompt_limit: null
     output_format: png
     prompt_instructions: >-
       FAL Outpaint appends this text to its own outpaint instruction and reads
@@ -574,7 +574,7 @@ stacks:
     style_model: ""
     can_attach_style_image: false
     reframe_capable: false
-    prompt_limit: 2400
+    prompt_limit: null
     output_format: jpeg
     prompt_instructions: >-
       Reve 2.1 is strongest when the prompt reads like deliberate art
@@ -601,7 +601,7 @@ stacks:
     style_model: ""
     can_attach_style_image: false
     reframe_capable: false
-    prompt_limit: 2400
+    prompt_limit: null
     output_format: jpeg
     prompt_instructions: >-
       Microsoft MAI Image 2.5 is suited to natural photorealism, fashion and
@@ -629,7 +629,7 @@ stacks:
     style_model: ""
     can_attach_style_image: false
     reframe_capable: false
-    prompt_limit: 2400
+    prompt_limit: null
     output_format: jpeg
     prompt_instructions: >-
       ByteDance Seedream 5 Pro is suited to cinematic editorial source frames,

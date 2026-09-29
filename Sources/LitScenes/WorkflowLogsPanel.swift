@@ -151,6 +151,11 @@ struct WorkflowLogsPanel: View {
             if expanded {
                 Divider()
                 detailActions(job, outcome: outcome)
+                ForEach(job.imagePrompts ?? []) { preparation in
+                    DisclosureGroup("Image prompt · " + preparation.state.replacingOccurrences(of: "_", with: " ")) {
+                        ImagePromptDetailsView(preparation: preparation)
+                    }
+                }
                 logFields("Inputs", fields: uniqueFields(workflowLogFields(job.recipeJSON, output: false) + traces.flatMap(\.inputFields)))
                 if job.workflow == "shot_prompt_assistance" {
                     Text("Generated direction is recorded here. Applying it is a separate editor action.")

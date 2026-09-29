@@ -248,7 +248,10 @@ struct RenderStack: Hashable, Sendable, Identifiable {
         return model
     }
 
-    var falPromptLimit: Int { promptLimit ?? 2_400 }
+    var falPromptLimit: Int? {
+        ImagePromptConstraint.resolve(provider: "fal", endpoint: model, model: model, managed: false)
+            .first(where: { $0.field == "prompt" })?.maximum
+    }
 
     var stabilityStrength: Double {
         switch stabilityInput["strength"] {

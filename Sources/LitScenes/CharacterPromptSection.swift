@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// SHEET PROMPT: the exact text the next sheet render transmits — composed from the
-/// identity, or the operator's hand edit until they reset it.
+/// The complete sheet draft; provider preparation and any shortening are recorded separately.
 struct CharacterPromptSection: View {
     let composedPrompt: String
     let handEditedPrompt: String?
@@ -14,7 +13,6 @@ struct CharacterPromptSection: View {
     var onCommit: () -> Void
     var onRequestReset: () -> Void
     var onCopy: () -> Void
-    var promptLimit: Int? = nil
 
     private var displayedPrompt: String { handEditedPrompt ?? composedPrompt }
 
@@ -25,12 +23,6 @@ struct CharacterPromptSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             headerRow
-            if let promptLimit, (isEditing ? promptDraft : displayedPrompt).count > promptLimit {
-                Text("This model shortens prompts beyond \(promptLimit) characters. Keep essential instructions near the beginning; edit the prompt to reduce it.")
-                    .font(CanonType.interface(12))
-                    .foregroundStyle(CanonColor.softGold)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
             if isEditing {
                 editor
             } else {

@@ -5,6 +5,7 @@ struct StabilityAIImageGenerationResult {
     var requestId: String
     var traceId: String
     var model: String
+    var transmittedPrompt: String? = nil
 }
 
 private struct StabilityAIMultipartFile {
@@ -98,6 +99,13 @@ struct StabilityAIClient: Sendable {
         runId: String = "",
         traceWorkflowName: String = "themes"
     ) async throws -> StabilityAIImageGenerationResult {
+        let preparation = try await ImagePromptPreparation.prepare(
+            fields: ["prompt": prompt, "negative_prompt": negativePrompt.trimmed], provider: "stability", endpoint: WorkflowPrivacy.url(endpoint),
+            model: Self.ultraModel, references: ImagePromptReference.sources(source.map { [$0] } ?? []),
+            metadata: InferenceTraceRequestMetadata(provider: "stability", apiFamily: "images", operation: "prepare",
+                projectId: projectId, runId: runId, traceGroupId: runId, workflowName: traceWorkflowName, model: Self.ultraModel))
+        let prompt = preparation.prompt
+        let negativePrompt = preparation.providerFields["negative_prompt"] ?? negativePrompt
         let boundary = "Boundary-\(UUID().uuidString)"
         let normalizedFormat = outputFormat.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "jpeg" : outputFormat
         var fields = [
@@ -161,7 +169,7 @@ struct StabilityAIClient: Sendable {
                     providerRequestIDHeaderCandidates: ["x-request-id", "request-id", "x-correlation-id"],
                     captureRequestBody: false,
                     captureResponseBody: false
-                )
+                ).recordingImagePrompt(preparation)
             )
         } catch {
             let durationMs = Int(Date().timeIntervalSince(startedAt) * 1_000)
@@ -235,7 +243,8 @@ struct StabilityAIClient: Sendable {
             imageData: data,
             requestId: requestId,
             traceId: result.traceId,
-            model: Self.ultraModel
+            model: Self.ultraModel,
+            transmittedPrompt: prompt
         )
     }
 }

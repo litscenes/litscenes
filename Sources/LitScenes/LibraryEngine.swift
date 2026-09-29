@@ -315,6 +315,7 @@ private struct LensHeroGenerationJob: Sendable {
     var skipPromptEnrichment: Bool = false
     var prompt: String
     var sourcePrompt: String
+    var operatorPrompt: String? = nil
     var negativePrompt: String
     /// Ordered attachment plan (styles by weight, characters, continuity). Attachment
     /// order, filenames, and the prompt manifest all come from this one plan.
@@ -363,6 +364,7 @@ private struct LensHeroGenerationJob: Sendable {
     /// Reference sheets are deliberately multi-panel: the single-frame guard that
     /// every other render appends must stay out of their prompts.
     var allowsMultiPanelLayout: Bool = false
+    var promptProtectedText: [String] = []
     /// Per-job Stability aspect that outranks the stack's declared canvas (portrait
     /// sheets on a stack whose YAML says 16:9).
     var stabilityAspectRatioOverride: String? = nil
@@ -419,6 +421,7 @@ private struct LensHeroGenerationOutcome: Sendable {
     var generatedAt: String
     var updatedAt: String
     var renderRecipe: LensRenderRecipeSnapshot?
+    var imageRequestSubmitted: Bool = true
 }
 
 /// Hard single-image directive woven into every final render prompt — some
@@ -457,6 +460,28 @@ func lensResponsesUserPrompt(
 
 private enum LensHeroImageRunner {
     static func generate(
+        job: LensHeroGenerationJob,
+        openAIClient: OpenAIClient?,
+        stabilityClient: StabilityAIClient?,
+        civitaiImageProvider: CivitAIWANImageProvider? = nil,
+        falImageClient: FALImageClient? = nil
+    ) async -> LensHeroGenerationOutcome {
+        let capture = ImagePromptCapture()
+        let protected = [job.promptPreamble, job.attachmentStylePolicy,
+                         job.allowsMultiPanelLayout ? "" : lensSingleFrameGuard,
+                         job.reframe.map { LensCameraTurn.instructions(spec: $0) } ?? "",
+                         job.reframe?.isZoomOut == true ? LensZoomOutPrompt.openAIScenePreamble : ""] + job.promptProtectedText
+        return await ImagePromptContext.$sourcePrompt.withValue(job.operatorPrompt ?? (job.sourcePrompt.isEmpty ? job.prompt : job.sourcePrompt)) {
+            await ImagePromptContext.$protectedText.withValue(protected) {
+                await ImagePromptContext.$capture.withValue(capture) {
+                    await perform(job: job, openAIClient: openAIClient, stabilityClient: stabilityClient,
+                                  civitaiImageProvider: civitaiImageProvider, falImageClient: falImageClient)
+                }
+            }
+        }
+    }
+
+    private static func perform(
         job: LensHeroGenerationJob,
         openAIClient: OpenAIClient?,
         stabilityClient: StabilityAIClient?,
@@ -607,7 +632,7 @@ private enum LensHeroImageRunner {
                 prompt: finalPrompt,
                 enhancedPrompt: enhancedPrompt,
                 styleSummaryLine: styleSummaryLine,
-                negativePrompt: negativePrompt,
+                negativePrompt: await transmittedNegativePrompt(negativePrompt),
                 openAIClient: openAIClient,
                 stabilityClient: stabilityClient,
                 civitaiImageProvider: civitaiImageProvider,
@@ -626,7 +651,7 @@ private enum LensHeroImageRunner {
                 imagePath: job.outputURL.path,
                 prompt: result.transmittedPrompt ?? finalPrompt,
                 sourcePrompt: storedSourcePrompt,
-                negativePrompt: negativePrompt,
+                negativePrompt: await transmittedNegativePrompt(negativePrompt),
                 promptEnrichmentModel: enrichment.model,
                 promptEnrichmentResponseId: enrichment.responseId,
                 promptEnrichmentTraceId: enrichment.traceId,
@@ -642,6 +667,7 @@ private enum LensHeroImageRunner {
             let failedAt = DateFormats.now()
             let status = Task.isCancelled || error is CancellationError ? "cancelled" : "failed"
             let durationMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+            let capturedPrompt = await ImagePromptContext.capture?.latest
             let workflowFailure = error as? CivitAIWorkflowFailure
             let falFailure = error as? FALWorkflowFailure
             print("[lens_hero_image] error provider=\(job.provider.rawValue) image_id=\(job.imageId) status=\(status) duration_ms=\(durationMs) message=\"\(error.localizedDescription)\"")
@@ -651,9 +677,9 @@ private enum LensHeroImageRunner {
                 provider: job.provider,
                 status: status,
                 imagePath: "",
-                prompt: job.prompt,
+                prompt: capturedPrompt?.submittedFields?["prompt"] ?? "",
                 sourcePrompt: storedSourcePrompt,
-                negativePrompt: job.negativePrompt,
+                negativePrompt: await transmittedNegativePrompt(job.negativePrompt),
                 promptEnrichmentModel: "",
                 promptEnrichmentResponseId: "",
                 promptEnrichmentTraceId: "",
@@ -663,9 +689,14 @@ private enum LensHeroImageRunner {
                 errorMessage: workflowFailure?.localizedDescription ?? falFailure?.localizedDescription ?? error.localizedDescription,
                 generatedAt: "",
                 updatedAt: failedAt,
-                renderRecipe: nil
+                renderRecipe: job.stack?.renderRecipeSnapshot(mediaPlan: job.mediaPlan, styleMode: job.styleMode),
+                imageRequestSubmitted: capturedPrompt?.submittedFields != nil
             )
         }
+    }
+
+    private static func transmittedNegativePrompt(_ fallback: String) async -> String {
+        (await ImagePromptContext.capture?.latest)?.providerFields["negative_prompt"] ?? fallback
     }
 
     private static func civitaiWANPrompt(sourcePrompt: String, styleSummary: String) -> String {
@@ -673,33 +704,51 @@ private enum LensHeroImageRunner {
         let prompt = [styleLine, sourcePrompt.trimmed]
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
-        return providerPromptLimited(prompt, maxCharacters: 1_800)
-    }
-
-    private static func providerPromptLimited(_ prompt: String, maxCharacters: Int) -> String {
-        let cleaned = prompt
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { String($0).trimmed }
-            .joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard cleaned.count > maxCharacters else { return cleaned }
-        var prefix = String(cleaned.prefix(maxCharacters))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let boundary = prefix.lastIndex(where: { $0 == "." || $0 == ";" || $0 == "," || $0 == "\n" }),
-           prefix.distance(from: prefix.startIndex, to: boundary) > maxCharacters / 2 {
-            prefix = String(prefix[..<boundary])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        } else if let boundary = prefix.lastIndex(where: { $0 == " " || $0 == "\n" }),
-                  prefix.distance(from: prefix.startIndex, to: boundary) > maxCharacters / 2 {
-            prefix = String(prefix[..<boundary])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return prefix
+        return prompt
     }
 
     private static func generateImageData(
+        job: LensHeroGenerationJob,
+        prompt: String,
+        enhancedPrompt: String,
+        styleSummaryLine: String,
+        negativePrompt: String,
+        openAIClient: OpenAIClient?,
+        stabilityClient: StabilityAIClient?,
+        civitaiImageProvider: CivitAIWANImageProvider?,
+        falImageClient: FALImageClient?
+    ) async throws -> (imageData: Data, requestId: String, traceId: String, renderRecipe: LensRenderRecipeSnapshot?, transmittedPrompt: String?) {
+        var resolved = job
+        switch job.provider {
+        case .stability: resolved.attachments = Array(job.attachments.prefix(1))
+        case .fal:
+            if job.styleMode == .attachStyleImage {
+                let eligible = job.promptImageReferenceMode ? job.attachments : job.attachments.filter(\.isStyle)
+                resolved.attachments = Array(eligible.prefix(max(job.stack?.nativePromptImageLimit ?? 1, 1)))
+            } else { resolved.attachments = [] }
+        default: break
+        }
+        var finalPrompt = prompt
+        if resolved.attachments != job.attachments {
+            let plan = LensBlendAttachmentPlan(entries: resolved.attachments)
+            if !job.attachmentManifest.isEmpty, let range = finalPrompt.range(of: job.attachmentManifest, options: .backwards) {
+                finalPrompt.replaceSubrange(range, with: plan.manifestText)
+            }
+            resolved.attachmentManifest = plan.manifestText
+            resolved.attachmentManifestEntries = plan.manifestEntryLinesText
+            resolved.attachmentStylePolicy = plan.manifestPolicyText
+            let omitted = job.attachments.filter { !resolved.attachments.contains($0) }.map(\.attachmentFilename)
+            if let context = WorkflowContext.current {
+                await WorkflowCoordinator.shared.transition(context.jobId, phase: "Preparing image references",
+                    message: "Not attached for this route: " + omitted.joined(separator: ", "))
+            }
+        }
+        return try await generatePreparedImageData(job: resolved, prompt: finalPrompt, enhancedPrompt: enhancedPrompt,
+            styleSummaryLine: styleSummaryLine, negativePrompt: negativePrompt, openAIClient: openAIClient,
+            stabilityClient: stabilityClient, civitaiImageProvider: civitaiImageProvider, falImageClient: falImageClient)
+    }
+
+    private static func generatePreparedImageData(
         job: LensHeroGenerationJob,
         prompt: String,
         enhancedPrompt: String,
@@ -784,7 +833,7 @@ private enum LensHeroImageRunner {
                         traceArtifactType: "lens_hero",
                         traceArtifactId: job.runId
                     )
-                    return (result.imageData, result.requestId, result.traceId, nil, transmittedPrompt)
+                    return (result.imageData, result.requestId, result.traceId, nil, result.transmittedPrompt ?? transmittedPrompt)
                 }
                 let result = try await openAIClient.generateImageEdit(
                     prompt: providerPrompt,
@@ -801,7 +850,7 @@ private enum LensHeroImageRunner {
                     traceArtifactType: "lens_hero",
                     traceArtifactId: job.runId
                 )
-                return (result.imageData, result.requestId, result.traceId, nil, providerPrompt)
+                return (result.imageData, result.requestId, result.traceId, nil, result.transmittedPrompt ?? providerPrompt)
             }
             let result = try await openAIClient.generateProofImage(
                 prompt: prompt,
@@ -820,7 +869,7 @@ private enum LensHeroImageRunner {
                 traceArtifactId: job.runId
             )
             // Proof path sends `prompt` verbatim — the composed text is faithful.
-            return (result.imageData, result.requestId, result.traceId, nil, nil)
+            return (result.imageData, result.requestId, result.traceId, nil, result.transmittedPrompt)
         case .stability:
             guard let stabilityClient else {
                 throw ScreenGraphError.credentials("STABILITY_AI_API_KEY is required to generate Stability AI frames.")
@@ -834,7 +883,7 @@ private enum LensHeroImageRunner {
             }
             let source = sources.first
             let providerPrompt = providerAttachmentText(prompt, entries: sourceEntries, sources: sources)
-            let stabilityPrompt = providerPromptLimited(providerPrompt, maxCharacters: job.stack?.promptLimit ?? 10_000)
+            let stabilityPrompt = providerPrompt
             let result = try await stabilityClient.generateLensHero(
                 prompt: stabilityPrompt,
                 negativePrompt: negativePrompt,
@@ -855,7 +904,7 @@ private enum LensHeroImageRunner {
                 sourceImageCount: job.sourceImageCount,
                 usesCompositeImage: job.usesCompositeImage
             )
-            return (result.imageData, result.requestId, result.traceId, recipe, stabilityPrompt)
+            return (result.imageData, result.requestId, result.traceId, recipe, result.transmittedPrompt ?? stabilityPrompt)
         case .civitaiWan27:
             guard let civitaiImageProvider else {
                 throw ScreenGraphError.credentials("CivitAI image provider is unavailable.")
@@ -912,7 +961,9 @@ private enum LensHeroImageRunner {
                         mimeType: source.mimeType,
                         fileName: source.fileName,
                         role: source.role.isEmpty ? (job.promptImageReferenceMode ? "prompt_image" : "style") : source.role,
-                        title: source.title
+                        title: source.title,
+                        promptBinding: source.promptBinding,
+                        referencePurpose: source.referencePurpose
                     )
                 }
             } else {
@@ -940,9 +991,8 @@ private enum LensHeroImageRunner {
                 debugParametersJSON: job.debugParametersJSON,
                 generatedParameters: result.parameters
             )
-            // FAL receives the composed prompt (attachment filenames normalized);
-            // the client's character bound is recorded in the inference trace.
-            return (result.imageData, result.providerJobId, result.traceId, recipe, nil)
+            // The adapter returns the exact submitted text, including any shortening.
+            return (result.imageData, result.providerJobId, result.traceId, recipe, result.transmittedPrompt)
         }
     }
 
@@ -1020,7 +1070,7 @@ private enum LensHeroImageRunner {
                 imageSizeOverride: prepared.plan.sizeString,
                 sourceImageCount: 1
             )
-            providerResult = (result.imageData, result.requestId, result.traceId, recipe, wirePrompt)
+            providerResult = (result.imageData, result.requestId, result.traceId, recipe, result.transmittedPrompt ?? wirePrompt)
             providerGeometry = prepared.geometry
         case .fal:
             guard let falImageClient else {
@@ -1076,7 +1126,7 @@ private enum LensHeroImageRunner {
             // Only the operator body rides the FAL outpaint wire (never the
             // style line or instruction blocks) — persist that body, not the
             // composed prompt that claims otherwise.
-            providerResult = (result.imageData, result.providerJobId, result.traceId, recipe, falOperatorPrompt)
+            providerResult = (result.imageData, result.providerJobId, result.traceId, recipe, result.transmittedPrompt)
             providerGeometry = LensZoomOutGeometry.ProviderGeometry(
                 canvasWidth: prepared.expandLeft + prepared.source.width + prepared.expandRight,
                 canvasHeight: prepared.expandTop + prepared.source.height + prepared.expandBottom,
@@ -1608,7 +1658,9 @@ private enum LensHeroImageRunner {
                         label: entry.role == .primary ? "primary-\(entry.sharePercent)pct" : "\(entry.role.rawValue)-\(entry.sharePercent)pct",
                         role: entry.role.rawValue,
                         sharePercent: entry.sharePercent,
-                        title: reference.title
+                        title: reference.title,
+                        promptBinding: entry.manifestBinding(position: index + 1).replacingOccurrences(of: entry.attachmentFilename, with: filename),
+                        referencePurpose: entry.referencePurpose
                     ))
                 } catch {
                     styleFailures.append("\(reference.title): \(error.localizedDescription)")
@@ -1643,12 +1695,17 @@ private enum LensHeroImageRunner {
                     label: entry.role.rawValue,
                     role: entry.role.rawValue,
                     sharePercent: 0,
-                    title: entry.characterName ?? entry.caption ?? ""
+                    title: entry.characterName ?? entry.caption ?? "",
+                    promptBinding: entry.manifestBinding(position: index + 1).replacingOccurrences(of: entry.attachmentFilename, with: filename),
+                    referencePurpose: entry.referencePurpose
                 ))
             }
         }
         if styleCount > 0, !sources.contains(where: { $0.role == LensBlendAttachmentEntry.Role.primary.rawValue || $0.role == LensBlendAttachmentEntry.Role.accent.rawValue }) {
             throw ScreenGraphError.capture(styleFailures.first ?? "No verified style reference images were available.")
+        }
+        guard sources.count == entries.count else {
+            throw ScreenGraphError.capture(styleFailures.first ?? "A selected reference image is unavailable. Repair the references before rendering.")
         }
         return sources
     }
@@ -3726,10 +3783,11 @@ final class LibraryEngine: ObservableObject {
             sharePercent: 0,
             reference: nil,
             localURL: url,
-            characterName: nil,
+            characterName: normalized.subjectName,
             caption: label,
             attachmentFilename: "prompt-image-\(index + 1).\(ext)",
-            promptDescriptor: descriptor
+            promptDescriptor: descriptor,
+            referencePurpose: normalized.referencePurpose
         )
     }
 
@@ -3919,7 +3977,7 @@ final class LibraryEngine: ObservableObject {
                     endpointId: outcome.renderRecipe?.model ?? "",
                     fallback: outcome.renderRecipe?.parameters.first { $0.key == "provider_price_note" }?.value ?? ""
                 ),
-                status: outcome.status == "ready" ? "completed" : "failed_unknown_charge"
+                status: outcome.status == "ready" ? "completed" : (outcome.imageRequestSubmitted ? "failed_unknown_charge" : "not_submitted")
             ))
         }
         heroImages[heroIndex].status = outcome.status
@@ -11699,7 +11757,7 @@ final class LibraryEngine: ObservableObject {
                         unitCount: 1,
                         pricingNote: outcome.renderRecipe?.parameters
                             .first { $0.key == "provider_price_note" }?.value ?? "",
-                        status: outcome.status == "ready" ? "completed" : "failed_unknown_charge"
+                        status: outcome.status == "ready" ? "completed" : (outcome.imageRequestSubmitted ? "failed_unknown_charge" : "not_submitted")
                     ))
                 }
                 guard outcome.status == "ready" else {
@@ -12470,7 +12528,9 @@ final class LibraryEngine: ObservableObject {
                         sourceId: attachment.mediaId,
                         label: attachment.label,
                         detail: attachment.detail,
-                        imagePath: attachment.imagePath
+                        imagePath: attachment.imagePath,
+                        referencePurpose: attachment.isSheet ? .referenceSheet : .sourceImage,
+                        subjectName: character.name
                     ).normalized()
                 }
             } else {
@@ -12634,7 +12694,7 @@ final class LibraryEngine: ObservableObject {
                             endpointId: outcome.renderRecipe?.model ?? "",
                             fallback: outcome.renderRecipe?.parameters.first { $0.key == "provider_price_note" }?.value ?? ""
                         ),
-                        status: outcome.status == "ready" ? "completed" : "failed_unknown_charge"
+                        status: outcome.status == "ready" ? "completed" : (outcome.imageRequestSubmitted ? "failed_unknown_charge" : "not_submitted")
                     ))
                 }
                 guard outcome.status == "ready" else {
@@ -12803,7 +12863,9 @@ final class LibraryEngine: ObservableObject {
                     sourceId: pick.item.mediaId,
                     label: label,
                     detail: detail,
-                    imagePath: pick.item.path
+                    imagePath: pick.item.path,
+                    referencePurpose: pick.isSheet ? .referenceSheet : .sourceImage,
+                    subjectName: character.name
                 ).normalized()
             }
             let provider = stack.heroProvider
@@ -12840,7 +12902,9 @@ final class LibraryEngine: ObservableObject {
                         sourceId: characterId,
                         label: "\(character.name) · labeled identity sheet",
                         detail: "COMPOSITE IDENTITY REFERENCE. Each labeled cell shows the same character. Preserve their shared identity in every panel of the sheet.",
-                        imagePath: compositeURL.path
+                        imagePath: compositeURL.path,
+                        referencePurpose: .compositeIdentity,
+                        subjectName: character.name
                     ).normalized()
                 ]
             } else {
@@ -12855,6 +12919,13 @@ final class LibraryEngine: ObservableObject {
             mediaPlan = mediaPlan.normalized()
             let styleMode: LensRenderStyleMode = stack.isFAL && !attachments.isEmpty ? .attachStyleImage : .none
             let tallShot = RosterCharacterRenderPrompt.Shot.fullFigure
+            var layoutFill = fill
+            layoutFill.visualDescription = ""
+            layoutFill.signatureProps = []
+            layoutFill.storyIdentity = nil
+            layoutFill.sheetDirectives = []
+            let fixedLayout = CharacterSheetPrompt.render(template: submittedTemplate, fill: layoutFill)
+                .components(separatedBy: "\n\n")
             let job = LensHeroGenerationJob(
                 lensId: "",
                 imageId: runId,
@@ -12865,10 +12936,11 @@ final class LibraryEngine: ObservableObject {
                 promptImageReferenceMode: !attachments.isEmpty,
                 sourceImageCount: attachments.count,
                 usesCompositeImage: usesCompositeImage,
-                // The template is the operator's exact text: no prompt transform.
+                // Preserve the authored template; shortening is a separate recorded derivative.
                 skipPromptEnrichment: true,
                 prompt: prompt,
                 sourcePrompt: prompt,
+                operatorPrompt: character.sheetPromptOverride ?? character.descriptionPrompt,
                 negativePrompt: "",
                 attachments: attachmentPlan?.entries ?? [],
                 attachmentManifest: attachmentPlan?.manifestText ?? "",
@@ -12881,6 +12953,7 @@ final class LibraryEngine: ObservableObject {
                 civitaiWidthOverride: stack.civitaiDeclaredSize.map { tallShot.civitaiSize(declared: $0).width },
                 civitaiHeightOverride: stack.civitaiDeclaredSize.map { tallShot.civitaiSize(declared: $0).height },
                 allowsMultiPanelLayout: true,
+                promptProtectedText: fixedLayout,
                 stabilityAspectRatioOverride: stack.isStability ? "2:3" : nil,
                 outputURL: outputURL,
                 projectId: project.projectId,
@@ -12891,6 +12964,9 @@ final class LibraryEngine: ObservableObject {
             activeCharacterSheetIds.insert(characterId)
             defer {
                 activeCharacterSheetIds.remove(characterId)
+                if currentProject?.projectId == project.projectId, !refiningCharacterIds.contains(characterId) {
+                    characterChatStatus = characterRenderNotes[characterId]?.message ?? aestheticStatus
+                }
             }
             aestheticStatus = "Rendering \(character.name)'s character sheet — \(stack.label)"
 
@@ -12940,11 +13016,10 @@ final class LibraryEngine: ObservableObject {
                             endpointId: outcome.renderRecipe?.model ?? "",
                             fallback: outcome.renderRecipe?.parameters.first { $0.key == "provider_price_note" }?.value ?? ""
                         ),
-                        status: outcome.status == "ready" ? "completed" : "failed_unknown_charge"
+                        status: outcome.status == "ready" ? "completed" : (outcome.imageRequestSubmitted ? "failed_unknown_charge" : "not_submitted")
                     ))
                 }
                 guard outcome.status == "ready" else {
-                    lastError = outcome.errorMessage
                     aestheticStatus = "\(character.name)'s character sheet \(outcome.status)"
                     characterRenderNotes[characterId] = CharacterRenderNote(
                         lane: .sheet,

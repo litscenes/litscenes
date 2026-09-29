@@ -50,6 +50,6 @@ struct LensCameraTurn: Codable, Hashable, Sendable {
                      notes.isEmpty ? "" : "Additional creative direction, subordinate to camera geometry:\n\(notes)",
                      context.isEmpty ? "" : "Saved scene context:\n\(context)"]
         let prompt = parts.filter { !$0.isEmpty }.joined(separator: "\n\n")
-        return limit.map { String(prompt.prefix(max(instructions(spec: spec).count, $0))) } ?? prompt
+        return prompt
     }
 }

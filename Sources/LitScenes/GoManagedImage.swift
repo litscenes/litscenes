@@ -23,7 +23,13 @@ enum GoManagedImage {
             "Reference \(index + 1): \(source.fileName)" + (source.role.isEmpty ? "" : " (\(source.role))")
         }.joined(separator: "\n")
         let composed = [instructions, prompt, notes].filter { !$0.isEmpty }.joined(separator: "\n\n")
-        var input: [String: Any] = ["prompt": composed, "aspect_ratio": ratio, "resolution": "1K", "num_images": 1,
+        let preparation = try await ImagePromptPreparation.prepare(fields: ["prompt": composed], provider: "fal",
+            endpoint: model, model: model, managed: true, references: ImagePromptReference.sources(references),
+            protectedText: [instructions, notes],
+            metadata: InferenceTraceRequestMetadata(provider: "fal", apiFamily: "images", operation: "prepare",
+                projectId: projectId, runId: runId, traceGroupId: runId, workflowName: workflowName,
+                workflowStep: workflowStep, artifactType: artifactType, artifactId: artifactId, model: model))
+        var input: [String: Any] = ["prompt": preparation.prompt, "aspect_ratio": ratio, "resolution": "1K", "num_images": 1,
                                     "output_format": "png", "limit_generations": true]
         if !references.isEmpty {
             let parts = ratio.split(separator: ":").compactMap { Int($0) }
@@ -46,10 +52,10 @@ enum GoManagedImage {
         metadata.traceGroupId = runId
         metadata.artifactType = artifactType
         metadata.artifactId = artifactId
-        metadata.requestTextJSON = String(decoding: try GoDocument(["prompt": prompt, "instructions": instructions,
+        metadata.requestTextJSON = String(decoding: try GoDocument(["prompt": preparation.prompt, "operator_prompt": prompt, "instructions": instructions,
             "size": size, "provider_aspect_ratio": ratio, "output_width": canvas.width, "output_height": canvas.height,
             "image_normalization": "fit and pad without cropping", "reference_count": references.count]).data, as: UTF8.self)
-        let submitted = try await TracedHTTPTransport.send(request: request, metadata: metadata)
+        let submitted = try await TracedHTTPTransport.send(request: request, metadata: metadata.recordingImagePrompt(preparation))
         let jobId = GoDocument(data: submitted.data).string("request_id")
         let job = try await withTaskCancellationHandler {
             try await GoTransport.wait(jobId)
@@ -61,7 +67,7 @@ enum GoManagedImage {
         let original = try await GoOutputStore.shared.data(artifact)
         let data = try fit(original, width: canvas.width, height: canvas.height)
         return OpenAIImageGenerationResult(imageData: data, requestId: jobId, traceId: job.string("trace_id"),
-                                            model: model, revisedPrompt: composed)
+                                            model: model, revisedPrompt: "", transmittedPrompt: preparation.prompt)
     }
 
     private static func dimensions(size: String, source: Data?) throws -> (width: Int, height: Int) {

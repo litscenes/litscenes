@@ -89,7 +89,9 @@ struct FrameReferenceCameraTurnTests {
         for scene in ["An ice research station at dawn.", "A miniature mechanical theater in a ceramic vessel."] {
             let parent = ProjectLensHeroImage(imageId: "parent", sourcePrompt: scene)
             let prompt = LensCameraTurn.prompt(spec: spec, parent: parent, settings: .empty(), model: "", limit: 2400)
-            #expect(prompt.count <= 2400)
+            #expect(prompt.count > 2400)
+            #expect(prompt.contains(scene))
+            #expect(prompt.contains(spec.cameraTurn!.operatorNotes.trimmed))
             #expect(prompt.hasPrefix(LensCameraTurn.instructions(spec: spec)))
             #expect(prompt.contains("45 degrees left and tilt 30 degrees up"))
             #expect(prompt.contains("1% from the source image's left edge and 99% from its top"))

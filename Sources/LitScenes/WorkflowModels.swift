@@ -52,6 +52,7 @@ struct WorkflowJob: Codable, Identifiable, Sendable {
     var completedAt: String?
     var segmentProgress: [WorkflowSegmentProgress]?
     var currentSegmentKey: String?
+    var imagePrompts: [PreparedImagePrompt]?
 
     var label: String {
         workflow.replacingOccurrences(of: "_", with: " ").capitalized

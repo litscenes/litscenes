@@ -93,7 +93,7 @@ enum WorkflowHTTP {
             } catch let failure as ProviderFailure {
                 throw failure
             } catch {
-                if error is CancellationError || Task.isCancelled { throw error }
+                if error is CancellationError || Task.isCancelled || error is ImagePromptPersistenceFailure { throw error }
                 if submission {
                     let failure = ProviderFailure(provider: metadata.provider,
                         statusCode: 0, code: "transport_interrupted", message: "No complete submission response was received. Review provider acceptance before retrying.",

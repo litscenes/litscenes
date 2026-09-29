@@ -204,6 +204,22 @@ final class WorkflowCoordinator: ObservableObject {
         }
     }
 
+    func saveImagePrompt(_ preparation: PreparedImagePrompt) async throws {
+        guard let id = WorkflowContext.current?.jobId,
+              var job = jobs.first(where: { $0.id == id }) else { return }
+        var prompts = job.imagePrompts ?? []
+        prompts.removeAll { $0.id == preparation.id }
+        prompts.append(preparation)
+        job.imagePrompts = prompts
+        if !preparation.traceId.isEmpty, !job.traceIds.contains(preparation.traceId) { job.traceIds.append(preparation.traceId) }
+        if preparation.wasShortened { job.phase = preparation.shorteningNotice }
+        else if preparation.state == "shortening" { job.phase = "Shortening image prompt" }
+        job.updatedAt = DateFormats.now()
+        guard await save(job, message: preparation.wasShortened ? preparation.shorteningNotice : "Full image prompt saved") else {
+            throw ScreenGraphError.capture("Could not save image prompt provenance; no image request was sent.")
+        }
+    }
+
     func describeArtifact(_ label: String) async {
         guard let id = WorkflowContext.current?.jobId, var job = jobs.first(where: { $0.id == id }) else { return }
         job.artifactLabel = WorkflowPrivacy.text(label)

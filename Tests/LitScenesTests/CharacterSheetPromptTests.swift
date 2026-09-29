@@ -18,7 +18,7 @@ struct CharacterSheetPromptTests {
             )
         )
         #expect(!full.contains("{{"))
-        #expect(full.contains("Character Reference Sheet for Auri of the Soft Ears — match the attached reference images exactly."))
+        #expect(full.contains("Character Reference Sheet for Auri of the Soft Ears — use attached images as identity evidence and apply the latest explicit changes."))
         #expect(full.contains("Appearance: Silver hair, large pale ears"))
         #expect(full.contains("Always with them: black ribbon bows."))
         #expect(full.contains("Story identity — who they are: Tender omen; wants: to be loved as a person."))

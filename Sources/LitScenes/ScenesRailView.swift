@@ -35,6 +35,8 @@ struct ScenesRailView: View {
     /// Coin context menu removal (seam-destroying removals confirm at the
     /// owner, exactly like the stage's READY toggle).
     var onUnmark: (String) -> Void = { _ in }
+    var onExportScene: (String) -> Void = { _ in }
+    var isExportingScene: Bool = false
 
     @State private var targetedSceneId = ""
     @State private var materialTargetedSceneId = ""
@@ -164,6 +166,11 @@ struct ScenesRailView: View {
             ? "Open \(scene.displayName) on the stage"
             : "Switch to \(group.projectName) and open \(scene.displayName)")
         .contextMenu {
+            if group.isLoaded {
+                Button("Export Scene…", systemImage: "square.and.arrow.up") { onExportScene(scene.shotId) }
+                    .disabled(isExportingScene)
+                Divider()
+            }
             // Never an empty menu (macOS pops a blank panel): unsequenced
             // cards get the honest one-liner instead of nothing.
             if group.isLoaded, let position = scene.sequencePosition {

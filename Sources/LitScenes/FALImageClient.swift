@@ -6,6 +6,8 @@ struct FALImageReference: Sendable {
     var fileName: String
     var role: String = "style"
     var title: String = ""
+    var promptBinding: String? = nil
+    var referencePurpose: ImageReferencePurpose? = nil
 
     var dataURI: String {
         "data:\(mimeType.trimmed.isEmpty ? "image/png" : mimeType.trimmed);base64,\(data.base64EncodedString())"
@@ -18,6 +20,8 @@ struct FALImageReference: Sendable {
             "file_name": fileName,
             "mime_type": mimeType.trimmed.isEmpty ? "image/png" : mimeType.trimmed,
             "title": title,
+            "prompt_binding": promptBinding ?? "",
+            "reference_purpose": referencePurpose?.rawValue ?? "",
             "byte_count": data.count,
             "sha256": sha256Hex(data),
             "width": size?.width ?? 0,
@@ -42,6 +46,7 @@ struct FALImageGenerationRequest: Sendable {
     var runId: String = ""
     var traceGroupId: String = ""
     var workflowName: String = "lenses"
+    var preparedPrompt: PreparedImagePrompt?
 }
 
 extension FALImageClient {
@@ -83,6 +88,7 @@ struct FALImageGenerationResult: Sendable {
     var modelId: String
     var seed: String
     var parameters: [LensRenderRecipeParameter]
+    var transmittedPrompt: String
 }
 
 struct FALWorkflowFailure: LocalizedError {
@@ -100,6 +106,7 @@ struct FALImageClient {
     private let terminalStates: Set<String> = ["COMPLETED", "FAILED", "CANCELLED", "CANCELED"]
 
     func generateImage(from request: FALImageGenerationRequest) async throws -> FALImageGenerationResult {
+        var request = request
         let apiKey = ProviderBilling.credential(for: .fal(request.stack.falModelId(styleMode: request.styleMode)), store: credentialStore)
         guard !apiKey.trimmed.isEmpty else {
             throw ScreenGraphError.credentials("FAL_API_KEY or FAL_KEY is required to generate FAL Lens images.")
@@ -116,9 +123,7 @@ struct FALImageClient {
             stack: request.stack,
             styleMode: request.styleMode
         )
-        let providerPrompt = request.outpaintInput == nil
-            ? providerPromptLimited(request.prompt, maxCharacters: request.stack.falPromptLimit)
-            : falOutpaintProviderPrompt(request.prompt, maxCharacters: request.stack.falPromptLimit)
+        let providerPrompt = request.prompt
         var input = request.stack.falBaseInput(
             prompt: providerPrompt,
             mediaPlan: request.mediaPlan,
@@ -147,6 +152,20 @@ struct FALImageClient {
         for (key, value) in overrides {
             input[key] = value
         }
+        let references = Self.sourceMediaRefs(request).enumerated().map { index, ref in
+            ImagePromptReference(id: "reference_\(index + 1)", filename: ref["file_name"] as? String ?? "",
+                role: ref["role"] as? String ?? "", title: ref["title"] as? String ?? "", sha256: ref["sha256"] as? String ?? "",
+                binding: ref["prompt_binding"] as? String, purpose: (ref["reference_purpose"] as? String).flatMap(ImageReferencePurpose.init(rawValue:)))
+        }
+        var promptFields = ["prompt": input["prompt"] as? String ?? providerPrompt]
+        if let negative = input["negative_prompt"] as? String { promptFields["negative_prompt"] = negative }
+        let preparation = try await ImagePromptPreparation.prepare(
+            fields: promptFields, provider: "fal", endpoint: modelId, model: modelId,
+            managed: apiKey == GoConnection.marker, references: references,
+            metadata: traceMetadata(operation: "prepare", workflowStep: "fal_image_prepare", modelId: modelId,
+                parentTraceId: "", generationRequest: request, requestTextJSON: "", responseHint: "application/json"))
+        request.preparedPrompt = preparation
+        for (field, text) in preparation.providerFields { input[field] = text }
         let traceInput = sanitizedFALInputForTrace(input)
         var tracePayload: [String: Any] = [
             "model": modelId,
@@ -240,7 +259,7 @@ struct FALImageClient {
                 request: request
             )
         } catch {
-            _ = await recordLifecycleEvent(
+            let eventTraceId = await recordLifecycleEvent(
                 requestId: jobId,
                 modelId: modelId,
                 outcome: "result_retrieval_stopped",
@@ -249,7 +268,9 @@ struct FALImageClient {
                 parentTraceId: final.traceId,
                 request: request
             )
-            throw error
+            if error is CancellationError || Task.isCancelled { throw CancellationError() }
+            if let failure = error as? FALWorkflowFailure { throw failure }
+            throw FALWorkflowFailure(jobId: jobId, traceId: eventTraceId, message: error.localizedDescription)
         }
         guard let imageURL = outputImageURLs(from: result.object).first else {
             let eventTraceId = await recordLifecycleEvent(
@@ -277,7 +298,7 @@ struct FALImageClient {
                 request: request
             )
         } catch {
-            _ = await recordLifecycleEvent(
+            let eventTraceId = await recordLifecycleEvent(
                 requestId: jobId,
                 modelId: modelId,
                 outcome: "download_stopped",
@@ -286,7 +307,9 @@ struct FALImageClient {
                 parentTraceId: result.traceId,
                 request: request
             )
-            throw error
+            if error is CancellationError || Task.isCancelled { throw CancellationError() }
+            if let failure = error as? FALWorkflowFailure { throw failure }
+            throw FALWorkflowFailure(jobId: jobId, traceId: eventTraceId, message: error.localizedDescription)
         }
         let seed = firstSeed(in: result.object)
         var parameters = recipeParameters(
@@ -303,7 +326,8 @@ struct FALImageClient {
             traceId: downloaded.traceId,
             modelId: modelId,
             seed: seed,
-            parameters: parameters
+            parameters: parameters,
+            transmittedPrompt: preparation.prompt
         )
     }
 
@@ -396,7 +420,8 @@ struct FALImageClient {
         )
         guard let http = traced.response, (200..<300).contains(http.statusCode) else {
             let detail = safeFALImageTraceText(object.map(workflowFailureSummary(from:)) ?? "")
-            throw ScreenGraphError.capture("FAL image \(operation) failed\(detail.isEmpty ? "." : ": \(detail)")")
+            throw FALWorkflowFailure(jobId: tracePayload["provider_request_id"] as? String ?? "", traceId: traced.traceId,
+                message: "FAL image \(operation) failed (HTTP \(traced.response?.statusCode ?? 0))\(detail.isEmpty ? "." : ": \(detail)")")
         }
         guard let object else {
             throw ScreenGraphError.capture("FAL image \(operation) response was not JSON.")
@@ -445,7 +470,8 @@ struct FALImageClient {
         )
         guard let http = traced.response, (200..<300).contains(http.statusCode) else {
             let detail = safeFALImageTraceText(object.map(workflowFailureSummary(from:)) ?? "")
-            throw ScreenGraphError.capture("FAL image \(operation) failed\(detail.isEmpty ? "." : ": \(detail)")")
+            throw FALWorkflowFailure(jobId: tracePayload["provider_request_id"] as? String ?? "", traceId: traced.traceId,
+                message: "FAL image \(operation) failed (HTTP \(traced.response?.statusCode ?? 0))\(detail.isEmpty ? "." : ": \(detail)")")
         }
         guard let object else {
             throw ScreenGraphError.capture("FAL image \(operation) response was not JSON.")
@@ -498,7 +524,7 @@ struct FALImageClient {
                 delay = min(UInt64(Double(delay) * 1.5), 20)
             }
         } catch {
-            _ = await recordLifecycleEvent(
+            let eventTraceId = await recordLifecycleEvent(
                 requestId: jobId,
                 modelId: modelId,
                 outcome: error is CancellationError || Task.isCancelled
@@ -509,7 +535,9 @@ struct FALImageClient {
                 parentTraceId: parent,
                 request: generationRequest
             )
-            throw error
+            if error is CancellationError || Task.isCancelled { throw CancellationError() }
+            if let failure = error as? FALWorkflowFailure { throw failure }
+            throw FALWorkflowFailure(jobId: jobId, traceId: eventTraceId, message: error.localizedDescription)
         }
     }
 
@@ -541,7 +569,7 @@ struct FALImageClient {
             providerRequestIDHeaderCandidates: ["x-fal-request-id", "x-request-id", "request-id"],
             captureRequestBody: false,
             captureResponseBody: false
-        )
+        ).recordingImagePrompt(operation == "queue_submit" ? generationRequest.preparedPrompt : nil)
     }
 
     private func recipeParameters(
@@ -765,9 +793,9 @@ private func falImageTraceResponseSummary(_ dictionary: [String: Any]) -> [Strin
     }
     for key in ["error", "message", "detail", "reason"] {
         if let value = dictionary[key] {
-            let safeText = safeFALImageTraceText(workflowFailureSummary(from: value))
-            if !safeText.isEmpty {
-                summary[key] = safeText
+            if let data = try? JSONSerialization.data(withJSONObject: [key: value]),
+               let safe = try? JSONSerialization.jsonObject(with: WorkflowPrivacy.body(data)) as? [String: Any] {
+                summary[key] = safe[key]
             }
         }
     }
@@ -938,34 +966,9 @@ private func workflowFailureSummary(from value: Any) -> String {
     return ""
 }
 
-private func providerPromptLimited(_ prompt: String, maxCharacters: Int) -> String {
-    let cleaned = prompt
-        .replacingOccurrences(of: "\r\n", with: "\n")
-        .replacingOccurrences(of: "\r", with: "\n")
-        .split(separator: "\n", omittingEmptySubsequences: false)
-        .map { String($0).trimmed }
-        .joined(separator: "\n")
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard cleaned.count > maxCharacters else { return cleaned }
-    var prefix = String(cleaned.prefix(maxCharacters))
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    if let boundary = prefix.lastIndex(where: { $0 == "." || $0 == ";" || $0 == "," || $0 == "\n" }),
-       prefix.distance(from: prefix.startIndex, to: boundary) > maxCharacters / 2 {
-        prefix = String(prefix[..<boundary]).trimmingCharacters(in: .whitespacesAndNewlines)
-    } else if let boundary = prefix.lastIndex(where: { $0 == " " || $0 == "\n" }),
-              prefix.distance(from: prefix.startIndex, to: boundary) > maxCharacters / 2 {
-        prefix = String(prefix[..<boundary]).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-    return prefix
-}
-
-/// FAL Outpaint appends this text to its own base outpaint instruction and
-/// reads it as content, not instructions — so the wire carries only bounded
-/// operator content. An empty prompt is valid and lets the endpoint's visual
-/// continuation drive; instruction or negation vocabulary ("never duplicate",
-/// "no borders") acts as content tokens and conjures the named artifacts.
+/// Outpaint accepts empty creative direction. Final preparation applies its verified constraint.
 func falOutpaintProviderPrompt(_ operatorPrompt: String, maxCharacters: Int) -> String {
-    providerPromptLimited(operatorPrompt, maxCharacters: maxCharacters)
+    operatorPrompt
 }
 
 private func recipeStringValue(_ value: Any) -> String {

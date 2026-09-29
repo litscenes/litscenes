@@ -1,5 +1,11 @@
 import Foundation
 
+enum ImageReferencePurpose: String, Codable, Hashable, Sendable {
+    case sourceImage = "source_image"
+    case referenceSheet = "reference_sheet"
+    case compositeIdentity = "composite_identity"
+}
+
 /// One image attached to a Lens media generation request: which role it plays, the exact
 /// filename it is attached under, and the manifest line that describes it in the prompt.
 /// The plan is the single source of truth — attachment order, filenames, and prompt
@@ -32,6 +38,13 @@ struct LensBlendAttachmentEntry: Hashable, Sendable {
     var attachmentFilename: String
     /// The manifest sentence for this entry, without its leading index.
     var promptDescriptor: String
+    var referencePurpose: ImageReferencePurpose? = nil
+
+    func manifestBinding(position: Int) -> String {
+        let purpose = referencePurpose?.rawValue ?? role.rawValue
+        let subject = characterName.map { " for \"\($0)\"" } ?? ""
+        return "\(position). \(attachmentFilename) — \(purpose)\(subject): "
+    }
 
     var isStyle: Bool { role == .primary || role == .accent }
 }
@@ -270,16 +283,22 @@ struct LensBlendAttachmentPlan: Sendable {
                 ? "Attached reference images, in this exact order:"
                 : "Additional attached images, after the style image, in this exact order:")
             for (position, entry) in nonStyle {
-                lines.append("\(position + 1). \(entry.attachmentFilename) — \(entry.promptDescriptor)")
+                lines.append(entry.manifestBinding(position: position + 1) + entry.promptDescriptor)
             }
         }
         return lines
     }
 
-    /// The static style-only rule — identical for every style-backed generation.
+    /// Shared role and authorship policy; per-image lines contain only that image's evidence.
     var manifestPolicyText: String {
-        guard !styleEntries.isEmpty else { return "" }
-        return "Match the style image's rendering technique, palette behavior, surface texture, and lighting character exactly. Never copy its subject matter, its composition, or any internal panel borders it contains."
+        var policies: [String] = []
+        if entries.contains(where: { !$0.isStyle }) {
+            policies.append("Use each reference for its stated role. The latest explicit written changes take precedence; preserve unspecified identity traits. Source images clarify likeness; generated sheets establish continuity. Do not copy a reference's layout or style unless its role or the written prompt requests it.")
+        }
+        if !styleEntries.isEmpty {
+            policies.append("Match the style image's rendering technique, palette behavior, surface texture, and lighting character exactly. Never copy its subject matter, its composition, or any internal panel borders it contains.")
+        }
+        return policies.joined(separator: "\n")
     }
 
     var manifestText: String {

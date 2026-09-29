@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum ScenesV2Metrics {
@@ -112,6 +113,7 @@ struct ScenesV2WorkbenchView: View {
     /// Seam edits from the sequence row ride the same snapshot Undo as the
     /// Reel's own strip — one ⌘Z vocabulary for reel state everywhere.
     @StateObject private var reelUndo = FinalsReelUndoCoordinator()
+    @State private var isExportingScene = false
     @State private var shotVideoRequest: ShotVideoRequest?
     @State private var jovilabeRequest: JovilabeRequest?
     @State private var clipInspectorRequest: ShotClipInspectorRequest?
@@ -629,7 +631,9 @@ struct ScenesV2WorkbenchView: View {
                 // order, so the 0-based position IS the index to pass.
                 library.moveReadyScene(shotId: draggedShotId, toIndex: beforePosition)
             },
-            onUnmark: { requestUnmark(shotId: $0) }
+            onUnmark: { requestUnmark(shotId: $0) },
+            onExportScene: exportScene,
+            isExportingScene: isExportingScene
         )
         .frame(height: ScenesV2Metrics.railHeight)
     }
@@ -1209,6 +1213,33 @@ struct ScenesV2WorkbenchView: View {
         let error = scenesV2ScopedStatus(current: library.lastError, baseline: session.errorBaseline)
         if !error.isEmpty { return error }
         return scenesV2ScopedStatus(current: library.aestheticStatus, baseline: session.statusBaseline)
+    }
+
+    private func exportScene(_ shotId: String) {
+        guard !isExportingScene else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Export Scene"
+        panel.message = "Choose a folder for the composite image, available frames/video, and scene metadata. Export saves locally and does not publish."
+        panel.prompt = "Export Here"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        isExportingScene = true
+        Task { @MainActor in
+            defer { isExportingScene = false }
+            guard await panel.begin() == .OK, let directory = panel.url else { return }
+            let scoped = directory.startAccessingSecurityScopedResource()
+            defer { if scoped { directory.stopAccessingSecurityScopedResource() } }
+            localNotice = "Exporting scene…"
+            do {
+                let result = try await library.exportPortableScene(shotId: shotId, into: directory)
+                localNotice = result.warnings.isEmpty ? "Scene exported" : "Scene exported with \(result.warnings.count) warnings — see scene.json"
+                NSWorkspace.shared.activateFileViewerSelecting([result.directory])
+            } catch {
+                localNotice = "Scene export failed: \(error.localizedDescription)"
+            }
+        }
     }
 
     // MARK: Rail data

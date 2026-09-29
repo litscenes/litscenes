@@ -138,6 +138,12 @@
 
 2026-09-22T01:48:01Z Public setup guidance must describe the anonymous config request and default-off memberships consistently; retained subscription instructions are conditional on explicit server availability.
 
+2026-09-25T17:50:19Z Image prompt truncation destroys authorship independently of provider failures; preservation and real limits must ship without depending on the shortening workflow. Shortened direct renders remain automatic; managed spend confirmation discloses changed text before submission.
+
+2026-09-25T18:43:17Z Prompt-cache identity must use executable constraints rather than provenance URL text, because safe trace redaction can change URLs without changing the request contract; cancellation must retain the latest rewrite attempts even outside the main rendering capture.
+
 2026-09-28T20:44:00Z A paste-in installer must describe its source-build and Xcode requirements, preserve Development identity and existing workspace data, and never imply that an unsigned local build is a notarized Community release.
 
 2026-09-28T20:50:00Z The existing app builds successfully with Command Line Tools (Swift 6.1.2, macOS SDK 15.5), so installer prerequisites now check the actual compiler and SDK instead of requiring full Xcode selection. Existing swift build and all 1,345 tests pass in the canonical working tree.
+
+2026-09-28T21:23:07Z Portable scene exports reuse the website catalog envelope but retain order and skip state in a separate scene manifest; project ideas remain contextual discovery routes instead of implied frame interpretations.

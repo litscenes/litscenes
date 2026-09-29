@@ -58,10 +58,10 @@ struct CharacterCastingDeskModelTests {
 
         let overflow = ProjectCharacter(
             characterId: "c2", name: "K",
-            sheetPromptOverride: String(repeating: "x", count: ProjectCharacter.sheetPromptOverrideMaxLength + 50),
+            sheetPromptOverride: String(repeating: "x", count: 24_050),
             updatedAt: "2026-01-01T00:00:00Z"
         ).normalized()
-        #expect(overflow.sheetPromptOverride?.count == ProjectCharacter.sheetPromptOverrideMaxLength)
+        #expect(overflow.sheetPromptOverride?.count == 24_050)
     }
 
     @Test("Activating a sheet restores the hash that sheet rendered with")

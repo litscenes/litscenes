@@ -107,6 +107,9 @@ struct ActivityPopover: View {
             ForEach(workflows.activeJobs.prefix(12)) { job in
                 VStack(alignment: .leading, spacing: 3) {
                     Text(job.label).font(CanonType.interface(11, weight: .semibold))
+                    if let preparation = job.imagePrompts?.last, preparation.wasShortened {
+                        ImagePromptShorteningNotice(preparation: preparation)
+                    }
                     Text("\(job.projectName) · \(job.state.label)").font(CanonType.interface(10)).foregroundStyle(CanonColor.ink.opacity(0.6))
                 }
             }

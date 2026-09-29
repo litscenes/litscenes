@@ -104,12 +104,12 @@ private let bundledRegistry = RenderStackRegistry(includeUserOverlay: false)
     #expect(!wan.reframeCapable && !portrait.reframeCapable && !schnell.reframeCapable)
     #expect(!reve.reframeCapable && !mai.reframeCapable && !seedream.reframeCapable)
 
-    // Prompt limits: fal 2400/2400/3500, civitai 1800, openai none.
+    // Legacy stack preferences do not impose undocumented provider limits.
     #expect(openai.promptLimit == nil)
-    #expect(stability.promptLimit == 10_000)
-    #expect(wan.promptLimit == 1_800 && portrait.promptLimit == 1_000)
-    #expect(schnell.falPromptLimit == 2_400 && flux2.falPromptLimit == 2_400 && nano.falPromptLimit == 3_500)
-    #expect(reve.falPromptLimit == 2_400 && mai.falPromptLimit == 2_400 && seedream.falPromptLimit == 2_400)
+    #expect(stability.promptLimit == nil)
+    #expect(wan.promptLimit == nil && portrait.promptLimit == nil)
+    #expect(schnell.falPromptLimit == nil && flux2.falPromptLimit == nil && nano.falPromptLimit == 50_000)
+    #expect(reve.falPromptLimit == 4_000 && mai.falPromptLimit == 5_000 && seedream.falPromptLimit == nil)
 
     // Output formats: png only for nano.
     #expect(nano.usesPNGOutput)
@@ -477,7 +477,7 @@ private let bundledRegistry = RenderStackRegistry(includeUserOverlay: false)
     #expect(merged.count == 16)
     let tuned = try #require(merged.first { $0.id == RenderStackID.falFluxSchnell })
     #expect(tuned.label == "FLUX Schnell (tuned)")
-    #expect(tuned.falPromptLimit == 900)
+    #expect(tuned.promptLimit == 900 && tuned.falPromptLimit == nil)
     let custom = try #require(merged.first { $0.id == "my_custom_civitai" })
     #expect(custom.civitaiSeed == .fixed(7))
     #expect(custom.order == 1_000)          // no order → sorts after defaults
@@ -507,7 +507,7 @@ private func bundledYAMLText() throws -> String {
     #expect(juggernaut.isCivitai)
     #expect(!juggernaut.reframeCapable)
     #expect(!juggernaut.canAttachStyleImage)
-    #expect(juggernaut.promptLimit == 1_800)
+    #expect(juggernaut.promptLimit == nil)
     #expect(juggernaut.civitaiSeed == .random)
 
     let (payload, seed) = juggernaut.civitaiPayload(prompt: "a rain-slick alley", requestSeed: 7, negativePrompt: "")

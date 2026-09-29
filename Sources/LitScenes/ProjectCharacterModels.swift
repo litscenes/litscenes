@@ -49,7 +49,6 @@ struct ProjectCharacter: Codable, Hashable, Identifiable, Sendable {
     var updatedAt: String = DateFormats.now()
 
     /// Safety net for the persisted override, not a UX cap.
-    static let sheetPromptOverrideMaxLength = 12_000
 
     var id: String { characterId }
 
@@ -95,7 +94,6 @@ struct ProjectCharacter: Codable, Hashable, Identifiable, Sendable {
         )
         value.activeSheetPromptHash = value.activeSheetPromptHash.trimmed
         value.sheetPromptOverride = value.sheetPromptOverride?.trimmed.nilIfEmpty
-            .map { String($0.prefix(Self.sheetPromptOverrideMaxLength)) }
         value.sheetPromptOverrideBaseHash = value.sheetPromptOverride == nil
             ? ""
             : value.sheetPromptOverrideBaseHash.trimmed

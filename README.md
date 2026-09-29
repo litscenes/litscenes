@@ -145,3 +145,12 @@ LitScenes Desktop is licensed under `AGPL-3.0-only`; see `LICENSE` and `LICENSIN
 ---
 
 Created and maintained by [Kevin Riggen](https://litscenes.ai).
+
+
+## Export a scene
+
+In **Scenes**, open a scene card’s context menu and choose **Export Scene…**. Choose a destination; the app creates a new portable folder and reveals it in Finder. This is a local presentation export and does not upload or publish your work.
+
+The folder contains one composite image, available ordered frame JPEGs, an optional current-playback MP4 including edits/audio, and `scene.json` / `catalog.json` metadata. Footage placements include a still from their selected start. Missing media is listed as an omission; skipped entries stay marked, and an empty scene can still export. The composite shows up to 16 included frames, with all available frame images saved separately.
+
+The catalog uses the website’s existing collection-v2 envelope, with relative hashed media references and saved ideas marked as project context. It includes no prompts, credentials, inference traces or original local file paths. This is not an editable project backup; website import and reviewed publication are separate workflows. The feature is implemented in the working tree and is not yet published.

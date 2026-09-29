@@ -238,6 +238,8 @@ struct CharactersWorkspaceView: View {
                         }
                         .foregroundStyle(CanonColor.muted)
                     }
+                    ImagePromptHistoryView(projectId: library.currentProject?.projectId ?? "", artifactId: character.characterId)
+                        .foregroundStyle(CanonColor.muted)
                     if let member = library.goalCastMember(forCharacterId: character.characterId, name: character.name) {
                         DisclosureGroup("Story context") {
                             Text(member.activeIdentity.essence)

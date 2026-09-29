@@ -3,16 +3,16 @@ import Foundation
 import Testing
 @testable import LitScenes
 
-@Test func falOutpaintPromptIsBoundedOperatorContentOnly() {
+@Test func falOutpaintPromptPreservesFullOperatorContentUntilPreparation() {
     // FAL Outpaint appends the prompt to its own base outpaint instruction,
-    // so the wire carries bounded operator content and nothing of ours.
+    // so composition preserves the operator content for final preparation.
     let operatorPrompt = Array(
         repeating: "Continue a quiet salt marsh at sunrise with distant reeds and shallow reflective water.",
         count: 12
     ).joined(separator: " ")
     let prompt = falOutpaintProviderPrompt(operatorPrompt, maxCharacters: 500)
 
-    #expect(prompt.count <= 500)
+    #expect(prompt == operatorPrompt)
     #expect(prompt.hasPrefix("Continue a quiet salt marsh at sunrise"))
     #expect(!prompt.contains("Never"))
     #expect(!prompt.contains("Extend this exact scene seamlessly"))

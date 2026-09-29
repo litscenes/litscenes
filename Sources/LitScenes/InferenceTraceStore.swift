@@ -31,6 +31,7 @@ struct InferenceTraceRequestMetadata: Sendable {
     var providerRequestIDHeaderCandidates: [String] = []
     var captureRequestBody: Bool = true
     var captureResponseBody: Bool = true
+    var imagePromptPreparation: PreparedImagePrompt?
 }
 
 struct TracedHTTPResult: Sendable {
@@ -531,6 +532,8 @@ actor InferenceTraceStore {
 }
 
 enum TracedHTTPTransport {
+    @TaskLocal static var session: URLSession = .shared
+
     static func send(request: URLRequest, recordedRequest: URLRequest? = nil, metadata: InferenceTraceRequestMetadata) async throws -> TracedHTTPResult {
         if GoConnection.selectsManaged(request) {
             return try await GoTransport.send(request, metadata: WorkflowHTTP.scoped(metadata))
@@ -546,10 +549,12 @@ enum TracedHTTPTransport {
             do {
                 try await WorkflowCoordinator.shared.providerStarted(metadata, traceId: traceId, isSubmission: metadata.apiFamily != "pricing" && !["GET", "HEAD"].contains(request.httpMethod ?? "GET"))
                 let (data, response) = try await WorkflowHTTP.send(request: request, recordedRequest: recordedRequest, metadata: metadata, bytes: { $0 }) { attempt in
-                    try await URLSession.shared.data(for: attempt)
+                    try await ImagePromptPreparation.submitted(metadata)
+                    return try await session.data(for: attempt)
                 }
                 let latency = Int(Date().timeIntervalSince(started) * 1000)
                 _ = await InferenceTraceStore.shared.record(request: recordedRequest ?? request, metadata: metadata, response: response as? HTTPURLResponse, responseBody: data, latencyMs: latency, traceId: traceId)
+                await ImagePromptPreparation.providerRejected(metadata, data: data, status: (response as? HTTPURLResponse)?.statusCode ?? 0, traceId: traceId)
                 await WorkflowCoordinator.shared.providerResponded(metadata, data: data, response: response as? HTTPURLResponse)
                 return TracedHTTPResult(traceId: traceId, data: data, response: response as? HTTPURLResponse, latencyMs: latency)
             } catch {

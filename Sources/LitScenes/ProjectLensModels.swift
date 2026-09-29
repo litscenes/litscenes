@@ -2004,6 +2004,8 @@ struct LensPromptImageAttachment: Codable, Hashable, Identifiable, Sendable {
     var label: String = ""
     var detail: String = ""
     var imagePath: String = ""
+    var referencePurpose: ImageReferencePurpose?
+    var subjectName: String?
 
     func normalized() -> LensPromptImageAttachment {
         var value = self

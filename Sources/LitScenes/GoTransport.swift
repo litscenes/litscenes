@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 
 actor GoIntentStore {
     static let shared = GoIntentStore()
@@ -33,10 +34,15 @@ actor GoIntentStore {
 
 @MainActor
 enum GoApproval {
-    static func ask(title: String, message: String, action: String) async -> Bool {
+    static func ask(title: String, message: String, action: String, preparation: PreparedImagePrompt? = nil) async -> Bool {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
+        if let preparation, preparation.wasShortened {
+            let accessory = NSHostingView(rootView: ImagePromptShorteningNotice(preparation: preparation))
+            accessory.frame = NSRect(x: 0, y: 0, width: 400, height: 56)
+            alert.accessoryView = accessory
+        }
         alert.addButton(withTitle: action)
         alert.addButton(withTitle: "Cancel")
         guard let window = NSApp.keyWindow else { return alert.runModal() == .alertFirstButtonReturn }
@@ -52,11 +58,11 @@ enum GoApproval {
         throw GoServiceError(code: "sign_in", message: "Choose Go now or sign in in Account & usage, then continue this action.")
     }
 
-    static func approve(_ quote: GoDocument) async throws {
+    static func approve(_ quote: GoDocument, preparation: PreparedImagePrompt? = nil) async throws {
         let credits = quote.int("maximum_credits")
         guard credits > 0 else { return }
         let allowed = await ask(title: "Create with LitScenes Go?",
-            message: "\(quote.string("operation").replacingOccurrences(of: "_", with: " ").capitalized) · \(quote.string("model"))\nUp to \(credits) credits. Only completed provider usage is charged; unused credits return to your balance. Your reference media and outputs are recoverable for seven days.", action: "Create · up to \(credits) credits")
+            message: "\(quote.string("operation").replacingOccurrences(of: "_", with: " ").capitalized) · \(quote.string("model"))\nUp to \(credits) credits. Only completed provider usage is charged; unused credits return to your balance. Your reference media and outputs are recoverable for seven days.", action: "Create · up to \(credits) credits", preparation: preparation)
         guard allowed else { throw CancellationError() }
     }
 
@@ -168,7 +174,7 @@ enum GoTransport {
             let body = try GoDocument(["operation": operation, "payload": prepared.object, "context": context])
             let quote = try await GoAPI.call("quotes", method: "POST", body: body)
             if existing?.bool("approved") != true || existing?.string("fingerprint") != quote.string("fingerprint") || quote.int("maximum_credits") > (existing?.int("maximum_credits") ?? -1) {
-                try await GoApproval.approve(quote)
+                try await GoApproval.approve(quote, preparation: operation == "image" ? metadata.imagePromptPreparation : nil)
             }
             let intent = try GoDocument(["key": fingerprint, "body": body.object, "approved": true,
                 "maximum_credits": quote.int("maximum_credits"), "fingerprint": quote.string("fingerprint"),
@@ -177,6 +183,7 @@ enum GoTransport {
             try await GoIntentStore.shared.save(fingerprint, intent)
             do {
                 try await GoApproval.waitForCredits(quote.int("maximum_credits"))
+                try await ImagePromptPreparation.submitted(metadata)
                 job = try await submit(intent)
             } catch is CancellationError {
                 var canceled = intent.object

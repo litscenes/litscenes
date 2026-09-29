@@ -126,6 +126,14 @@
 
 2026-09-22T01:48:01Z byok-service-configuration: completed shared server configuration, personal-key setup and Notices announcements; local Development build packaged, 1,325 tests pass serially and source hygiene passes. No commit or publication.
 
+2026-09-25T17:50:19Z image-prompt-preservation: implement approved staged prompt preservation, verified endpoint/route limits, durable provenance, then bounded automatic shortening and existing-surface disclosure.
+
+2026-09-25T18:47:37Z image-prompt-preservation: completed preservation first and shortening second; final build, 1,345 tests, source hygiene and offline Traces verification passed. See docs/20260925T175019Z_image-prompt-preservation.log.md. Working tree only, no publication.
+
 2026-09-28T20:44:00Z desktop-install-entry: add an owner-requested paste-in source installer in scripts/install.sh and document its prerequisites, destination, and preservation behavior. No commit or publication authorized.
+
+2026-09-28T21:10:00Z portable-scene-export: owner approved Export Scene… in the existing scene-card menu, writing a portable local folder with one composite, ordered frame/video media, and website-compatible scene/idea metadata. No inference, publishing, project replacement, commit, or push.
+
+2026-09-28T21:23:07Z portable-scene-export: added the existing scene-card menu action and local writer for composite, ordered frames/current video, and website-compatible metadata. Verified actual still/footage/video exports, missing and empty media, website validator/adapter, Swift build, 1,345 existing tests and source hygiene. No commit, push or publication.
 
 2026-09-29T02:03:43Z installer-publication: Owner explicitly authorized committing and pushing only the prepared source installer and installation documentation to public main as the website release prerequisite. Preserve unrelated Desktop work. Bash syntax and ShellCheck pass; current public main is 894045226270c8b0aec7a895db75ca08549aa588.
