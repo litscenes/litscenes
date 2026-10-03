@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 private protocol FALTrackedVideoRequest {
     var projectId: String { get }
@@ -52,6 +53,8 @@ struct FALImageToVideoRequest: FALTrackedVideoRequest {
     /// See `VideoClipRequest.promptIsStructured`.
     var promptIsStructured: Bool = false
     var resolutionOverride: String? = nil
+    var characterReferences: [ShotCharacterReference] = []
+    var operatorPrompt: String? = nil
 }
 
 struct FALAudioToVideoRequest: FALTrackedVideoRequest {
@@ -730,7 +733,25 @@ struct FALVideoClient: @unchecked Sendable {
             break
         }
 
+        var referenceMedia: [[String: Any]] = []
+        if !request.characterReferences.isEmpty {
+            let recipe = ShotContinuationReferenceRecipe(characters: request.characterReferences, usesImages: true)
+            _ = try recipe.validated(model: request.modelSelection,
+                personal: ProviderBilling.source(for: .fal(modelId)) == .personal,
+                prompt: request.characterReferences.map { "@" + $0.name }.joined(separator: " "))
+            input["elements"] = try request.characterReferences.enumerated().map { index, character -> [String: Any] in
+                let images = try character.images.enumerated().map { imageIndex, image in
+                    try imageInput(at: URL(fileURLWithPath: image.path), role: "element_\(index + 1)_image_\(imageIndex)")
+                }
+                referenceMedia += images.map(\.traceSummary)
+                return ["frontal_image_url": images[0].dataURI, "reference_image_urls": images.dropFirst().map(\.dataURI)]
+            }
+        }
         var traceInput = input
+        if !request.characterReferences.isEmpty {
+            traceInput["elements"] = ShotContinuationReferenceRecipe(characters: request.characterReferences, usesImages: true).traceSummary
+        }
+        if let operatorPrompt = request.operatorPrompt { traceInput["operator_prompt"] = operatorPrompt }
         if startInput != nil {
             traceInput[startField] = "<data URI omitted; see media_refs_json>"
         }
@@ -742,7 +763,7 @@ struct FALVideoClient: @unchecked Sendable {
             // the count makes multi-shot renders greppable in traces.
             traceInput["multi_prompt_shots"] = multiShots.count
         }
-        let mediaRefs = [startInput?.traceSummary, endInput?.traceSummary].compactMap { $0 }
+        let mediaRefs = [startInput?.traceSummary, endInput?.traceSummary].compactMap { $0 } + referenceMedia
         let mediaRefsJSON = inferenceTraceJSONString(["inputs": mediaRefs])
         let modelURL = queueURL(modelId: modelId)
         let submitted = try await sendImageToVideoJSON(
@@ -1514,12 +1535,13 @@ struct FALVideoClient: @unchecked Sendable {
         guard !data.isEmpty else {
             throw ScreenGraphError.capture("The \(role.replacingOccurrences(of: "_", with: " ")) image was empty.")
         }
+        let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "image/png"
         return (
-            "data:image/png;base64,\(data.base64EncodedString())",
+            "data:\(mime);base64,\(data.base64EncodedString())",
             [
                 "role": role,
                 "file_name": url.lastPathComponent,
-                "mime_type": "image/png",
+                "mime_type": mime,
                 "byte_count": data.count,
                 "sha256": sha256Hex(data),
             ]

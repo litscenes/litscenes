@@ -48,6 +48,7 @@ func recordShotContinuationEvent(take: ShotContinuationTake, projectId: String, 
         "source_take_id": take.anchor.sourceTakeId,
         "source_render_version_id": take.anchor.sourceRenderVersionId
     ]
+    if let recipe = take.referenceRecipe { media["character_references"] = recipe.traceSummary }
     if let review = take.anchor.outputReview {
         media["reviewed_output_fingerprint"] = review.fingerprint
         media["reviewed_output_scope_id"] = review.scope.scopeId
@@ -70,7 +71,7 @@ func recordShotContinuationEvent(take: ShotContinuationTake, projectId: String, 
         workflowName: "shot_continuation", workflowStep: phase,
         artifactType: "shot_continuation_take", artifactId: take.takeId,
         model: take.renderStack.model.label,
-        requestTextJSON: inferenceTraceJSONString(["operator_prompt": take.prompt, "stack": take.stack]),
+        requestTextJSON: inferenceTraceJSONString(["operator_prompt": take.prompt, "provider_prompt": take.providerPrompt ?? take.prompt, "stack": take.stack]),
         responseTextJSON: inferenceTraceJSONString(["status": status, "message": message, "request_id": take.requestId]),
         mediaRefsJSON: inferenceTraceJSONString(media),
         captureRequestBody: false, captureResponseBody: false

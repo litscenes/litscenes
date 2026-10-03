@@ -289,6 +289,8 @@ enum ReelBakeState: Equatable, Sendable {
     case ready(url: URL, durationSeconds: Double)
     case failed(String)
     case skipped(String)
+    /// Stopped before it finished while the reel stayed open; retryable.
+    case canceled(String)
 
     var isReady: Bool {
         if case .ready = self { return true }

@@ -11,6 +11,8 @@ import SwiftUI
 struct CanonHScroller<Content: View>: View {
     /// Horizontal inset for the track only (align it with padded content).
     var trackInset: CGFloat = 0
+    var frameDragScrollDirection: Int = 0
+    var onViewportChange: (CGFloat, CGFloat) -> Void = { _, _ in }
     @ViewBuilder var content: () -> Content
 
     @State private var position = ScrollPosition()
@@ -47,6 +49,14 @@ struct CanonHScroller<Content: View>: View {
                 offsetX = reading.offset
                 contentWidth = reading.content
                 viewportWidth = reading.container
+                onViewportChange(reading.offset, reading.container)
+            }
+            .task(id: frameDragScrollDirection) {
+                while frameDragScrollDirection != 0 && !Task.isCancelled {
+                    let next = min(max(offsetX + CGFloat(frameDragScrollDirection) * 12, 0), max(contentWidth - viewportWidth, 0))
+                    position.scrollTo(x: next)
+                    try? await Task.sleep(for: .milliseconds(35))
+                }
             }
             if overflows {
                 GeometryReader { proxy in

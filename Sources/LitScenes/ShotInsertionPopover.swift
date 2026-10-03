@@ -1,21 +1,17 @@
 import SwiftUI
 
 /// The arranged-copy plate, opened from an insertion cell in the cut strip:
-/// rate presets, per-copy sound, +1 loop, re-copy (when inert), delete. A
+/// fine picture speed, per-copy sound, +1 loop, re-copy (when inert), delete. A
 /// consolidated run (⟳ ×N) edits GROUP-scope — every control below applies
 /// to all N siblings; editing one copy alone means deleting and re-pasting
 /// it, which keeps the group law simple and the cells honest.
 struct ShotInsertionPopover: View {
     let run: [ShotInsertionCell]
-    var onSetRate: (Set<String>, Double) -> Void
+    var onSetRate: (Set<String>, Double) -> String?
     var onSetMuted: (Set<String>, Bool) -> Void
     var onDelete: (Set<String>) -> Void
     var onRecopy: (String) -> Void
     var onAddLoopCopy: (ShotPictureInsertion) -> Void
-
-    private static let ratePresets: [Double] = [0.25, 0.5, 1, 1.5, 2]
-
-    @State private var typedRate = ""
 
     private var leader: ShotPictureInsertion? { run.first?.insertion }
     /// A SPEED SECTION carrier: this copy replaces razored base material —
@@ -167,32 +163,10 @@ struct ShotInsertionPopover: View {
     }
 
     private var rateRow: some View {
-        HStack(spacing: 4) {
-            PlateLabel(text: "SPEED", size: 7.5, weight: .semibold, color: PlateColor.inkFaint)
-            ForEach(Self.ratePresets, id: \.self) { preset in
-                Button(shotInsertionRateLabel(preset)) {
-                    onSetRate(ids, preset)
-                }
-                .buttonStyle(PlateButtonStyle(isProminent: abs(rate - preset) < 0.001))
-                .help(preset < 1
-                    ? "Slow this copy to \(shotInsertionRateLabel(preset)) — output grows accordingly"
-                    : preset > 1
-                        ? "Speed this copy to \(shotInsertionRateLabel(preset)) — output shrinks accordingly"
-                        : "Play this copy at its source speed")
-            }
-            TextField("×", text: $typedRate)
-                .textFieldStyle(.roundedBorder)
-                .font(PlateType.label(10, weight: .regular))
-                .frame(width: 44)
-                .onSubmit(commitTypedRate)
-                .help("Free-form rate, \(shotInsertionRateLabel(ShotPictureInsertion.minimumRate))–\(shotInsertionRateLabel(ShotPictureInsertion.maximumRate)) — extremes look like what they are")
-        }
-    }
-
-    private func commitTypedRate() {
-        guard let value = Double(typedRate.trimmed.replacingOccurrences(of: "×", with: "")),
-              value > 0 else { return }
-        onSetRate(ids, min(max(value, ShotPictureInsertion.minimumRate), ShotPictureInsertion.maximumRate))
-        typedRate = ""
+        ShotPictureSpeedControl(
+            initialRate: rate,
+            sourceSeconds: run.reduce(0) { $0 + $1.insertion.sourceSeconds },
+            onApply: { onSetRate(ids, $0) }
+        )
     }
 }

@@ -34,36 +34,14 @@ enum WorkflowHTTP {
         return result
     }
 
-    private static func refreshedCredential(in request: URLRequest, provider: String) -> URLRequest {
-        guard let provider = LitScenesProviderCredential(rawValue: provider) else { return request }
-        // This stage was submitted directly. A later billing preference change
-        // must never replace its credential with a managed routing marker.
-        guard !GoConnection.selectsManaged(request) else { return request }
-        let credential = LitScenesCredentialStore().personalCredential(for: provider)
-        guard !credential.isEmpty else { return request }
-        var updated = request
-        // Replace only the authentication scheme the original client selected.
-        // Media download URLs without authentication never acquire an API credential.
-        if let value = request.value(forHTTPHeaderField: "Authorization"), let scheme = value.split(separator: " ").first,
-           ["Bearer", "Key"].contains(String(scheme)) {
-            updated.setValue("\(scheme) \(credential)", forHTTPHeaderField: "Authorization")
-        }
-        for header in ["x-api-key", "xi-api-key"] where request.value(forHTTPHeaderField: header) != nil {
-            updated.setValue(credential, forHTTPHeaderField: header)
-        }
-        return updated
-    }
-
     static func send<Value: Sendable>(request: URLRequest, recordedRequest: URLRequest?, metadata: InferenceTraceRequestMetadata,
         bytes: @Sendable (Value) -> Data, operation: @Sendable (URLRequest) async throws -> (Value, URLResponse)) async throws -> (Value, URLResponse) {
         let submission = !["media_transfer", "pricing"].contains(metadata.apiFamily) && !["GET", "HEAD"].contains(request.httpMethod ?? "GET")
-        var currentRequest = request
         var retries = 0
         while true {
             try Task.checkCancellation()
             do {
-                let attempt = currentRequest
-                let result = try await WorkflowRequestGate.perform(metadata: metadata) { try await operation(attempt) }
+                let result = try await WorkflowRequestGate.perform(metadata: metadata) { try await operation(request) }
                 guard let http = result.1 as? HTTPURLResponse,
                       let failure = ProviderFailure.classify(provider: metadata.provider, status: http.statusCode, data: bytes(result.0), submission: submission) else { return result }
                 // Retain each rejected attempt even when a later attempt recovers.
@@ -84,10 +62,11 @@ enum WorkflowHTTP {
                     continue
                 }
                 if failure.accountBlocked || failure.transient {
-                    try await WorkflowCoordinator.shared.holdCurrent(provider: metadata.provider, reason: failure.message)
-                    currentRequest = refreshedCredential(in: request, provider: metadata.provider)
-                    retries = 0
-                    continue
+                    // Fail fast: a silent hold reads as a stuck render, and no
+                    // automatic resend can succeed until the account changes.
+                    // The failure carries the provider's own explanation to the
+                    // artifact that asked for the work.
+                    throw failure
                 }
                 return result
             } catch let failure as ProviderFailure {
@@ -106,9 +85,9 @@ enum WorkflowHTTP {
                     try await Task.sleep(for: .seconds(retries == 1 ? 2 : 5))
                     continue
                 }
-                try await WorkflowCoordinator.shared.holdCurrent(provider: metadata.provider,
-                    reason: "The vendor could not be reached after retries. The existing request has not been resubmitted.")
-                retries = 0
+                throw ProviderFailure(provider: metadata.provider, statusCode: 0, code: "unreachable",
+                    message: "The vendor could not be reached after retries. The existing request has not been resubmitted.",
+                    accountBlocked: false, transient: true, acceptanceUnknown: false)
             }
         }
     }

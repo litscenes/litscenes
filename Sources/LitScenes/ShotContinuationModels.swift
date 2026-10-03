@@ -193,6 +193,8 @@ struct ShotContinuationTake: Codable, Hashable, Sendable, Identifiable {
     var status: String = ""
     var anchor: ShotContinuationAnchor = ShotContinuationAnchor()
     var targetFrame: ShotContinuationTargetFrame?
+    var referenceRecipe: ShotContinuationReferenceRecipe? = nil
+    var providerPrompt: String? = nil
     var prompt: String = ""
     var mode: String = ""
     var stack: String = ""
@@ -212,7 +214,7 @@ struct ShotContinuationTake: Codable, Hashable, Sendable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case takeId, takeNumber, status, anchor, targetFrame, prompt, mode, stack, baseTakeId, resolutionOverride
         case segmentClip, finalFramePath, providerOutputPath, workflowStep, outputFingerprint, requestId, traceId
-        case errorMessage, createdAt, updatedAt
+        case errorMessage, createdAt, updatedAt, referenceRecipe, providerPrompt
     }
 
     init(
@@ -260,6 +262,8 @@ struct ShotContinuationTake: Codable, Hashable, Sendable, Identifiable {
             ?? ShotContinuationAnchor()
         targetFrame = try container.decodeIfPresent(ShotContinuationTargetFrame.self, forKey: .targetFrame)
         prompt = try container.decodeIfPresent(String.self, forKey: .prompt) ?? ""
+        referenceRecipe = try container.decodeIfPresent(ShotContinuationReferenceRecipe.self, forKey: .referenceRecipe)
+        providerPrompt = try container.decodeIfPresent(String.self, forKey: .providerPrompt)
         mode = try container.decodeIfPresent(String.self, forKey: .mode) ?? ""
         stack = try container.decodeIfPresent(String.self, forKey: .stack) ?? ""
         segmentClip = (try? container.decodeIfPresent(ShotRenderSegmentClip.self, forKey: .segmentClip)) ?? nil
@@ -492,6 +496,7 @@ struct ShotContinuationAvailability: Sendable {
     var requestedMode: ShotContinuationMode? = nil
     var baseTakeId: String? = nil
     var resolutionOverride: String? = nil
+    var referenceRecipe: ShotContinuationReferenceRecipe? = nil
     var preferredMode: ShotContinuationMode {
         if targetFrame != nil { return .arriveAtFrame }
         if requestedMode == .outFrame, outFrameAvailable { return .outFrame }
@@ -505,6 +510,7 @@ struct ShotContinuationRequest: Codable, Sendable {
     var stack: ShotRenderStack
     var prompt: String
     var preparedAnchor: ShotContinuationAnchor
+    var referenceRecipe: ShotContinuationReferenceRecipe? = nil
     var targetFrame: ShotContinuationTargetFrame? = nil
     var baseTakeId: String? = nil
     var resolutionOverride: String? = nil

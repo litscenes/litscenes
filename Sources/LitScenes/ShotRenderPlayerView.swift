@@ -149,9 +149,9 @@ struct ShotRenderPlayerModal: View {
     /// Export for YouTube: flattens this cut + writes its title/description
     /// markdown into ~/Downloads/LitScenes-Finals. Returns the status line.
     var onExportForYouTube: () async -> String = { "" }
-    /// Collect Frame: (source video path, file-local seconds, output seconds)
-    /// → success. The engine extracts + archives into Media.
-    var onCollectFrame: (String, Double, Double) async -> Bool = { _, _, _ in false }
+    /// Collect Frame hands displayed pixels and their timestamp to the engine
+    /// for archival in Media, without re-extracting a source file.
+    var onCollectFrame: (ShotDisplayedFrame) async -> Bool = { _ in false }
     /// The project this shot lives in — the picture clipboard's cross-project
     /// paste rung reads it.
     var projectId: String = ""
@@ -159,7 +159,7 @@ struct ShotRenderPlayerModal: View {
     // the same edit-returning shape as the cut ops above.
     var onPastePictureSegments: ([ShotPictureInsertion], String?) -> ShotPictureStateEdit? = { _, _ in nil }
     var onRemovePictureInsertions: (Set<String>) -> ShotPictureStateEdit? = { _ in nil }
-    var onSetPictureInsertionRate: (Set<String>, Double) -> ShotPictureStateEdit? = { _, _ in nil }
+    var onSetPictureInsertionRate: (Set<String>, Double) -> ShotSectionRateResult = { _, _ in ShotSectionRateResult() }
     var onSetPictureInsertionMuted: (Set<String>, Bool) -> ShotPictureStateEdit? = { _, _ in nil }
     var onRecopyPictureInsertion: (String) -> ShotPictureStateEdit? = { _ in nil }
     /// STRUCTURAL paste of copied segment cards: (cards, afterEntryId) —
@@ -182,6 +182,7 @@ struct ShotRenderPlayerModal: View {
     @State private var player: AVPlayer?
     @State private var loopObserver: NSObjectProtocol?
     @State private var playerLoadToken = 0
+    @State private var frameCapture = ShotDisplayedFrameCapture()
     @State private var isCollectingFrame = false
     @State private var collectStatus = ""
     @State private var collectFailed = false
@@ -378,11 +379,11 @@ struct ShotRenderPlayerModal: View {
         onPrepareFullShot: @escaping (String) async -> Result<ShotSegmentPreview, Error> = { _ in .failure(ScreenGraphError.capture("Full-shot preparation is unavailable")) },
         onSendToFootage: @escaping () async -> Bool = { false },
         onExportForYouTube: @escaping () async -> String = { "" },
-        onCollectFrame: @escaping (String, Double, Double) async -> Bool = { _, _, _ in false },
+        onCollectFrame: @escaping (ShotDisplayedFrame) async -> Bool = { _ in false },
         projectId: String = "",
         onPastePictureSegments: @escaping ([ShotPictureInsertion], String?) -> ShotPictureStateEdit? = { _, _ in nil },
         onRemovePictureInsertions: @escaping (Set<String>) -> ShotPictureStateEdit? = { _ in nil },
-        onSetPictureInsertionRate: @escaping (Set<String>, Double) -> ShotPictureStateEdit? = { _, _ in nil },
+        onSetPictureInsertionRate: @escaping (Set<String>, Double) -> ShotSectionRateResult = { _, _ in ShotSectionRateResult() },
         onSetPictureInsertionMuted: @escaping (Set<String>, Bool) -> ShotPictureStateEdit? = { _, _ in nil },
         onRecopyPictureInsertion: @escaping (String) -> ShotPictureStateEdit? = { _ in nil },
         onPasteSegmentCards: @escaping ([ShotPictureSegmentSpanRef], String?) -> ShotPictureStateEdit? = { _, _ in nil },
@@ -626,19 +627,24 @@ struct ShotRenderPlayerModal: View {
                     playerSurface
                         .frame(minWidth: 880, minHeight: 380, maxHeight: .infinity)
                         .overlay { microphoneRecordingOverlay }
-                    viewerMediaActions
-                    if !shot.entries.isEmpty, !isComparing { sourceActions.padding(.horizontal, 16).padding(.vertical, 5) }
+                    // The picture strip is the viewer's scrubber: it sits
+                    // directly under the player (a Look's control bar takes
+                    // the same slot); the Full Shot and SOURCES actions follow.
                     if activeLook != nil {
                         Rectangle().fill(PlateColor.hairline).frame(height: 1)
                         lookControlBar
                             .padding(.horizontal, 16)
                             .padding(.vertical, 9)
+                        Rectangle().fill(PlateColor.hairline).frame(height: 1)
                     } else if !assembly.bands.isEmpty, !isPreviewingClip {
                         Rectangle().fill(PlateColor.hairline).frame(height: 1)
                         cutTimelineStrip
                             .padding(.horizontal, 16)
                             .padding(.vertical, 9)
+                        Rectangle().fill(PlateColor.hairline).frame(height: 1)
                     }
+                    viewerMediaActions
+                    if !shot.entries.isEmpty, !isComparing { sourceActions.padding(.horizontal, 16).padding(.vertical, 5) }
                     if !isPreviewingClip, videoExists {
                         Rectangle().fill(PlateColor.hairline).frame(height: 1)
                         audioLaneStack
@@ -901,6 +907,7 @@ struct ShotRenderPlayerModal: View {
             microphoneRecorder.shutdown()
             removeTimeObserver()
             player?.pause()
+            frameCapture.detach()
             player?.replaceCurrentItem(with: nil)
             if let loopObserver {
                 NotificationCenter.default.removeObserver(loopObserver)
@@ -1413,36 +1420,48 @@ struct ShotRenderPlayerModal: View {
 
     private var cutTimelineStrip: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if !editingOutputScopeId.isEmpty || !shot.outputScopes.isEmpty {
-                HStack(spacing: 12) {
-                    if !editingOutputScopeId.isEmpty {
-                        Button("← Whole Shot") { pauseForEditorAction(); onSelectOutputScope("") }.buttonStyle(.plain)
-                        Text("EDITING EARLIER CUT").font(CanonType.archive(8, weight: .bold))
-                    } else {
-                        Text("WHOLE SHOT").font(CanonType.archive(8, weight: .bold))
-                    }
-                    ForEach(Array(shot.outputScopes.enumerated()), id: \.element.scopeId) { index, scope in
-                        Button {
-                            pauseForEditorAction(); onSelectOutputScope(scope.scopeId)
-                        } label: {
-                            Label("Earlier cut\(shot.outputScopes.count > 1 ? " \(index + 1)" : "") · Edit…", systemImage: "square.stack.3d.down.right")
-                        }.buttonStyle(.plain)
-                            .help("Edit this cut’s trims, copies, sound, Look, Reverse and loops. Its appended ending stays outside these edits.")
-                    }
-                    Spacer()
-                }.font(CanonType.interface(10)).padding(.horizontal, 12)
-                if let status = outputScopeStatus {
-                    HStack(spacing: 10) {
-                        if case .preparing = status { ProgressView().controlSize(.small) }
-                        Text(status.message)
-                        if case .failed = status { Button("Retry") { onRetryOutputScope() }.buttonStyle(.plain) }
-                    }.font(CanonType.interface(10)).padding(.horizontal, 12)
+            cutStrip
+            cutScopeRows
+        }
+    }
+
+    /// WHOLE SHOT · EDITING EARLIER CUT · the speed-fallback notice: the
+    /// cut's context lines, read after the strip they describe.
+    @ViewBuilder
+    private var cutScopeRows: some View {
+        if !editingOutputScopeId.isEmpty || !shot.outputScopes.isEmpty {
+            HStack(spacing: 12) {
+                if !editingOutputScopeId.isEmpty {
+                    Button("← Whole Shot") { pauseForEditorAction(); onSelectOutputScope("") }.buttonStyle(.plain)
+                    Text("EDITING EARLIER CUT").font(CanonType.archive(8, weight: .bold))
+                } else {
+                    Text("WHOLE SHOT").font(CanonType.archive(8, weight: .bold))
                 }
+                ForEach(Array(shot.outputScopes.enumerated()), id: \.element.scopeId) { index, scope in
+                    Button {
+                        pauseForEditorAction(); onSelectOutputScope(scope.scopeId)
+                    } label: {
+                        Label("Earlier cut\(shot.outputScopes.count > 1 ? " \(index + 1)" : "") · Edit…", systemImage: "square.stack.3d.down.right")
+                    }.buttonStyle(.plain)
+                        .help("Edit this cut’s trims, copies, sound, Look, Reverse and loops. Its appended ending stays outside these edits.")
+                }
+                Spacer()
+            }.font(CanonType.interface(10)).padding(.horizontal, 12)
+            if let status = outputScopeStatus {
+                HStack(spacing: 10) {
+                    if case .preparing = status { ProgressView().controlSize(.small) }
+                    Text(status.message)
+                    if case .failed = status { Button("Retry") { onRetryOutputScope() }.buttonStyle(.plain) }
+                }.font(CanonType.interface(10)).padding(.horizontal, 12)
             }
+        }
         if !assembly.speedFallbackInsertionIds.isEmpty {
             Text("Speed unavailable · Available source picture plays at 1×. Open the affected speed cell to repair it.")
                 .font(CanonType.interface(11)).foregroundStyle(CanonColor.rust).padding(.horizontal, 12)
         }
+    }
+
+    private var cutStrip: some View {
         ShotCutTimelineStrip(
             shot: shot,
             assembly: assembly,
@@ -1477,10 +1496,9 @@ struct ShotRenderPlayerModal: View {
             onPasteAtPlayhead: pastePictureAtPlayhead,
             onDuplicateSelection: duplicateStripSelection,
             onInsertionSetRate: { ids, rate in
-                registerPictureEdit(
-                    onSetPictureInsertionRate(ids, rate),
-                    "Copy Speed \(shotInsertionRateLabel(rate))"
-                )
+                let result = onSetPictureInsertionRate(ids, rate)
+                registerPictureEdit(result.edit, "Copy Speed \(shotInsertionRateLabel(rate))")
+                return result.edit == nil ? result.message : nil
             },
             onInsertionSetMuted: { ids, muted in
                 registerPictureEdit(
@@ -1557,7 +1575,6 @@ struct ShotRenderPlayerModal: View {
             reverseBakeProgress: reverseBakeProgress,
             onSetReversed: { reversed in commitCutReversed(reversed) }
         )
-        }
     }
 
     // MARK: Picture undo (THE PICTURE SNAPSHOT LAW's registration half)
@@ -2128,16 +2145,17 @@ struct ShotRenderPlayerModal: View {
     /// SECTION SPEED — the selection's material razors out and a born-muted
     /// copy plays in its place at `rate`, one undoable edit. The selection
     /// clears on success: the material it named just left the kept set.
-    private func applySectionRate(_ rate: Double) {
+    private func applySectionRate(_ rate: Double) -> String? {
         guard let span = stripSelectedSpan else {
             transportStatus = "Select a span to change its speed"
-            return
+            return transportStatus
         }
         player?.pause()
         let result = onSetSectionRate(span.lowSeconds, span.highSeconds, rate)
         registerPictureEdit(result.edit, "Section Speed \(shotInsertionRateLabel(rate))")
         if result.edit != nil { stripSelectedSpan = nil }
         transportStatus = result.message
+        return result.edit == nil ? result.message : nil
     }
 
     /// ⌫ — removes the selected arranged-copy run. Returns whether anything
@@ -2305,8 +2323,7 @@ struct ShotRenderPlayerModal: View {
             // never the full shot behind it.
             guard !isComparing else { return }
             player?.pause()
-            player?.seek(to: CMTime(seconds: max(seconds, 0), preferredTimescale: 600),
-                         toleranceBefore: .zero, toleranceAfter: .zero)
+            if let player { frameCapture.seek(player, to: CMTime(seconds: max(seconds, 0), preferredTimescale: 600)) }
             return
         }
         pausePlaybackResolvingPlayhead()
@@ -2367,11 +2384,9 @@ struct ShotRenderPlayerModal: View {
             viewingSelection = .current
             return
         }
-        player?.seek(
-            to: CMTime(seconds: max(seconds, 0), preferredTimescale: 600),
-            toleranceBefore: .zero,
-            toleranceAfter: .zero
-        )
+        if let player {
+            frameCapture.seek(player, to: CMTime(seconds: max(seconds, 0), preferredTimescale: 600))
+        }
     }
 
     private func refreshMicrophoneDevices() {
@@ -2425,11 +2440,7 @@ struct ShotRenderPlayerModal: View {
         // 10Hz tick (the playhead truth law).
         microphoneAnchorSeconds = min(max(currentPlayheadSeconds(), 0), timelineDurationSeconds)
         player?.pause()
-        player?.seek(
-            to: CMTime(seconds: microphoneAnchorSeconds, preferredTimescale: 600),
-            toleranceBefore: .zero,
-            toleranceAfter: .zero
-        )
+        if let player { frameCapture.seek(player, to: CMTime(seconds: microphoneAnchorSeconds, preferredTimescale: 600)) }
         microphoneStatus = "Requesting microphone access"
 
         let task = Task { @MainActor in
@@ -3059,6 +3070,7 @@ struct ShotRenderPlayerModal: View {
         }
         player?.pause()
         removeTimeObserver()
+        frameCapture.detach()
         player?.replaceCurrentItem(with: nil)
         player = nil
         if let loopObserver {
@@ -3090,6 +3102,11 @@ struct ShotRenderPlayerModal: View {
                 }
                 let item = try await makePlayerItem()
                 guard token == playerLoadToken else { return }
+                let capture = ShotDisplayedFrameCapture()
+                try await capture.attach(to: item)
+                guard token == playerLoadToken else { capture.detach(); return }
+                frameCapture.detach()
+                frameCapture = capture
                 let newPlayer = AVPlayer(playerItem: item)
                 loopObserver = NotificationCenter.default.addObserver(
                     forName: .AVPlayerItemDidPlayToEndTime,
@@ -3102,7 +3119,7 @@ struct ShotRenderPlayerModal: View {
                         } else if ShotPlayerTransportPreference.loopEnabled {
                             // Read the LIVE preference — this closure outlives
                             // any number of footer toggles.
-                            newPlayer.seek(to: .zero)
+                            frameCapture.seek(newPlayer, to: .zero)
                             newPlayer.play()
                         } else {
                             // Loop off: rest at the true last frame, resolved
@@ -3127,6 +3144,7 @@ struct ShotRenderPlayerModal: View {
                     self.pendingSeekSeconds = nil
                     await newPlayer.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
                 }
+                guard token == playerLoadToken, player === newPlayer else { return }
                 playbackError = ""
                 isPreparingPlayer = false
                 didLoadPlayer = true
@@ -3251,54 +3269,36 @@ struct ShotRenderPlayerModal: View {
         return item
     }
 
-    /// Collect Frame: map the playhead to the SOURCE file actually on screen
-    /// (segment clip, bridge, Look, previewed clip, or the stitched video)
-    /// and hand it to the engine. Pause not required.
+    /// Collect the active item's composed pixels and leave playback paused.
     private func collectCurrentFrame() {
-        let time = player?.currentTime()
-        let t = max((time?.isValid == true ? time?.seconds : nil) ?? playheadSeconds, 0)
-        let capture: (path: String, fileSeconds: Double)?
-        if let previewClip {
-            capture = (previewClip.clipPath, t)
-        } else if let look = activeLook, let path = look.videoPath.trimmed.nilIfEmpty {
-            // Retimed Looks are captured at output time — capture-grade. A
-            // looped Look tiles one file, so fold the playhead back into the
-            // first pass; the frame on screen is the same either way.
-            let passSeconds = max(ShotAudioComposition.effectiveLookDurationSeconds(look), 0)
-            let folded = outputLoopCount > 1 && passSeconds > 0
-                ? t.truncatingRemainder(dividingBy: passSeconds)
-                : t
-            capture = (path, folded)
-        } else if usesCutComposition, let mapped = assembly.sourceCapture(forOutputSeconds: t) {
-            capture = (mapped.url.path, mapped.fileSeconds)
-        } else if let path = currentVideoPath {
-            capture = (path, t)
-        } else {
-            capture = nil
-        }
-        guard let capture else {
-            collectStatus = "Nothing to collect yet"
+        guard !isCollectingFrame else { return }
+        player?.pause()
+        guard !isPreparingPlayer, !isScrubbing, let player else {
+            collectStatus = "Frame is still updating — Retry Collect Frame"
             collectFailed = true
             return
         }
+        let token = playerLoadToken
+        let captureSession = frameCapture
+        let path = previewClip?.clipPath ?? activeLook?.videoPath ?? currentVideoPath ?? ""
         isCollectingFrame = true
         collectStatus = ""
         collectFailed = false
         Task { @MainActor in
-            let collected = await onCollectFrame(capture.path, capture.fileSeconds, t)
-            isCollectingFrame = false
-            collectFailed = !collected
-            let message = collected
-                ? "Frame collected to Media ▸ Creations"
-                : "Could not collect the frame"
-            collectStatus = message
-            // A transient confirmation, not a permanent caption — but never clear
-            // a message a later collect has already replaced.
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            if collectStatus == message {
-                collectStatus = ""
-                collectFailed = false
+            guard let capture = await captureSession.capture(player: player, sourcePath: path),
+                  token == playerLoadToken else {
+                isCollectingFrame = false
+                collectStatus = "Frame is still updating — Retry Collect Frame"
+                collectFailed = true
+                return
             }
+            playheadSeconds = capture.outputSeconds
+            frameCapture.seek(player, to: CMTime(seconds: capture.outputSeconds, preferredTimescale: 1_000_000_000))
+            let collected = await onCollectFrame(capture)
+            isCollectingFrame = false
+            guard token == playerLoadToken else { return }
+            collectFailed = !collected
+            collectStatus = collected ? "Frame collected to Media ▸ Creations" : "Could not collect the frame — Retry Collect Frame"
         }
     }
 }

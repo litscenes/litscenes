@@ -105,7 +105,7 @@ enum RosterMentionResolver {
         return nil
     }
 
-    static func resolve(prompt: String, entries: [Entry]) -> Resolution {
+    static func resolve(prompt: String, entries: [Entry], replacementNames: [String: String] = [:]) -> Resolution {
         let ordered = matchOrder(entries)
         var cleaned = ""
         var mentions: [Entry] = []
@@ -113,7 +113,7 @@ enum RosterMentionResolver {
         while index < prompt.endIndex {
             let character = prompt[index]
             if character == "@", let match = match(in: prompt, at: index, candidates: ordered) {
-                cleaned.append(match.entry.name)
+                cleaned.append(replacementNames[match.entry.id] ?? match.entry.name)
                 if !mentions.contains(where: { $0.id == match.entry.id }) {
                     mentions.append(match.entry)
                 }

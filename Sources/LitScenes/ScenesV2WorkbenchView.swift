@@ -1131,6 +1131,18 @@ struct ScenesV2WorkbenchView: View {
         // The guided stage owns the page's brass fill while it shows; once a
         // Scene exists the first suggestion card carries it.
         let suggestions = suggestionData(primaryIsFilled: spotlightState(sceneCount: visible.count) == .normalStage)
+        let usableFrames = Set(poolInputs.compactMap { input -> String? in
+            if input.isClip {
+                guard let item = mediaLookup[input.clipMediaId], item.kind == .image,
+                      FileManager.default.fileExists(atPath: item.path) else { return nil }
+                return URL(fileURLWithPath: item.path).standardizedFileURL.path
+            }
+            guard let frame = frameLookup[input.frameImageId], frame.status == "ready",
+                  !frame.imagePath.trimmed.isEmpty,
+                  FileManager.default.fileExists(atPath: frame.imagePath) else { return nil }
+            return URL(fileURLWithPath: frame.imagePath).standardizedFileURL.path
+        }).count
+        let suggestionsExpanded = session.suggestionsExpanded(usableFrameCount: usableFrames)
         return ScenesV2PoolGridSections(
             filter: session.poolFilter,
             searchQuery: session.poolSearchQuery,
@@ -1157,6 +1169,8 @@ struct ScenesV2WorkbenchView: View {
             },
             onStartNewScene: startNewScene(with:),
             showsSuggestions: primaryLens != nil,
+            suggestionsExpanded: suggestionsExpanded,
+            onToggleSuggestions: { session.setSuggestionsExpanded(!suggestionsExpanded) },
             suggestions: suggestions.cards,
             suggestionsByCharacterId: suggestions.byCharacterId,
             suggestionRefusals: session.suggestionRefusals,

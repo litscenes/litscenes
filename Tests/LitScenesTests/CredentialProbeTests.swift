@@ -17,9 +17,10 @@ func authRejectionsReadAsInvalidKey() {
 }
 
 @Test
-func throttleProvesAuthPassed() {
-    // 429 means the key was accepted and then rate-limited — never a bad key.
-    #expect(CredentialProbe.outcome(forHTTPStatus: 429) == .valid)
+func limitReadsAsAuthPassedButLimited() {
+    // 429 means the key was accepted and the work refused — a throttle or an
+    // exhausted balance. Never a bad key, and never a plain "valid" either.
+    #expect(CredentialProbe.outcome(forHTTPStatus: 429) == .validButLimited(httpStatus: 429))
 }
 
 @Test
@@ -30,7 +31,7 @@ func everythingElseIsUnreachableNeverInvalid() {
         switch CredentialProbe.outcome(forHTTPStatus: status) {
         case .unreachable:
             break
-        case .valid, .invalidKey:
+        case .valid, .validButLimited, .invalidKey:
             Issue.record("HTTP \(status) must map to .unreachable")
         }
     }

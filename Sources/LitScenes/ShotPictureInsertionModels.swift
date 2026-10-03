@@ -33,7 +33,7 @@ struct ShotPictureInsertion: Codable, Hashable, Sendable, Identifiable {
     /// Soft anchor: segment key + clip-local seconds, no clip path (see above).
     var anchorSegmentKey: String = ""
     var anchorSeconds: Double = 0
-    /// 0.25…4; output duration = source span ÷ rate.
+    /// Picture rate; output duration = source span ÷ rate.
     var playbackRate: Double = 1
     /// THE CARRIAGE VETO: a muted copy rides `includeAudio = false` on its
     /// playback item — the gain law itself is untouched.
@@ -61,13 +61,13 @@ struct ShotPictureInsertion: Codable, Hashable, Sendable, Identifiable {
     /// every rate change, not the clamp — extremes are legal and merely look
     /// like what they are (dropped/repeated frames).
     static let minimumRate: Double = 0.1
-    static let maximumRate: Double = 8
+    static let maximumRate: Double = 16
 
     var id: String { insertionId }
     var isFootageSource: Bool { !sourceMediaId.trimmed.isEmpty }
     var sourceSeconds: Double { max(sourceEndSeconds - sourceStartSeconds, 0) }
     var outputSeconds: Double {
-        let rate = min(max(playbackRate, Self.minimumRate), Self.maximumRate)
+        let rate = min(max(playbackRate.isFinite ? playbackRate : 1, Self.minimumRate), Self.maximumRate)
         return rate > 0 ? sourceSeconds / rate : sourceSeconds
     }
 
@@ -154,7 +154,7 @@ struct ShotPictureInsertion: Codable, Hashable, Sendable, Identifiable {
             swap(&value.sourceStartSeconds, &value.sourceEndSeconds)
         }
         value.anchorSeconds = max(value.anchorSeconds, 0)
-        value.playbackRate = min(max(value.playbackRate, Self.minimumRate), Self.maximumRate)
+        value.playbackRate = min(max(value.playbackRate.isFinite ? value.playbackRate : 1, Self.minimumRate), Self.maximumRate)
         value.replacesRazorCutIds = value.replacesRazorCutIds
             .map(\.trimmed)
             .filter { !$0.isEmpty }

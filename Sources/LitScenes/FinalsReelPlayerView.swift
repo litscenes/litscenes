@@ -24,6 +24,7 @@ struct FinalsReelPlayerView: View {
     @State private var playerLoadToken = 0
     @State private var playheadSeconds: Double = 0
     @State private var isPreparing = false
+    @State private var isResolvingBakes = true
     @State private var playbackError = ""
     @State private var selectedRegionId: String?
     @State private var draftGain: Double?
@@ -83,11 +84,15 @@ struct FinalsReelPlayerView: View {
 
     private var musicRegions: [ShotAudioRegion] { library.outputSequence.reelAudio }
 
-    private var hasBakesInFlight: Bool {
-        library.reelBakeStates.values.contains { state in
-            if case .queued = state { return true }
-            if case .baking = state { return true }
-            return false
+    /// Start one reel after every selected cut has finished local preparation.
+    /// Starting with a ready prefix can reach its end before the remaining
+    /// bakes finish, leaving the eventual full reel paused at that boundary.
+    private var isWaitingForBakes: Bool {
+        isResolvingBakes || finals.contains { entry in
+            switch library.reelBakeStates[entry.cutId] {
+            case .queued?, .baking?: true
+            default: false
+            }
         }
     }
 
@@ -185,8 +190,7 @@ struct FinalsReelPlayerView: View {
                     cutNames: cutNames,
                     onRetry: {
                         Task {
-                            await library.ensureReelBakes()
-                            rebuildPlayerIfNeeded(resume: true)
+                            await resolveBakes()
                         }
                     }
                 )
@@ -242,13 +246,18 @@ struct FinalsReelPlayerView: View {
             reelUndo.applyState = { snapshot in library.restoreReelState(snapshot) }
         }
         .task {
-            await library.ensureReelBakes()
-            rebuildPlayerIfNeeded(resume: false)
+            await resolveBakes()
         }
         .onChange(of: rebuildKey) { _, _ in
             rebuildPlayerIfNeeded(resume: true)
         }
+        .onChange(of: isWaitingForBakes) { _, waiting in
+            // The last bake may fail or be skipped without changing the
+            // ready-clip key. The remaining playable cuts must still start.
+            if !waiting { rebuildPlayerIfNeeded(resume: true) }
+        }
         .onDisappear {
+            playerLoadToken += 1
             library.cancelReelBakes()
             undoManager?.removeAllActions(withTarget: reelUndo)
             reelUndo.applyState = nil
@@ -259,10 +268,12 @@ struct FinalsReelPlayerView: View {
     private var header: some View {
         HStack(spacing: 12) {
             PlateLabel(text: "FINALS REEL", size: 11, weight: .bold, color: PlateColor.ink)
+            // A reel playing fewer cuts than were picked says so in rust; the
+            // board below names each missing cut.
             PlateLabel(
                 text: "\(readyClips.count) of \(finals.count) cuts · \(ShotAudioTiming.timecode(reelDurationSeconds))",
                 size: 9,
-                color: PlateColor.inkFaint
+                color: !isWaitingForBakes && readyClips.count < finals.count ? CanonColor.rust : PlateColor.inkFaint
             )
             Spacer(minLength: 0)
             Button {
@@ -286,16 +297,23 @@ struct FinalsReelPlayerView: View {
             if let player {
                 VideoPlayer(player: player)
             }
-            if isPreparing {
-                ProgressView().controlSize(.small)
+            if isPreparing || isWaitingForBakes {
+                VStack(spacing: 12) {
+                    ProgressView().controlSize(.small)
+                    if isWaitingForBakes {
+                        PlateLabel(
+                            text: "Preparing the full sequence · \(readyClips.count) of \(finals.count) cuts ready — playback starts when the rest finish",
+                            size: 9,
+                            color: Color.white.opacity(0.7)
+                        )
+                    }
+                }
             }
-            if readyClips.isEmpty && !isPreparing {
+            if readyClips.isEmpty && !isPreparing && !isWaitingForBakes {
                 PlateLabel(
                     text: finals.isEmpty
                         ? "Drag cuts onto the FINALS shelf, then play the reel"
-                        : (hasBakesInFlight
-                            ? "Baking the picked cuts — the reel starts as soon as one is ready"
-                            : "Nothing playable yet — render the picked cuts, or check the board below"),
+                        : "Nothing playable yet — render the picked cuts, or check the board below",
                     size: 9,
                     color: Color.white.opacity(0.7)
                 )
@@ -495,7 +513,7 @@ struct FinalsReelPlayerView: View {
                 exportForYouTube()
             }
             .buttonStyle(PlateButtonStyle())
-            .disabled(isExporting || readyClips.isEmpty)
+            .disabled(isExporting || isPreparing || isWaitingForBakes || readyClips.isEmpty)
             .help(readyClips.count < finals.count
                 ? "Writes the reel exactly as the preview plays (\(finals.count - readyClips.count) picked cut\(finals.count - readyClips.count == 1 ? " is" : "s are") not in it) plus a YouTube title + description into ~/Downloads/LitScenes-Finals"
                 : "One click: the reel .mp4 plus a YouTube title + description .md land in ~/Downloads/LitScenes-Finals")
@@ -505,7 +523,7 @@ struct FinalsReelPlayerView: View {
                 exportReel()
             }
             .buttonStyle(PlateButtonStyle(isProminent: true))
-            .disabled(isExporting || readyClips.isEmpty)
+            .disabled(isExporting || isPreparing || isWaitingForBakes || readyClips.isEmpty)
             .help(readyClips.count < finals.count
                 ? "Exports exactly what the preview plays — \(finals.count - readyClips.count) picked cut\(finals.count - readyClips.count == 1 ? " is" : "s are") not in it (see the board)"
                 : "Export exactly what the preview plays — one 16:9 mp4, no re-encode of the cuts")
@@ -809,11 +827,23 @@ struct FinalsReelPlayerView: View {
 
     // MARK: Player lifecycle
 
+    private func resolveBakes() async {
+        isResolvingBakes = true
+        playerLoadToken += 1
+        let token = playerLoadToken
+        isPreparing = false
+        await library.ensureReelBakes()
+        guard !Task.isCancelled, token == playerLoadToken else { return }
+        isResolvingBakes = false
+        rebuildPlayerIfNeeded(resume: true)
+    }
+
     /// One build per composition identity: the warm-cache open (key already
     /// final) builds here from `.task`, and every later change builds from
     /// `onChange` — never both.
     private func rebuildPlayerIfNeeded(resume: Bool) {
-        guard rebuildKey != lastBuiltKey || player == nil else { return }
+        guard !isWaitingForBakes else { return }
+        guard rebuildKey != lastBuiltKey || (player == nil && !isPreparing) else { return }
         lastBuiltKey = rebuildKey
         preparePlayer(resume: resume)
     }
@@ -844,7 +874,7 @@ struct FinalsReelPlayerView: View {
                     seconds: result.durationSeconds,
                     preferredTimescale: 600
                 )
-                let resumeSeconds = resume ? min(playheadSeconds, result.durationSeconds) : 0
+                let resumeSeconds = resume && player != nil ? min(playheadSeconds, result.durationSeconds) : 0
                 // A rebuild while paused stays paused — an edit must never
                 // force playback. The first build autoplays (house behavior).
                 let wasPlaying = player == nil || (player?.rate ?? 0) != 0
@@ -856,6 +886,7 @@ struct FinalsReelPlayerView: View {
                     queue: .main
                 ) { _ in
                     Task { @MainActor in
+                        guard player === newPlayer else { return }
                         // Live preference: this closure outlives toggles.
                         if ShotPlayerTransportPreference.loopEnabled {
                             newPlayer.seek(to: .zero)
@@ -870,6 +901,7 @@ struct FinalsReelPlayerView: View {
                     queue: .main
                 ) { time in
                     Task { @MainActor in
+                        guard player === newPlayer else { return }
                         playheadSeconds = max(time.seconds, 0)
                     }
                 }
@@ -882,6 +914,7 @@ struct FinalsReelPlayerView: View {
                     )
                     playheadSeconds = resumeSeconds
                 }
+                guard token == playerLoadToken, player === newPlayer else { return }
                 isPreparing = false
                 if wasPlaying { newPlayer.play() }
             } catch {

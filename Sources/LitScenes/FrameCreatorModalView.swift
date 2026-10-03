@@ -2963,24 +2963,31 @@ struct FrameCreatorModal: View {
 
     // MARK: - Submit
 
-    /// Submit is async-shaped: mentioned entries with ≥2 references and no composite
-    /// sheet get one built first (so the renders attach one labeled sheet instead of
-    /// loose images), then ONE batch goes out — a request per selected stack, in
-    /// stack-list order. `isPreparingAttachments` guards double-submit while
-    /// builds run.
+    /// Submit is async-shaped only when mentioned entries with ≥2 references and
+    /// no composite sheet need one built first (so the renders attach one labeled
+    /// sheet instead of loose images); `isPreparingAttachments` then guards
+    /// double-submit and honestly labels the wait. With nothing to build, the
+    /// batch goes out synchronously — a request per selected stack, in
+    /// stack-list order — with no "Preparing references…" flash.
     private func submitSelected() {
         let stacks = selectedStacks
         guard !stacks.isEmpty, !isPreparingAttachments else { return }
+        let entriesNeedingSheets = (onEnsureMentionSheet == nil || !stacks.contains(where: \.supportsPromptImages))
+            ? []
+            : mentionResolution.mentions.filter { entry in
+                let plan = mentionAttachmentPlan(for: entry)
+                return !plan.usesSheet && plan.items.count >= 2
+            }
+        guard let onEnsureMentionSheet, !entriesNeedingSheets.isEmpty else {
+            onSubmit(stacks.map { buildRenderRequest($0, sheetOverrides: [:]) })
+            return
+        }
         isPreparingAttachments = true
         Task {
             var sheetOverrides: [String: MediaItemRecord] = [:]
-            if let onEnsureMentionSheet, stacks.contains(where: \.supportsPromptImages) {
-                for entry in mentionResolution.mentions {
-                    let plan = mentionAttachmentPlan(for: entry)
-                    guard !plan.usesSheet, plan.items.count >= 2 else { continue }
-                    if let sheet = await onEnsureMentionSheet(entry) {
-                        sheetOverrides[entry.id] = sheet
-                    }
+            for entry in entriesNeedingSheets {
+                if let sheet = await onEnsureMentionSheet(entry) {
+                    sheetOverrides[entry.id] = sheet
                 }
             }
             onSubmit(stacks.map { buildRenderRequest($0, sheetOverrides: sheetOverrides) })
@@ -3123,7 +3130,7 @@ struct FrameCreatorModal: View {
 
 /// A one-shot selection request used after mention completion. The id lets the
 /// representable distinguish a new request from ordinary SwiftUI updates.
-private struct FramePromptCaretRequest: Equatable {
+struct FramePromptCaretRequest: Equatable {
     let id = UUID()
     var utf16Offset: Int
 }
@@ -3131,7 +3138,7 @@ private struct FramePromptCaretRequest: Equatable {
 /// AppKit-backed editor for caret geometry and mention-picker keyboard control.
 /// The prompt remains a plain String binding; this bridge only exposes editor
 /// behavior SwiftUI's TextEditor does not currently surface on macOS.
-private struct FrameCreatorPromptTextEditor: NSViewRepresentable {
+struct FrameCreatorPromptTextEditor: NSViewRepresentable {
     @Environment(\.colorScheme) private var colorScheme
     @Binding var text: String
     var caretRequest: FramePromptCaretRequest?

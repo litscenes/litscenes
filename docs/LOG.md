@@ -137,3 +137,59 @@
 2026-09-28T21:23:07Z portable-scene-export: added the existing scene-card menu action and local writer for composite, ordered frames/current video, and website-compatible metadata. Verified actual still/footage/video exports, missing and empty media, website validator/adapter, Swift build, 1,345 existing tests and source hygiene. No commit, push or publication.
 
 2026-09-29T02:03:43Z installer-publication: Owner explicitly authorized committing and pushing only the prepared source installer and installation documentation to public main as the website release prerequisite. Preserve unrelated Desktop work. Bash syntax and ShellCheck pass; current public main is 894045226270c8b0aec7a895db75ca08549aa588.
+
+2026-10-01T02:24:17Z first-touch-cycle: Owner approved the first-session doctrine (first frame + Animate/Restyle/Zoom Out activation, two-key OpenAI+FAL hero setup, point-of-intent failures, fail-fast billing 429). Implementing honest 429 probe outcomes, two-key PersonalKeySetupView, and render-failure surfacing per plans/20261001T022417Z-first-touch-cycle.md. No commit or push.
+
+2026-10-01T03:05:00Z first-touch-cycle: Implemented honest 429 probe outcomes (new validButLimited case at all three probe surfaces), replaced the transport's indefinite vendor hold with fail-fast ProviderFailure throws carrying the provider's own explanation, passed the full render-blocker law into the Frame Creator so refusals are no longer silent, made "Preparing references…" honest, removed the false world-continuity caption, and surfaced per-item analysis failures on the failed media tile and preview panel. Swift build, all 1,345 tests, source hygiene, and git diff --check pass. On-card Animate/Restyle/Zoom Out deferred to owner decisions recorded in the plan's Outcome section. No commit or push.
+
+2026-10-03T04:00:25Z scene-editing-controls — Implement the approved five-part plan: character references in continuation, fine speed control to 16×, visible drag insertion slots, displayed-frame capture, and Suggested Frames disclosure. Preserve existing surfaces and unrelated edits; no paid calls or commits.
+
+2026-10-03T04:00:25Z scene-editing-controls — Implement the approved five-part plan: character references in continuation, fine speed control to 16×, visible drag insertion slots, displayed-frame capture, and Suggested Frames disclosure. Preserve existing surfaces and unrelated edits; no paid calls or commits.
+
+2026-10-03T04:00:25Z scene-editing-controls — Implement the approved five-part plan: character references in continuation, fine speed control to 16×, visible drag insertion slots, displayed-frame capture, and Suggested Frames disclosure. Preserve existing surfaces and unrelated edits; no paid calls or commits.
+
+2026-10-03T04:00:25Z scene-editing-controls — Implement the approved five-part plan: character references in continuation, fine speed control to 16×, visible drag insertion slots, displayed-frame capture, and Suggested Frames disclosure. Preserve existing surfaces and unrelated edits; no paid calls or commits.
+
+2026-10-03T04:00:25Z scene-editing-controls — Implement the approved five-part plan: character references in continuation, fine speed control to 16×, visible drag insertion slots, displayed-frame capture, and Suggested Frames disclosure. Preserve existing surfaces and unrelated edits; no paid calls or commits.
+
+2026-10-03T04:00:25Z scene-editing-controls — Implement the approved five-part plan: character references in continuation, fine speed control to 16×, visible drag insertion slots, displayed-frame capture, and Suggested Frames disclosure. Preserve existing surfaces and unrelated edits; no paid calls or commits.
+
+2026-10-03T04:00:25Z scene-editing-controls — Implement the approved five-part plan: character references in continuation, fine speed control to 16×, visible drag insertion slots, displayed-frame capture, and Suggested Frames disclosure. Preserve existing surfaces and unrelated edits; no paid calls or commits.
+
+2026-10-03T04:00:25Z scene-editing-controls — Implement the approved five-part plan: character references in continuation, fine speed control to 16×, visible drag insertion slots, displayed-frame capture, and Suggested Frames disclosure. Preserve existing surfaces and unrelated edits; no paid calls or commits.
+
+2026-10-03T04:00:25Z scene-editing-controls — Implement the approved five-part plan: character references in continuation, fine speed control to 16×, visible drag insertion slots, displayed-frame capture, and Suggested Frames disclosure. Preserve existing surfaces and unrelated edits; no paid calls or commits.
+
+2026-10-03T04:00:25Z scene-editing-controls — Implement the approved five-part plan: character references in continuation, fine speed control to 16×, visible drag insertion slots, displayed-frame capture, and Suggested Frames disclosure. Preserve existing surfaces and unrelated edits; no paid calls or commits.
+
+2026-10-03T04:00:25Z scene-editing-controls — Implement the approved five-part plan: character references in continuation, fine speed control to 16×, visible drag insertion slots, displayed-frame capture, and Suggested Frames disclosure. Preserve existing surfaces and unrelated edits; no paid calls or commits.
+
+2026-10-03T04:33:05Z scene-editing-controls — Implemented the five approved Scene/player controls and updated requirements. Local build, 1,348 tests, offline reference wire/trace checks and the composed-frame probe passed. Final source hygiene and diff checks pending; changes remain uncommitted.
+
+2026-10-03T04:00:25Z scene-editing-controls — Implement the approved five-part plan: character references in continuation, fine speed control to 16×, visible drag insertion slots, displayed-frame capture, and Suggested Frames disclosure. Preserve existing surfaces and unrelated edits; no paid calls or commits.
+
+2026-10-03T04:00:25Z scene-editing-controls — Implement the approved five-part plan: character references in continuation, fine speed control to 16×, visible drag insertion slots, displayed-frame capture, and Suggested Frames disclosure. Preserve existing surfaces and unrelated edits; no paid calls or commits.
+
+2026-10-03T04:00:25Z scene-editing-controls — Implement the approved five-part plan: character references in continuation, fine speed control to 16×, visible drag insertion slots, displayed-frame capture, and Suggested Frames disclosure. Preserve existing surfaces and unrelated edits; no paid calls or commits.
+
+2026-10-03T04:00:25Z scene-editing-controls — Implement the approved five-part plan: character references in continuation, fine speed control to 16×, visible drag insertion slots, displayed-frame capture, and Suggested Frames disclosure. Preserve existing surfaces and unrelated edits; no paid calls or commits.
+
+2026-10-03T04:00:25Z scene-editing-controls — Implement the approved five-part plan: character references in continuation, fine speed control to 16×, visible drag insertion slots, displayed-frame capture, and Suggested Frames disclosure. Preserve existing surfaces and unrelated edits; no paid calls or commits.
+
+2026-10-03T04:00:25Z scene-editing-controls — Implement the approved five-part plan: character references in continuation, fine speed control to 16×, visible drag insertion slots, displayed-frame capture, and Suggested Frames disclosure. Preserve existing surfaces and unrelated edits; no paid calls or commits.
+
+2026-10-03T04:44:26Z scene-editing-controls — Final build, 1,348 tests, source hygiene, diff checks, offline provider/trace verification and 30-sample capture matrix passed. Saved the endpoint/persistence fixes and validation limits in the feature log. No commit or publication.
+
+ cut-strip-under-viewer — Move the picture filmstrip to sit immediately under the shot viewer and scale it 60% taller (64→102pt) so it reads as the viewer scrubber; cut tools, legend and scope row follow the strip, Full Shot/SOURCES actions move below the cut block. Canonical public checkout; no paid calls or commits.
+
+2026-10-03T10:27:07Z reel-play-all — Fix Play All starting from only the first prepared cut; wait for the selected sequence to finish local preparation, preserve ordered playback, and guard superseded player callbacks. No commits or provider calls.
+
+ cut-strip-under-viewer — Completed: picture filmstrip now leads directly under the shot viewer at 102pt (×1.6), tool row/legend/scope lines follow, Look bar shares the slot, Full Shot + SOURCES actions moved below the cut block. swift build clean, swift test exit 0, source hygiene clean, git diff --check clean. Uncommitted; owner smoke test after relaunching the debug binary.
+
+ cut-strip-under-viewer — Correction: the earlier "swift test exit 0" was the tail pipe's exit code. Full suite ran 1348 tests with 1 failure, ShotContinuationReferenceTests.continuationReferencesReachWireWithoutChangingAnchorOrLeakingImagesIntoTrace (untracked file from the continuation-references work): sqlite3_prepare_v2 returned SQLITE_BUSY (5) on the inference-trace database, the other three issues cascade from it. Re-run alone, all 3 tests in that file pass. Trace-store lock contention under the parallel suite, unrelated to the view-layout change.
+
+2026-10-03T10:34:24Z reel-play-all — Fixed premature partial-reel autoplay, duplicate builds, and stale player callbacks. Verified the readiness cases and actual two-cut AVFoundation playback, passed build and all 1,348 existing tests, checked source hygiene/diff whitespace, and packaged the local Development app. No commit or publication.
+
+2026-10-03T11:07:53Z take-draft-consumption — Started in the canonical public Desktop checkout: a take draft is consumed when its render is dispatched (recipe lands on the placement override lanes, the draft leaves the bank, sibling drafts stay); the segment editor stops showing the already-rendered edit under its base take. Companion: reel-bake-honesty — a bake canceled while the Finals Reel is open becomes a named, retryable board state; the waiting notice and header report per-cut readiness.
+
+2026-10-03T11:12:18Z take-draft-consumption — Completed: consumed-draft law at render dispatch (regular + continuation), panel drops handed-over drafts, canceled reel bakes are named retryable rows, waiting notice counts ready cuts. swift build clean, swift test --no-parallel 1348 passed (EXIT 0 captured to file), source hygiene clean, git diff --check clean. Uncommitted; owner relaunches the debug binary.

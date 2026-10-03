@@ -548,13 +548,8 @@ struct ShotPlayerSheetHost: View {
                 onExportForYouTube: {
                     await editingAsync { await library.exportShotOutputForYouTube(shotId: request.shotId) }
                 },
-                onCollectFrame: { path, fileSeconds, outputSeconds in
-                    await library.collectShotFrameStill(
-                        shotId: request.shotId,
-                        sourceVideoPath: path,
-                        fileSeconds: fileSeconds,
-                        outputSeconds: outputSeconds
-                    ) != nil
+                onCollectFrame: { capture in
+                    await library.collectShotFrameStill(shotId: request.shotId, capture: capture) != nil
                 },
                 projectId: library.currentProject?.projectId ?? "",
                 onPastePictureSegments: { insertions, status in
@@ -571,11 +566,12 @@ struct ShotPlayerSheetHost: View {
                     ) }
                 },
                 onSetPictureInsertionRate: { insertionIds, rate in
-                    editing { library.setShotPictureInsertionRate(
+                    let edit = editing { library.setShotPictureInsertionRate(
                         shotId: request.shotId,
                         insertionIds: insertionIds,
                         rate: rate
                     ) }
+                    return ShotSectionRateResult(edit: edit, message: library.aestheticStatus)
                 },
                 onSetPictureInsertionMuted: { insertionIds, muted in
                     editing { library.setShotPictureInsertionMuted(
@@ -660,7 +656,7 @@ struct ShotPlayerSheetHost: View {
             .sheet(item: $endingSession) { session in
                 ShotContinuationReviewSheet(session: session,
                     configuredModels: Set(ShotRenderModel.allCases.filter(library.canExecuteShotRenderModel)),
-                    pricing: library.falPricing, prepare: {
+                    pricing: library.falPricing, characterReferences: library.continuationCharacterReferences, prepare: {
                         if !draftsSaved {
                             var value = session.initial
                             value.preparationError = "The latest direction could not be saved. Close this review and retry saving on the segment card."
@@ -775,8 +771,8 @@ struct FrameCreatorModalHost: View {
             hasCivitaiCredential: credentialConfigured(.civitai),
             hasFALCredential: credentialConfigured(.fal),
             hasStabilityCredential: credentialConfigured(.stability),
-            isRenderBlocked: library.frameSubmissionBlockReason != nil,
-            renderBlockerHelp: library.frameSubmissionBlockReason,
+            isRenderBlocked: library.frameSubmissionBlockReason != nil || library.lensHeroTakeStartBlockReason != nil,
+            renderBlockerHelp: library.frameSubmissionBlockReason ?? library.lensHeroTakeStartBlockReason,
             takeLaneFreeSlots: library.lensHeroTakeLaneFreeSlots,
             formGenerations: library.frameForms.generations.map(\.options).filter { !$0.isEmpty },
             isAnalyzingMoods: library.isAnalyzingMedia,

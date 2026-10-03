@@ -27,6 +27,7 @@ struct ShotContinuationReviewSheet: View {
     let session: ShotContinuationReviewSession
     let configuredModels: Set<ShotRenderModel>
     let pricing: FALPricingSnapshot?
+    var characterReferences: [ShotCharacterReference]
     var prepare: () async -> ShotContinuationAvailability
     var onPrecedingEnding: (String) -> Void
     var onCancel: () -> Void
@@ -35,9 +36,10 @@ struct ShotContinuationReviewSheet: View {
     @State private var preparing = true
     @State private var revision = UUID()
 
-    init(session: ShotContinuationReviewSession, configuredModels: Set<ShotRenderModel>, pricing: FALPricingSnapshot?,
+    init(session: ShotContinuationReviewSession, configuredModels: Set<ShotRenderModel>, pricing: FALPricingSnapshot?, characterReferences: [ShotCharacterReference] = [],
          prepare: @escaping () async -> ShotContinuationAvailability, onPrecedingEnding: @escaping (String) -> Void,
          onCancel: @escaping () -> Void, onRender: @escaping (ShotContinuationRequest) -> Void) {
+        self.characterReferences = characterReferences
         self.session = session; self.configuredModels = configuredModels; self.pricing = pricing
         self.prepare = prepare; self.onPrecedingEnding = onPrecedingEnding; self.onCancel = onCancel; self.onRender = onRender
         _availability = State(initialValue: session.initial)
@@ -45,7 +47,7 @@ struct ShotContinuationReviewSheet: View {
 
     var body: some View {
         ShotContinuationReviewView(availability: availability, configuredModels: configuredModels, pricing: pricing,
-            title: session.title, isPreparing: preparing, onRefresh: { revision = UUID() },
+            title: session.title, characterReferences: characterReferences, isPreparing: preparing, onRefresh: { revision = UUID() },
             onPrecedingEnding: onPrecedingEnding, onCancel: onCancel, onRender: onRender)
             .task(id: revision) {
                 preparing = true

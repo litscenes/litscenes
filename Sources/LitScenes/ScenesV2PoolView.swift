@@ -99,6 +99,8 @@ struct ScenesV2PoolGridSections: View {
     /// SUGGESTED FRAMES — the pool's first section under ALL and UNUSED, and each
     /// character's lead under CHARACTERS. Present whenever a Scene Plan exists.
     var showsSuggestions: Bool = false
+    var suggestionsExpanded = true
+    var onToggleSuggestions: () -> Void = {}
     var suggestions: [ScenesV2SuggestionCardModel] = []
     var suggestionsByCharacterId: [String: [ScenesV2SuggestionCardModel]] = [:]
     var suggestionRefusals: [String: String] = [:]
@@ -203,11 +205,19 @@ struct ScenesV2PoolGridSections: View {
         VStack(alignment: .leading, spacing: 10) {
             if header {
                 HStack(spacing: 10) {
-                    Text("SUGGESTED FRAMES · \(cards.count)")
+                    Button {
+                        withAnimation(.easeOut(duration: 0.15), onToggleSuggestions)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: suggestionsExpanded ? "chevron.down" : "chevron.right")
+                            Text("SUGGESTED FRAMES · \(cards.count)").kerning(2.0)
+                        }
                         .font(CanonType.archive(8.5, weight: .bold))
-                        .kerning(2.0)
                         .foregroundStyle(CanonColor.brass)
-                        .layoutPriority(1)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityValue(suggestionsExpanded ? "Expanded" : "Collapsed")
+                    .layoutPriority(1)
                     Rectangle()
                         .fill(CanonColor.hairlinePaper)
                         .frame(height: 1)
@@ -229,25 +239,31 @@ struct ScenesV2PoolGridSections: View {
                     .help("Open the Frame Creator on a blank Frame — it lands in this pool")
                 }
             }
-            if cards.isEmpty {
-                suggestionEmptyState
-            } else {
-                LazyVGrid(columns: Self.suggestionColumns, alignment: .leading, spacing: 12) {
-                    ForEach(cards) { card in
-                        ScenesV2SuggestionCardView(
-                            model: card,
-                            renderCaption: renderCaption,
-                            renderBlockReason: renderBlockReason,
-                            refusal: suggestionRefusals[card.imageId] ?? "",
-                            accentSwatches: accentSwatches,
-                            onRender: { onRenderSuggestion(card.imageId) },
-                            onArtDirect: { onArtDirectSuggestion(card.imageId) },
-                            onRepairReferences: onRepairReferences
-                        )
+            if !header || suggestionsExpanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    if cards.isEmpty {
+                        suggestionEmptyState
+                    } else {
+                        LazyVGrid(columns: Self.suggestionColumns, alignment: .leading, spacing: 12) {
+                            ForEach(cards) { card in
+                                ScenesV2SuggestionCardView(
+                                    model: card,
+                                    renderCaption: renderCaption,
+                                    renderBlockReason: renderBlockReason,
+                                    refusal: suggestionRefusals[card.imageId] ?? "",
+                                    accentSwatches: accentSwatches,
+                                    onRender: { onRenderSuggestion(card.imageId) },
+                                    onArtDirect: { onArtDirectSuggestion(card.imageId) },
+                                    onRepairReferences: onRepairReferences
+                                )
+                            }
+                        }
                     }
                 }
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        .clipped()
     }
 
     @ViewBuilder

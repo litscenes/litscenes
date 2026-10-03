@@ -191,11 +191,8 @@ struct ShotCutAssembly {
         }
     }
 
-    /// Output (player) time → the SOURCE clip file and file-local seconds on
-    /// screen there — razor, skip, and bridge aware (a bridge item maps into
-    /// the bridge artifact's own file). Capture-grade, not frame-forensic: a
-    /// dissolve overlap resolves to the incoming item, and the keepRange-less
-    /// head uses the trimFrames offset.
+    /// Approximate source provenance only. Displayed-frame collection reads
+    /// the player output instead because transitions can blend multiple sources.
     func sourceCapture(forOutputSeconds t: Double) -> (url: URL, fileSeconds: Double)? {
         for item in playbackItems {
             guard t < item.outputStartSeconds + item.durationSeconds
@@ -206,7 +203,7 @@ struct ShotCutAssembly {
                 max(t - item.outputStartSeconds, 0),
                 max(item.durationSeconds - 1.0 / 48.0, 0)
             )
-            return (item.url, item.sourceHeadSeconds + local)
+            return (item.url, item.sourceHeadSeconds + local * item.playbackRate)
         }
         return nil
     }
@@ -885,14 +882,14 @@ struct ShotCutTimelineStrip: View {
     /// ⌘D — duplicate the selection right after itself (the loop gesture;
     /// copies are born muted per THE HYBRID AUDIO DEFAULT).
     var onDuplicateSelection: () -> Void = { }
-    var onInsertionSetRate: (Set<String>, Double) -> Void = { _, _ in }
+    var onInsertionSetRate: (Set<String>, Double) -> String? = { _, _ in nil }
     var onInsertionSetMuted: (Set<String>, Bool) -> Void = { _, _ in }
     var onInsertionDelete: (Set<String>) -> Void = { _ in }
     var onInsertionRecopy: (String) -> Void = { _ in }
     var onInsertionAddLoopCopy: (ShotPictureInsertion) -> Void = { _ in }
     /// SECTION SPEED: the selected span razors out and a born-muted copy of
     /// it plays in the gap at this rate — one gesture, one undo.
-    var onSetSectionRate: (Double) -> Void = { _ in }
+    var onSetSectionRate: (Double) -> String? = { _ in nil }
     /// THE SCRUB LATCH: strip seeks pause on begin, resume on release iff
     /// playback was running. Razor drags are edits, not scrubs.
     var onScrubBegan: () -> Void = { }
@@ -952,7 +949,9 @@ struct ShotCutTimelineStrip: View {
     /// and every audio lane below. Its interior mapping stays material space.
     private let handleWidth: CGFloat = ShotTimelineAxis.contentInset
     private let sliverWidth: CGFloat = 22
-    private let stripHeight: CGFloat = 64
+    /// Scrubber scale: the strip sits directly under the player, so its
+    /// 16:9 tiles ride a height that reads as picture, not as a gauge.
+    private let stripHeight: CGFloat = 102
 
     private var inSeconds: Double {
         isDraggingIn ? (draftInSeconds ?? 0) : (shot.cutList.shotInSeconds ?? 0)
@@ -966,7 +965,8 @@ struct ShotCutTimelineStrip: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            runtimeRow
+            // The filmstrip leads: it is the viewer's scrubber, so nothing
+            // sits between the player and the picture; tools and legend follow.
             // Head and tail gutters put the strip's time axis in the same
             // column as the ruler and audio lanes. The tail slot is a real
             // reservation, not decoration: drop it and the axis breaks.
@@ -982,6 +982,7 @@ struct ShotCutTimelineStrip: View {
                 Color.clear.frame(width: ShotTimelineAxis.tailWidth)
             }
             .frame(height: stripHeight)
+            runtimeRow
             legendRow
         }
     }
@@ -1140,8 +1141,9 @@ struct ShotCutTimelineStrip: View {
             ShotSpeedSectionPopover(
                 selectionSeconds: selectedSpan?.seconds ?? 0,
                 onCommit: { rate in
-                    isSpeedPopoverOpen = false
-                    onSetSectionRate(rate)
+                    let error = onSetSectionRate(rate)
+                    if error == nil { isSpeedPopoverOpen = false }
+                    return error
                 }
             )
         }

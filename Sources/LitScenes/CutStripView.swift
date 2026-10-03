@@ -14,6 +14,7 @@ import AppKit
 /// by every strip on the canvas. Closures take the cutId (== shotId) so the
 /// same bundle serves all cuts.
 struct CutStripActions {
+    var characterReferences: [ShotCharacterReference] = []
     var frameLookup: [String: ProjectLensHeroImage] = [:]
     var mediaLookup: [String: MediaItemRecord] = [:]
     var meaningNodes: [LensContextPromptMeaningNode] = []
@@ -110,6 +111,7 @@ struct CutStripActions {
 
     var onInsertFrame: (String, ShotFrameTransfer, Int) -> Void = { _, _, _ in }
     var onInsertClip: (String, String, Int) -> Void = { _, _, _ in }
+    var onDropMaterial: (String, ShotFrameTransfer, Int) -> String? = { _, _, _ in "Could not place the frame" }
     var onMoveEntry: (String, String, Int) -> Void = { _, _, _ in }
     var onRemoveEntry: (String, String) -> Void = { _, _ in }
     var onSetSeamStyle: (String, String, ShotSeamStyle) -> Void = { _, _, _ in }
@@ -318,6 +320,12 @@ struct CutStripView: View {
     @State private var hoveredEntryId = ""
     @State private var isHoveringStrip = false
     @State private var targetedGapIndex: Int?
+    @State private var isFrameDragging = false
+    @State private var frameDropBoundaries: [Int: CGFloat] = [:]
+    @State private var frameDropScrollDirection = 0
+    @State private var frameDropViewportOffset: CGFloat = 0
+    @State private var frameDropViewportWidth: CGFloat = 0
+    @State private var frameDropError = ""
     @State private var targetedCellEntryId = ""
     @State private var isAppendTargeted = false
     @State private var isAppendPickerOpen = false
@@ -746,13 +754,15 @@ struct CutStripView: View {
     /// can drive a long strip without a trackpad swipe.
     private var stripScroller: some View {
         let tiles = videoTiles
-        return CanonHScroller {
+        return VStack(alignment: .leading, spacing: 4) {
+          CanonHScroller(frameDragScrollDirection: frameDropScrollDirection,
+            onViewportChange: { frameDropViewportOffset = $0; frameDropViewportWidth = $1 }) {
             HStack(alignment: .top, spacing: 0) {
                 ForEach(Array(cut.entries.enumerated()), id: \.element.entryId) { entryIndex, entry in
-                    gapStrip(index: entryIndex)
                     ForEach(tiles.filter { $0.beforeEntryId == entry.entryId }) { tile in
-                        videoTile(tile).padding(.trailing, Self.gapWidth)
+                        videoTile(tile).padding(.leading, Self.gapWidth)
                     }
+                    gapStrip(index: entryIndex)
                     VStack(spacing: 5) {
                         entryCell(entry, tile: tiles.first { $0.replacesEntryId == entry.entryId })
                         entrySecondaryActions(entry, tile: tiles.first { $0.replacesEntryId == entry.entryId })
@@ -771,6 +781,19 @@ struct CutStripView: View {
                 }
             }
             .padding(.vertical, 2)
+            .coordinateSpace(name: "sceneFrameDrop")
+            .onPreferenceChange(SceneFrameDropBoundaryKey.self) { frameDropBoundaries = $0 }
+            .onDrop(of: [.json], delegate: SceneFrameDropDelegate(
+                boundaries: frameDropBoundaries,
+                allowedBoundaries: Set((0...cut.entries.count).filter { !isLocked || isTailIndex($0) }),
+                viewportOffset: frameDropViewportOffset, viewportWidth: frameDropViewportWidth,
+                active: $isFrameDragging, target: $targetedGapIndex,
+                scrollDirection: $frameDropScrollDirection, error: $frameDropError,
+                onDrop: { actions.onDropMaterial(cut.shotId, $0, $1) }))
+          }
+          if !frameDropError.isEmpty {
+              Text(frameDropError).font(CanonType.interface(10)).foregroundStyle(CanonColor.rust)
+          }
         }
     }
 
@@ -1714,31 +1737,6 @@ struct CutStripView: View {
             sourceEntryId: entry.entryId,
             clipMediaId: entry.clipMediaId
         ))
-        .dropDestination(for: ShotFrameTransfer.self) { items, _ in
-            // A drop ON a cell INSERTS BEFORE it — the gap law at this
-            // entry's index. Replacement is retired: a drop never destroys
-            // the target frame. The engine re-guards frozen cuts, so a
-            // stale view never sneaks a non-tail edit in.
-            guard let transfer = items.first,
-                  let index = cut.entries.firstIndex(where: { $0.entryId == entry.entryId }) else {
-                return false
-            }
-            guard !isLocked || isTailIndex(index) else { return false }
-            guard transfer.sourceEntryId != entry.entryId else { return false }
-            if transfer.sourceShotId == cut.shotId, !transfer.sourceEntryId.isEmpty {
-                actions.onMoveEntry(cut.shotId, transfer.sourceEntryId, index)
-            } else if transfer.isClipDrag {
-                actions.onInsertClip(cut.shotId, transfer.clipMediaId, index)
-            } else {
-                guard !transfer.frameImageId.trimmed.isEmpty else { return false }
-                actions.onInsertFrame(cut.shotId, transfer, index)
-            }
-            return true
-        } isTargeted: { targeted in
-            let index = cut.entries.firstIndex { $0.entryId == entry.entryId }
-            let accepts = !isLocked || index.map(isTailIndex) == true
-            targetedCellEntryId = (targeted && accepts) ? entry.entryId : (targetedCellEntryId == entry.entryId ? "" : targetedCellEntryId)
-        }
     }
 
     private func cellCaption(_ text: String) -> some View {
@@ -2021,38 +2019,34 @@ struct CutStripView: View {
     // MARK: Gaps + seams
 
     private func gapStrip(index: Int) -> some View {
+        let accepts = !isLocked || isTailIndex(index)
+        let expanded = isFrameDragging && accepts
         let isTargeted = targetedGapIndex == index
         return ZStack {
             Color.clear
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(isTargeted ? CanonColor.brass : Color.clear)
-                .frame(width: 3, height: Self.cellSize.height - 16)
-            if !isTargeted, let seam = seamContext(gapIndex: index) {
+            if expanded {
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(CanonColor.brass.opacity(isTargeted ? 0.24 : 0.07))
+                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(CanonColor.brass.opacity(isTargeted ? 0.9 : 0.3), style: StrokeStyle(lineWidth: 1, dash: [3])))
+                    .padding(.horizontal, 3)
+                if isTargeted {
+                    VStack(spacing: 5) {
+                        Image(systemName: "plus")
+                        Text("Insert frame here").font(CanonType.interface(8)).multilineTextAlignment(.center)
+                    }.foregroundStyle(CanonColor.brass).padding(.horizontal, 4)
+                }
+            } else if let seam = seamContext(gapIndex: index) {
                 seamToggle(seam)
             }
-            if index == 0, !isTargeted, !isLocked, !cut.entries.isEmpty,
-               !(cut.entries.first?.isAIExtension ?? false) {
-                leadInButton
-            }
+            if index == 0, !expanded, !isLocked, !cut.entries.isEmpty,
+               !(cut.entries.first?.isAIExtension ?? false) { leadInButton }
         }
-        .frame(width: Self.gapWidth, height: Self.cellSize.height)
+        .frame(width: expanded ? 40 : Self.gapWidth, height: Self.cellSize.height)
+        .background(GeometryReader { geometry in
+            Color.clear.preference(key: SceneFrameDropBoundaryKey.self,
+                value: [index: geometry.frame(in: .named("sceneFrameDrop")).midX])
+        })
         .contentShape(Rectangle())
-        .dropDestination(for: ShotFrameTransfer.self) { items, _ in
-            // Tail gaps stay live on a locked-but-appendable cut; the engine
-            // re-guards, so a stale view never sneaks a non-tail edit in.
-            guard !isLocked || isTailIndex(index), let transfer = items.first else { return false }
-            if transfer.sourceShotId == cut.shotId, !transfer.sourceEntryId.isEmpty {
-                actions.onMoveEntry(cut.shotId, transfer.sourceEntryId, index)
-            } else if transfer.isClipDrag {
-                actions.onInsertClip(cut.shotId, transfer.clipMediaId, index)
-            } else {
-                actions.onInsertFrame(cut.shotId, transfer, index)
-            }
-            return true
-        } isTargeted: { targeted in
-            let accepts = !isLocked || isTailIndex(index)
-            targetedGapIndex = (targeted && accepts) ? index : (targetedGapIndex == index ? nil : targetedGapIndex)
-        }
     }
 
     private struct SeamContext {
@@ -2210,19 +2204,6 @@ struct CutStripView: View {
         .popover(isPresented: $isAppendPickerOpen, arrowEdge: .bottom) {
             appendPicker
         }
-        .dropDestination(for: ShotFrameTransfer.self) { items, _ in
-            guard (!isLocked || isSuffixAppendable), let transfer = items.first else { return false }
-            if transfer.sourceShotId == cut.shotId, !transfer.sourceEntryId.isEmpty {
-                actions.onMoveEntry(cut.shotId, transfer.sourceEntryId, cut.entries.count)
-            } else if transfer.isClipDrag {
-                actions.onInsertClip(cut.shotId, transfer.clipMediaId, cut.entries.count)
-            } else {
-                actions.onInsertFrame(cut.shotId, transfer, cut.entries.count)
-            }
-            return true
-        } isTargeted: { targeted in
-            isAppendTargeted = targeted && (!isLocked || isSuffixAppendable)
-        }
         .onChange(of: isAppendPickerOpen) { _, isOpen in
             if !isOpen {
                 clearContinuationReview(closePopover: false)
@@ -2265,7 +2246,7 @@ struct CutStripView: View {
     private var appendPicker: some View {
         if let session = continuationSession {
             ShotContinuationReviewSheet(session: session, configuredModels: actions.configuredRenderModels,
-                pricing: actions.falPricing, prepare: {
+                pricing: actions.falPricing, characterReferences: actions.characterReferences, prepare: {
                     if let draft = session.takeDraft { return await actions.onPrepareContinuationTakeDraft(cut.shotId, draft) }
                     return session.entryId.isEmpty ? await actions.onPrepareContinuation(cut.shotId)
                         : await actions.onPrepareContinuationRetake(cut.shotId, session.entryId)

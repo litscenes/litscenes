@@ -200,6 +200,9 @@ struct WelcomeKeyRow: View {
         case .valid:
             let prefix = savedFirst ? "Saved — verified" : "Verified"
             return ("\(prefix), \(provider.label) answered.", CanonColor.olive)
+        case .validButLimited:
+            let prefix = savedFirst ? "Saved — key accepted" : "Key accepted"
+            return ("\(prefix), but \(provider.label) answered with a limit (HTTP 429). If the account is out of credits, generation will fail until it's topped up.", CanonColor.brass)
         case .invalidKey(let httpStatus):
             let prefix = savedFirst ? "Saved, but " : ""
             let code = httpStatus > 0 ? " (HTTP \(httpStatus))" : ""

@@ -537,6 +537,9 @@ struct ShotRenderPromptPanel: View {
                 guard !draft.prompt.trimmed.isEmpty else { promptSaveError = "Enter a direction or use Suggest before rendering."; return }
                 guard onSaveTakeDrafts([draft]) else { promptSaveError = "The draft could not be saved. Retry before rendering."; return }
                 onRenderTake(draft)
+                // Handed over: drop the in-memory copy so autosave and the
+                // close flush can't put a consumed draft back in the bank.
+                takeEdits[draft.id] = nil
             } else {
                 armedRenderKey = segmentKey
             }

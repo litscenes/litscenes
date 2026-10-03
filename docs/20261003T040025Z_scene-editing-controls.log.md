@@ -1,0 +1,17 @@
+# Scene editing controls
+
+2026-10-03T04:00:25Z — Inspected the existing Scene row, pool disclosure, player composition/capture, picture speed mutations and continuation/provider wiring. Approved scope is recorded in the plan. Work takes place in the canonical public checkout with existing edits preserved.
+
+Implemented the five approved controls on existing surfaces. Reused the AppKit caret editor and roster resolver; added immutable continuation reference snapshots and personal FAL Kling element wiring. Source images are validated before spend and copied to the take directory; Go and incompatible models are rejected unless the operator explicitly chooses text-only continuation. Saved/rebuilt takes retain the recipe, and safe trace summaries include both prompts and image hashes.
+
+Validation so far: Swift build succeeded. All 1,348 tests passed, including three required inference counter-fixture/trace/wire checks. The offline transport intercepts the provider request and returns HTTP 422 without network or generation; it verifies element tokens, unchanged anchor bytes, source prompt separation, and readable redacted records through the same trace reader used by Logs/Traces. One earlier check queried the old table name and was corrected. The concurrent full suite emitted trace-enrichment database-lock/I/O diagnostics; all new provenance persistence and reader assertions passed.
+
+A temporary local AVFoundation probe confirmed correct pixels and actual display timestamps in a trimmed 4× composition, repeated paused capture, seek-in-progress rejection and detached-item rejection. The decoder needed normal macOS access outside the sandbox. No paid call was made.
+
+Provider schema reference: https://fal.ai/models/fal-ai/kling-video/v3/pro/image-to-video/api . Actual generated character likeness has not been evaluated with a paid canary. Interactive desktop drag/keyboard/visual checks remain unperformed in this tool session; no UI automation connector was available. REUSE was not installed. No commit, push, branch, private submodule update or remote schema change was made.
+
+2026-10-03T04:44:26Z — Final Swift build and all 1,348 tests passed after the save-result and capture-settling fixes. Source hygiene and `git diff --check` passed. The capture matrix passed 30 pixel checks: trimmed 0.10×, 1.01×, 4.25×, 8× and 16× output, blended layers including the exclusive clip end, and variable-frame-rate samples checked against the fixture's decoded timestamps/colors. Separate repeated-paused, pending-seek and detached-item checks passed. An initial compositor-boundary check exposed a real edge case and led to bounded output-time queries plus settling on the composition's declared final sample grid. This uses the actual output cadence, with no guessed source frame or fixed-rate fallback. A first VFR expectation assumed the encoder preserved input timestamps; decoded fixture evidence corrected that expectation, with no production heuristic added.
+
+The production diff was scanned for screenshot-specific names/IDs and visual terms; no motivating-fixture constants were introduced. FAL, Kling and WAN occurrences describe executable provider capabilities, not fixture rules. Documentary/renamed-cast counter-fixtures live only in tests.
+
+Final status: implemented and locally validated, uncommitted. Interactive drag/drop, suggestion animation and caret visuals still need human review in the running Desktop app; no paid likeness canary was run. No source pin was advanced.

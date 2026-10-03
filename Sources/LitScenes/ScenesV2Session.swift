@@ -38,6 +38,18 @@ final class ScenesV2Session: ObservableObject {
     var statusBaseline = ""
     var errorBaseline = ""
 
+    @Published private(set) var suggestionsExpandedOverride: Bool?
+
+    func suggestionsExpanded(usableFrameCount: Int) -> Bool {
+        suggestionsExpandedOverride ?? (usableFrameCount < 3)
+    }
+
+    func setSuggestionsExpanded(_ expanded: Bool) {
+        suggestionsExpandedOverride = expanded
+        guard !projectId.isEmpty else { return }
+        LitScenesPreferences.store.set(expanded, forKey: "LITSCENES_SUGGESTIONS_EXPANDED_\(projectId)")
+    }
+
     private var projectId = ""
 
     private static let historyLimit = 8
@@ -72,6 +84,7 @@ final class ScenesV2Session: ObservableObject {
     func adoptProject(_ projectId: String) {
         guard !projectId.isEmpty, projectId != self.projectId else { return }
         self.projectId = projectId
+        suggestionsExpandedOverride = LitScenesPreferences.store.object(forKey: "LITSCENES_SUGGESTIONS_EXPANDED_\(projectId)") as? Bool
         recentSceneIds = LitScenesPreferences.store.stringArray(forKey: Self.historyKey(projectId)) ?? []
         seenSuggestionIds = Set(LitScenesPreferences.store.stringArray(forKey: Self.seenSuggestionsKey(projectId)) ?? [])
         suggestionRefusals = [:]

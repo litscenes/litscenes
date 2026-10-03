@@ -82,9 +82,25 @@ struct ShotTakeDraft: Codable, Hashable, Sendable, Identifiable {
     }
 
     /// Recipe projection only: film selections and saved artifacts are untouched.
+    /// The render copy drops EVERY draft of the placement so the plan builder
+    /// reads the override lanes instead of re-applying the in-film take's
+    /// stored draft on top of them.
     func applyingRecipe(to shot: ProjectShot) -> ProjectShot {
+        projectingRecipe(onto: shot) { $0.placementKey == placementKey }
+    }
+
+    /// THE CONSUMED DRAFT LAW, for the live document at dispatch: a draft is
+    /// an unsent edit. Once its render is on the wire it is provenance — its
+    /// recipe becomes the placement's override lanes (what the in-film take
+    /// seeds from) and this one draft leaves the bank, so its base take seeds
+    /// from that take's own recipe again. Unsent edits on sibling takes stay.
+    func consumed(from shot: ProjectShot) -> ProjectShot {
+        projectingRecipe(onto: shot) { $0.id == id }
+    }
+
+    private func projectingRecipe(onto shot: ProjectShot, removingDrafts shouldRemove: (ShotTakeDraft) -> Bool) -> ProjectShot {
         var value = shot
-        value.takeDrafts.removeAll { $0.placementKey == placementKey }
+        value.takeDrafts.removeAll(where: shouldRemove)
         value.segmentPromptOverrides.removeAll { $0.placementStartEntryId == startEntryId && $0.placementEndEntryId == endEntryId }
         value.segmentPromptOverrides.append(ShotSegmentPromptOverride(startFrameImageId: startFrameImageId,
             endFrameImageId: endFrameImageId, placementStartEntryId: startEntryId,

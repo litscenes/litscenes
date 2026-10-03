@@ -2527,6 +2527,8 @@ private struct ProviderCredentialSettingsRow: View {
             switch outcome {
             case .valid:
                 rowFeedback = ("Verified — \(provider.label) answered.", CanonColor.olive)
+            case .validButLimited:
+                rowFeedback = ("Key accepted — but \(provider.label) answered with a limit (HTTP 429). Check credits before generating.", CanonColor.brass)
             case .invalidKey(let httpStatus):
                 let code = httpStatus > 0 ? " (HTTP \(httpStatus))" : ""
                 rowFeedback = ("\(provider.label) rejected this key\(code).", CanonColor.rust)
@@ -11960,7 +11962,8 @@ private struct ImagePreviewModal: View {
         ImageAnalysisPanel(
             observation: observation,
             analysisStatus: library.mediaAnalysisStatus,
-            isAnalyzing: library.isAnalyzingMedia
+            isAnalyzing: library.isAnalyzingMedia,
+            analysisError: library.mediaAnalysisItemErrors[item.mediaId]
         )
     }
 }
@@ -11969,12 +11972,16 @@ private struct ImageAnalysisPanel: View {
     let observation: ImageObservationResult?
     let analysisStatus: String
     let isAnalyzing: Bool
+    var analysisError: String? = nil
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header
 
+                if let analysisError {
+                    analysisFailedState(analysisError)
+                }
                 if let observation {
                     summaryList(observation)
                     textSection("Caption", observation.plainCaption)
@@ -11985,7 +11992,7 @@ private struct ImageAnalysisPanel: View {
                     listSection("Meanings", values: observation.possibleMeanings)
                     listSection("Visible Text", values: visibleTextRows(observation))
                     listSection("Review Notes", values: reviewRows(observation))
-                } else {
+                } else if analysisError == nil {
                     noAnalysisState
                 }
             }
@@ -12006,6 +12013,35 @@ private struct ImageAnalysisPanel: View {
                 .font(CanonType.archive(10, weight: .semibold))
                 .foregroundStyle(observation == nil ? CanonColor.muted : CanonColor.olive)
         }
+    }
+
+    /// The failed attempt's own diagnosis, in the provider's words, with the
+    /// one next action (the panel's Analyze button is the retry).
+    private func analysisFailedState(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                Image(systemName: "xmark.octagon")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(CanonColor.rust)
+                Text("Analysis failed for this item")
+                    .font(CanonType.interface(13, weight: .semibold))
+                    .foregroundStyle(CanonColor.ink)
+            }
+            Text(message)
+                .font(CanonType.interface(12))
+                .foregroundStyle(CanonColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Analyze again to retry this item.")
+                .font(CanonType.interface(11, weight: .semibold))
+                .foregroundStyle(CanonColor.rust)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(CanonColor.paperInset.opacity(0.58), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(CanonColor.rust.opacity(0.45))
+        )
     }
 
     private var noAnalysisState: some View {
@@ -14105,6 +14141,10 @@ private struct MediaTileView: View {
                     }
                     if item.kind == .video {
                         badge(item.durationSeconds?.durationLabel ?? "Video", color: CanonColor.room.opacity(0.78))
+                    }
+                    if let analysisError = library.mediaAnalysisItemErrors[item.mediaId] {
+                        badge("Analysis failed", color: CanonColor.rust.opacity(0.92))
+                            .help(analysisError)
                     }
                 }
                 .padding(6)

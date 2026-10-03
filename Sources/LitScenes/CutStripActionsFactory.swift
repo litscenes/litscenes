@@ -50,6 +50,7 @@ func makeCutStripActions(
     surface: CutStripWorkbenchSurface
 ) -> CutStripActions {
     var actions = CutStripActions()
+    actions.characterReferences = library.continuationCharacterReferences
     actions.frameLookup = frameLookup
     actions.mediaLookup = mediaLookup
     actions.meaningNodes = library.lensContext.promptPacket().meaningNodes
@@ -213,6 +214,23 @@ func makeCutStripActions(
             at: index,
             lensId: lensId
         )
+    }
+    actions.onDropMaterial = { cutId, transfer, index in
+        surface.onTouchCut(cutId)
+        let priorError = library.lastError
+        let priorStatus = library.aestheticStatus
+        let saved: Bool
+        if transfer.sourceShotId == cutId, !transfer.sourceEntryId.isEmpty {
+            saved = library.moveShotEntry(shotId: cutId, entryId: transfer.sourceEntryId, toIndex: index)
+        } else if transfer.isClipDrag {
+            saved = library.insertShotMedia(shotId: cutId, mediaId: transfer.clipMediaId, at: index, lensId: lensId) != nil
+        } else {
+            saved = library.insertShotFrame(shotId: cutId, frameImageId: transfer.frameImageId, at: index)
+        }
+        if saved { return nil }
+        if library.lastError != priorError, !library.lastError.isEmpty { return "Could not save the placement. " + library.lastError }
+        if library.aestheticStatus != priorStatus, !library.aestheticStatus.isEmpty { return library.aestheticStatus }
+        return "Could not save the placement — retry"
     }
     actions.onMoveEntry = { cutId, entryId, index in
         library.moveShotEntry(shotId: cutId, entryId: entryId, toIndex: index)

@@ -1969,6 +1969,10 @@ final class LibraryEngine: ObservableObject {
     private var characterSourceAnalysisQueue: [String] = []
     @Published private(set) var storyStatus = "Story workspace staged"
     @Published private(set) var mediaAnalysisStatus = "Media analysis idle"
+    /// Per-item analysis failures, mediaId → plain-language cause. The failed
+    /// item's own card carries the diagnosis; the run banner only says a run
+    /// stopped. An entry clears when its item is attempted again.
+    @Published private(set) var mediaAnalysisItemErrors: [String: String] = [:]
     @Published private(set) var isInterviewingGoal = false
     @Published private(set) var isRetrievingLensContext = false
     @Published private(set) var goalStatus = "Goal open"
@@ -6102,6 +6106,7 @@ final class LibraryEngine: ObservableObject {
         value.resolutionOverride = draft?.resolution
         let shot = shotTimeline.shots.first { $0.shotId == shotId }
         let record = shot?.continuationRecord(entryId: entryId)
+        value.referenceRecipe = (draft.flatMap { draft in record?.takes.first { $0.takeId == draft.baseTakeId } } ?? record?.selectedTake)?.referenceRecipe
         let preserveInput = record?.selectedTake != nil || record?.sortedTakes.contains(where: \.isReady) == true
         return await prepareContinuationOutput(value, shotId: shotId, entryId: entryId, preserveInput: preserveInput)
     }
@@ -6292,9 +6297,12 @@ final class LibraryEngine: ObservableObject {
             let now = DateFormats.now()
             let entryId = "entry_\(UUID().uuidString.lowercased())"
             let takeId = "continuation_take_\(UUID().uuidString.lowercased())"
-            let take = ShotContinuationTake(takeId: takeId, takeNumber: 1, status: "generating",
+            var take = ShotContinuationTake(takeId: takeId, takeNumber: 1, status: "generating",
                 anchor: request.preparedAnchor, prompt: request.prompt, mode: request.mode.rawValue,
                 stack: request.stack.rawValue, createdAt: now, updatedAt: now)
+            take.referenceRecipe = request.referenceRecipe
+            take.providerPrompt = request.referenceRecipe?.providerPrompt(request.prompt)
+            take.resolutionOverride = request.resolutionOverride
             var record = ShotContinuationRecord(entryId: entryId, sourceEntryId: source.entryId,
                 renderingTakeId: takeId, takes: [take], createdAt: now, updatedAt: now)
             record.preservedSourceClips = shotContinuationRenderedSourceClips(shot: shot, record: record)?.clips ?? []
@@ -6345,6 +6353,8 @@ final class LibraryEngine: ObservableObject {
         var take = ShotContinuationTake(takeId: takeId, takeNumber: (record.takes.map(\.takeNumber).max() ?? 0) + 1,
             status: "generating", anchor: request.preparedAnchor, prompt: request.prompt,
             mode: request.mode.rawValue, stack: request.stack.rawValue, createdAt: now, updatedAt: now)
+        take.referenceRecipe = request.referenceRecipe
+        take.providerPrompt = request.referenceRecipe?.providerPrompt(request.prompt)
         take.targetFrame = request.targetFrame
         take.baseTakeId = request.baseTakeId
         take.resolutionOverride = request.resolutionOverride
@@ -6355,7 +6365,13 @@ final class LibraryEngine: ObservableObject {
         }
         record = record.upsertingTake(take, select: false, now: now)
         guard persistShotTimeline(shotTimeline.updatingShot(shotId: shotId, now: now) {
-            $0.upsertingContinuationRecord(record, now: now)
+            var value = $0.upsertingContinuationRecord(record, now: now)
+            // THE CONSUMED DRAFT LAW: the draft this take was reviewed from is
+            // on the wire; the take record carries its recipe from here on.
+            if let baseTakeId = request.baseTakeId?.nilIfEmpty {
+                value.takeDrafts.removeAll { $0.endEntryId == entryId && $0.baseTakeId == baseTakeId }
+            }
+            return value
         }, for: project) else {
             return .failed(message: "Could not save the continuation attempt; no provider request was sent")
         }
@@ -6474,6 +6490,25 @@ final class LibraryEngine: ObservableObject {
                 }
             }
             try ensureDirectory(work)
+            if var recipe = take.referenceRecipe {
+                _ = try recipe.validated(model: stack.openEndedModelSelection,
+                    personal: ProviderBilling.source(for: .video(stack.model)) == .personal, prompt: take.prompt)
+                if recipe.usesImages {
+                    for characterIndex in recipe.characters.indices {
+                        for imageIndex in recipe.characters[characterIndex].images.indices {
+                            let image = recipe.characters[characterIndex].images[imageIndex]
+                            let source = URL(fileURLWithPath: image.path)
+                            let destination = work.appendingPathComponent("reference_\(characterIndex)_\(imageIndex).\(source.pathExtension)")
+                            if source.standardizedFileURL != destination.standardizedFileURL {
+                                try Data(contentsOf: source).write(to: destination, options: .atomic)
+                            }
+                            recipe.characters[characterIndex].images[imageIndex].path = destination.path
+                        }
+                    }
+                }
+                take.referenceRecipe = recipe
+                take.providerPrompt = recipe.providerPrompt(take.prompt)
+            }
             if let review = take.anchor.outputReview {
                 guard let live = shotTimeline.shots.first(where: { $0.shotId == shotId }),
                       shotReviewedOutputMatches(review, shot: live, entryId: entryId)
@@ -6574,7 +6609,7 @@ final class LibraryEngine: ObservableObject {
                 let normalized = try await VideoChainMedia.stitchClips(clipURLs: [ranged], outputURL: work.appendingPathComponent("source.mp4"), workDirectory: work.appendingPathComponent("normalize"), profile: profile, trimDuplicateStartFrames: 0, perClipTrimFrames: [0])
                 input = .native(VideoClipExtendRequest(
                     chainId: "shot_continuation_\(shotId)", segmentId: takeId,
-                    modelSelection: stack.openEndedModelSelection, prompt: take.prompt,
+                    modelSelection: stack.openEndedModelSelection, prompt: take.providerPrompt ?? take.prompt,
                     durationSeconds: stack.segmentSeconds, contextSeconds: context,
                     sourceVideoURL: normalized, sourceKind: take.anchor.sourceKind,
                     sourceMediaId: media?.mediaId ?? "", sourceStartSeconds: start,
@@ -6589,7 +6624,7 @@ final class LibraryEngine: ObservableObject {
                 let normalized = try VideoChainMedia.normalizeImageFrame(sourceURL: anchorURL, outputURL: work.appendingPathComponent("input.png"), profile: profile, fitPolicy: .fitWithBlurFill)
                 input = .frame(VideoClipRequest(
                     chainId: "shot_continuation_\(shotId)", segmentId: takeId,
-                    modelSelection: stack.openEndedModelSelection, prompt: take.prompt,
+                    modelSelection: stack.openEndedModelSelection, prompt: take.providerPrompt ?? take.prompt,
                     negativePrompt: "text artifacts, captions, logos, extra limbs, warped anatomy, hard cuts, flicker, melting faces",
                     durationSeconds: stack.segmentSeconds, outputProfile: profile,
                     startFrameURL: normalized, targetEndFrameURL: targetEndURL, outputURL: output,
@@ -6597,7 +6632,9 @@ final class LibraryEngine: ObservableObject {
                     runId: takeId, traceGroupId: "shot_continuation_\(shotId)",
                     workflowName: "shot_continuation", artifactType: "shot_continuation_take",
                     parentTraceId: parentTrace, onProviderSubmitted: submitted,
-                    civitaiRecipe: stack.civitaiRecipe, resolutionOverride: request.resolutionOverride
+                    civitaiRecipe: stack.civitaiRecipe, resolutionOverride: request.resolutionOverride,
+                    characterReferences: take.referenceRecipe?.usesImages == true ? (take.referenceRecipe?.activeCharacters(prompt: take.prompt) ?? []) : [],
+                    operatorPrompt: take.prompt
                 ))
             }
             try Task.checkCancellation()
@@ -6838,7 +6875,7 @@ final class LibraryEngine: ObservableObject {
                     mode: template.continuationMode,
                     stack: template.renderStack,
                     prompt: template.prompt,
-                    preparedAnchor: anchor, targetFrame: template.targetFrame
+                    preparedAnchor: anchor, referenceRecipe: template.referenceRecipe, targetFrame: template.targetFrame
                 )
                 let succeeded = await startExistingShotContinuationTake(
                     shotId: shotId,
@@ -6954,7 +6991,7 @@ final class LibraryEngine: ObservableObject {
                         mode: template.targetFrame != nil ? .arriveAtFrame : (rebuildStack.isNativeFootageExtend ? .nativeExtend : .outFrame),
                         stack: rebuildStack,
                         prompt: rebuildPrompt,
-                        preparedAnchor: anchor, targetFrame: template.targetFrame
+                        preparedAnchor: anchor, referenceRecipe: template.referenceRecipe, targetFrame: template.targetFrame
                     ),
                     selectOnSuccess: true
                 )
@@ -12133,7 +12170,7 @@ final class LibraryEngine: ObservableObject {
     /// after a rename without rewriting historical creative artifacts. An alias that
     /// collides with any current roster name or points at multiple ids is omitted —
     /// attaching no reference is safer than attaching the wrong person.
-    func frameCreatorMentionEntries(for lens: ProjectLens) -> [RosterMentionResolver.Entry] {
+    func frameCreatorMentionEntries(for lens: ProjectLens?) -> [RosterMentionResolver.Entry] {
         let currentNames = Set(
             (
                 projectCharacters.characters.map(\.name)
@@ -12158,7 +12195,7 @@ final class LibraryEngine: ObservableObject {
             }
         }
 
-        for member in lens.body.castMembers ?? [] {
+        for member in (lens.map { [$0] } ?? projectLenses.lenses).flatMap({ $0.body.castMembers ?? [] }) {
             claimAlias(characterId: member.characterId ?? "", name: member.name)
         }
         for member in goalCast.members {
@@ -15766,6 +15803,7 @@ final class LibraryEngine: ObservableObject {
         )
         lastError = ""
 
+        var itemUnderAnalysis: MediaItemRecord?
         do {
             var updatedObservations = mediaObservationsById
             var analyzedCount = 0
@@ -15797,6 +15835,8 @@ final class LibraryEngine: ObservableObject {
                     return
                 }
 
+                itemUnderAnalysis = item
+                mediaAnalysisItemErrors.removeValue(forKey: item.mediaId)
                 let input = try mediaObservationInput(for: item)
                 let memoryKey = MediaAnalysisMemoryKey.current(visionInputSha256: input.sha256)
                 if let existing = updatedObservations[item.mediaId],
@@ -15926,7 +15966,14 @@ final class LibraryEngine: ObservableObject {
                 return
             }
             lastError = error.localizedDescription
-            mediaAnalysisStatus = "Media analysis failed"
+            // The failure belongs to the item that was being analyzed: its card
+            // carries the diagnosis, and the run banner names the file.
+            if let failedItem = itemUnderAnalysis {
+                mediaAnalysisItemErrors[failedItem.mediaId] = error.localizedDescription
+                mediaAnalysisStatus = "Media analysis failed on \(failedItem.filename)"
+            } else {
+                mediaAnalysisStatus = "Media analysis failed"
+            }
             appendMediaAnalysisLog(kind: "error", message: error.localizedDescription)
             mediaAnalysisRunState = .failed
         }
@@ -24186,21 +24233,26 @@ final class LibraryEngine: ObservableObject {
     }
 
     /// Drops real footage (a source video or Studio trim) into a shot row.
-    func insertShotClip(shotId: String, mediaId: String, at index: Int) {
-        guard let project = currentProject else { return }
-        guard frozenCutPermits(shotId: shotId, tailPredicate: { index >= $0 }) else { return }
+    @discardableResult
+    func insertShotClip(shotId: String, mediaId: String, at index: Int) -> Bool {
+        guard let project = currentProject else { return false }
+        guard frozenCutPermits(shotId: shotId, tailPredicate: { index >= $0 }) else { return false }
         guard let media = items.first(where: { $0.mediaId == mediaId }), media.kind == .video else {
             aestheticStatus = "Only videos can be placed as footage"
-            return
+            return false
         }
         let now = DateFormats.now()
-        persistShotTimeline(
+        guard persistShotTimeline(
             shotTimeline.updatingShot(shotId: shotId, now: now) {
                 $0.insertingClipEntry(clipMediaId: media.mediaId, at: index, now: now)
             },
             for: project
-        )
+        ) else {
+            aestheticStatus = "Could not save the footage placement. " + lastError
+            return false
+        }
         aestheticStatus = "Placed footage \(media.filename) in the shot"
+        return true
     }
 
     /// One media drop from the Scenes panel onto a shot row. Media drags
@@ -24230,10 +24282,10 @@ final class LibraryEngine: ObservableObject {
             aestheticStatus = reason
             return nil
         case .placeClip(let clipMediaId):
-            insertShotClip(shotId: shotId, mediaId: clipMediaId, at: index)
+            guard insertShotClip(shotId: shotId, mediaId: clipMediaId, at: index) else { return nil }
             return .clip(mediaId: clipMediaId)
         case .placeFrame(let frameImageId):
-            insertShotFrame(shotId: shotId, frameImageId: frameImageId, at: index)
+            guard insertShotFrame(shotId: shotId, frameImageId: frameImageId, at: index) else { return nil }
             aestheticStatus = "Placed Frame \(media?.filename ?? "") in the shot"
             return .frame(frameImageId: frameImageId)
         case .adoptImageAsFrame:
@@ -24243,7 +24295,7 @@ final class LibraryEngine: ObservableObject {
                 // addMediaImageAsFrame already set the honest failure status.
                 return nil
             }
-            insertShotFrame(shotId: shotId, frameImageId: adopted.imageId, at: index)
+            guard insertShotFrame(shotId: shotId, frameImageId: adopted.imageId, at: index) else { return nil }
             aestheticStatus = "Added \(media.filename) as a Frame and placed it in the shot"
             return .frame(frameImageId: adopted.imageId)
         }
@@ -24491,6 +24543,10 @@ final class LibraryEngine: ObservableObject {
         insertionIds: Set<String>,
         rate: Double
     ) -> ShotPictureStateEdit? {
+        guard rate.isFinite else {
+            aestheticStatus = "Enter a finite speed from 0.10× to 16.00×"
+            return nil
+        }
         let clamped = min(max(rate, ShotPictureInsertion.minimumRate), ShotPictureInsertion.maximumRate)
         // THE 2-FRAME OUTPUT LAW guards every rate change (previously a copy
         // near the minimum span could be driven sub-frame).
@@ -24633,6 +24689,10 @@ final class LibraryEngine: ObservableObject {
         rate: Double
     ) -> ShotPictureStateEdit? {
         guard let shot = shotForEditing(shotId: shotId) else { return nil }
+        guard rate.isFinite else {
+            aestheticStatus = "Enter a finite speed from 0.10× to 16.00×"
+            return nil
+        }
         let clamped = min(max(rate, ShotPictureInsertion.minimumRate), ShotPictureInsertion.maximumRate)
         guard abs(clamped - 1) >= 0.001 else {
             aestheticStatus = "1× is no change — pick a slower or faster speed"
@@ -27507,8 +27567,10 @@ final class LibraryEngine: ObservableObject {
         }
     }
 
-    func moveShotEntry(shotId: String, entryId: String, toIndex index: Int) {
-        guard let project = currentProject else { return }
+    @discardableResult
+    func moveShotEntry(shotId: String, entryId: String, toIndex index: Int) -> Bool {
+        guard let project = currentProject,
+              shotForEditing(shotId: shotId)?.entries.contains(where: { $0.entryId == entryId }) == true else { return false }
         // Reordering is legal only wholly WITHIN the unrendered tail — the
         // terminal-gap drag between two appended cells must not hit a
         // confusing refusal, while rendered material stays untouchable.
@@ -27517,9 +27579,9 @@ final class LibraryEngine: ObservableObject {
                   let entryIndex = shotForEditing(shotId: shotId)?
                       .entries.firstIndex(where: { $0.entryId == entryId }) else { return false }
             return entryIndex >= tail
-        }) else { return }
+        }) else { return false }
         let now = DateFormats.now()
-        persistShotTimeline(
+        return persistShotTimeline(
             shotTimeline.updatingShot(shotId: shotId, now: now) {
                 $0.movingEntry(entryId: entryId, toIndex: index, now: now)
             },
@@ -28473,42 +28535,29 @@ final class LibraryEngine: ObservableObject {
     @Published private(set) var isCollectingShotFrame = false
 
     /// Captures a still of the shot player's current playhead moment into the
-    /// media library: extract from the SOURCE file (segment clip, bridge,
-    /// Look, or stitched video — the player maps output time to file time),
-    /// archive as a NON-rejected `collected_shot_frame` so it lands in Story
-    /// Inputs, lists under Creations ▸ Shot Artifacts, and is immediately
-    /// usable as a Frame Creator reference. Deterministic id: recapturing the
-    /// same file moment replaces rather than duplicates.
+    /// media library using the actual displayed composition pixels. Recapturing
+    /// identical pixels at the same display time replaces the collected item.
     @discardableResult
     func collectShotFrameStill(
         shotId: String,
-        sourceVideoPath: String,
-        fileSeconds: Double,
-        outputSeconds: Double
+        capture: ShotDisplayedFrame
     ) async -> MediaItemRecord? {
-        guard let project = currentProject,
-              !sourceVideoPath.trimmed.isEmpty,
-              FileManager.default.fileExists(atPath: sourceVideoPath) else {
-            aestheticStatus = "There is no rendered video to collect from"
-            return nil
-        }
+        guard let project = currentProject, !capture.pngData.isEmpty else { return nil }
+        let sourceVideoPath = capture.sourcePath
+        let outputSeconds = capture.outputSeconds
         guard !isCollectingShotFrame else { return nil }
         isCollectingShotFrame = true
         defer { isCollectingShotFrame = false }
         let shotName = shotTimeline.shots.first { $0.shotId == shotId }?.name.trimmed ?? ""
-        let mediaId = "genmedia_\(shortHash("\(project.projectId):shot_frame:\(shotId):\(sourceVideoPath):\(String(format: "%.3f", fileSeconds))", length: 20))"
+        let mediaId = "genmedia_\(shortHash("\(project.projectId):shot_frame:\(shotId):\(capture.pixelIdentity):\(String(format: "%.9f", outputSeconds))", length: 20))"
         let stillURL = contextStore.aestheticProofDirectory(for: project)
             .appendingPathComponent("shotframe_\(shortHash(mediaId, length: 12)).png")
         do {
             try ensureDirectory(contextStore.aestheticProofDirectory(for: project))
-            _ = try await VideoChainMedia.extractFrameStill(
-                videoURL: URL(fileURLWithPath: sourceVideoPath),
-                atSeconds: max(fileSeconds, 0),
-                outputURL: stillURL
-            )
+            try capture.pngData.write(to: stillURL, options: .atomic)
         } catch {
             lastError = error.localizedDescription
-            aestheticStatus = "Could not extract the frame"
+            aestheticStatus = "Could not save the displayed frame"
             return nil
         }
         let timestampLabel = String(format: "%.1fs", outputSeconds)
@@ -28702,6 +28751,18 @@ final class LibraryEngine: ObservableObject {
         }
         value.updatedAt = now
         return persistShotTimeline(shotTimeline.updatingShot(shotId: shotId, now: now) { _ in value }, for: project)
+    }
+
+    /// THE CONSUMED DRAFT LAW's engine half: once the render a draft shaped is
+    /// persisted as a generating version, the draft's recipe lands on the
+    /// placement's override lanes and the draft itself leaves the bank.
+    private func consumeShotTakeDraft(_ draft: ShotTakeDraft, shotId: String, for project: ProjectRecord) {
+        let now = DateFormats.now()
+        persistShotTimeline(shotTimeline.updatingShot(shotId: shotId, now: now) {
+            var value = draft.consumed(from: $0)
+            value.updatedAt = now
+            return value
+        }, for: project)
     }
 
     @discardableResult
@@ -31537,7 +31598,7 @@ final class LibraryEngine: ObservableObject {
         case .mediaMotion(let jobId):
             cancelMediaMotionRender(jobId: jobId)
         case .reelBakes:
-            cancelReelBakes()
+            cancelReelBakes(reason: "stopped from Activity before it finished")
         case .mediaAnalysis:
             armMediaAnalysisCancel()
         }
@@ -31616,17 +31677,20 @@ final class LibraryEngine: ObservableObject {
         }
     }
 
-    /// Modal close. Queued claims clear and the drain task tears down; a
-    /// finished bake stays ready (the cache is durable), and an in-flight
-    /// export's partial file is deleted by the guard's failure path.
-    func cancelReelBakes() {
+    /// Modal close (no reason): queued claims clear and the drain task tears
+    /// down; a finished bake stays ready (the cache is durable), and an
+    /// in-flight export's partial file is deleted by the guard's failure
+    /// path. A cancel from elsewhere while the reel is open passes a reason,
+    /// and the cut keeps a named, retryable place on the board instead of
+    /// vanishing into a reel that quietly plays without it.
+    func cancelReelBakes(reason: String? = nil) {
         reelBakeRunToken = UUID()
         reelBakeDrainTask?.cancel()
         reelBakeDrainTask = nil
         for (cutId, state) in reelBakeStates {
             switch state {
             case .queued, .baking:
-                reelBakeStates[cutId] = nil
+                reelBakeStates[cutId] = reason.map { .canceled($0) }
             default:
                 break
             }
@@ -32328,7 +32392,7 @@ final class LibraryEngine: ObservableObject {
                     }
                     return await startShotContinuationRetake(shotId: shotId, entryId: record.entryId,
                         request: ShotContinuationRequest(mode: template.targetFrame != nil ? .arriveAtFrame : (item.renderStack.isNativeFootageExtend ? .nativeExtend : .outFrame),
-                            stack: item.renderStack, prompt: item.effectivePrompt, preparedAnchor: anchor, targetFrame: template.targetFrame)).succeeded
+                            stack: item.renderStack, prompt: item.effectivePrompt, preparedAnchor: anchor, referenceRecipe: template.referenceRecipe, targetFrame: template.targetFrame)).succeeded
                 }
             }
             if !shotPendingEndingEntryIds(shot).isEmpty {
@@ -32529,6 +32593,9 @@ final class LibraryEngine: ObservableObject {
                 updatedAt: now
             )
             persistShotRenderVersion(artifact, shotId: shotId, for: project, activate: activateResult)
+            // THE CONSUMED DRAFT LAW: the generating version is on record, so
+            // the draft that shaped it is provenance now, not an unsent edit.
+            if let takeDraft { consumeShotTakeDraft(takeDraft, shotId: shotId, for: project) }
             let workSegments = plan.segments.compactMap { segment -> WorkflowSegmentProgress? in
                 if case .generated(let item) = segment {
                     guard case .generate = decisions[item.index] else { return nil }

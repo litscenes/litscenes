@@ -1678,14 +1678,14 @@ struct LensGenerationTheaterView: View {
 
     private func generatingCaption(_ image: ProjectLensHeroImage) -> String {
         let label = image.label.trimmed.isEmpty ? "concept" : image.label
-        let priorReady = images.filter { $0.status == "ready" && $0.imageIndex < image.imageIndex }.count
-        if priorReady == 0 {
-            return "Rendering \(label)"
-        }
-        if isSequence, LensConceptCategory.category(for: image) == .scenery {
+        // Only the sequence flow actually chains from prior renders. A count of
+        // earlier ready frames on the board says nothing about what this render
+        // attaches, so the caption must not claim continuity from it.
+        if isSequence, LensConceptCategory.category(for: image) == .scenery,
+           images.contains(where: { $0.status == "ready" && $0.imageIndex < image.imageIndex }) {
             return "Rendering \(label) — advancing from the previous stop"
         }
-        return "Rendering \(label) — world continuity from \(priorReady) earlier render\(priorReady == 1 ? "" : "s")"
+        return "Rendering \(label)"
     }
 
     private func borderColor(_ image: ProjectLensHeroImage) -> Color {

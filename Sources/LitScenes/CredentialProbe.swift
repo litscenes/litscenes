@@ -2,9 +2,13 @@ import Foundation
 
 /// Result of a zero-spend authenticated ping against a provider. The law:
 /// a transport failure is never reported as a rejected key — `.unreachable`
-/// absorbs every timeout, offline, and unexpected-status outcome.
+/// absorbs every timeout, offline, and unexpected-status outcome. A 429 is
+/// `.validButLimited`, never plain `.valid`: auth passed, but the provider
+/// is refusing work (a throttle or an exhausted balance), and reporting
+/// "verified" would promise renders the account may not be able to pay for.
 enum CredentialProbeOutcome: Equatable, Sendable {
     case valid
+    case validButLimited(httpStatus: Int)
     case invalidKey(httpStatus: Int)
     case unreachable(detail: String)
 }
@@ -60,8 +64,8 @@ struct CredentialProbe: Sendable {
         case 401, 403:
             return .invalidKey(httpStatus: status)
         case 429:
-            // A throttle means auth passed.
-            return .valid
+            // Auth passed, but the provider refused the work itself.
+            return .validButLimited(httpStatus: status)
         default:
             return .unreachable(detail: "Unexpected response (HTTP \(status))")
         }

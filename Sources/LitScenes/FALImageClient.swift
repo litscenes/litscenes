@@ -936,7 +936,7 @@ private func containsFailure(in dictionary: [String: Any]) -> Bool {
 
 private func workflowFailureSummary(from value: Any) -> String {
     if let dictionary = value as? [String: Any] {
-        let keys = ["error", "errors", "message", "messages", "msg", "reason", "failureReason", "failedReason", "exception", "error_type", "errorType"]
+        let keys = ["error", "errors", "detail", "message", "messages", "msg", "reason", "failureReason", "failedReason", "exception", "error_type", "errorType"]
         let parts = keys.compactMap { key -> String? in
             guard let entry = dictionary[key] else { return nil }
             if let text = entry as? String, !text.trimmed.isEmpty {

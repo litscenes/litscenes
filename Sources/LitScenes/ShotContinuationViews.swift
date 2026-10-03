@@ -8,6 +8,7 @@ struct ShotContinuationReviewView: View {
     let configuredModels: Set<ShotRenderModel>
     let pricing: FALPricingSnapshot?
     let title: String
+    var characterReferences: [ShotCharacterReference]
     var isPreparing: Bool
     var onRefresh: () -> Void
     var onPrecedingEnding: (String) -> Void
@@ -19,12 +20,17 @@ struct ShotContinuationReviewView: View {
     @State private var prompt: String
     @State private var resolutionOverride: String?
     @State private var hasLoadedRecipe = false
+    @State private var savedReferences: [ShotCharacterReference] = []
+    @State private var continueWithoutImages = false
+    @State private var reviewingReferences = false
+    @State private var billingRevision = 0
 
     init(
         availability: ShotContinuationAvailability,
         configuredModels: Set<ShotRenderModel>,
         pricing: FALPricingSnapshot?,
         title: String,
+        characterReferences: [ShotCharacterReference] = [],
         isPreparing: Bool = false,
         onRefresh: @escaping () -> Void = {},
         onPrecedingEnding: @escaping (String) -> Void = { _ in },
@@ -35,6 +41,9 @@ struct ShotContinuationReviewView: View {
         self.configuredModels = configuredModels
         self.pricing = pricing
         self.title = title
+        self.characterReferences = characterReferences
+        _savedReferences = State(initialValue: availability.referenceRecipe?.characters ?? [])
+        _continueWithoutImages = State(initialValue: availability.referenceRecipe?.usesImages == false)
         self.isPreparing = isPreparing
         self.onRefresh = onRefresh
         self.onPrecedingEnding = onPrecedingEnding
@@ -47,6 +56,63 @@ struct ShotContinuationReviewView: View {
             : availability.outFrameStack)
         _prompt = State(initialValue: availability.suggestedPrompt)
         _resolutionOverride = State(initialValue: availability.resolutionOverride)
+    }
+
+    @ViewBuilder
+    private var referenceControls: some View {
+        if !mentionedReferences.isEmpty {
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(mentionedReferences) { character in
+                    HStack(spacing: 6) {
+                        Text("@" + character.name).font(CanonType.interface(10))
+                        ForEach(Array(character.images.enumerated()), id: \.offset) { _, image in
+                            if let thumbnail = StripThumbnailCache.shared.image(path: image.path) {
+                                Image(nsImage: thumbnail).resizable().scaledToFit().frame(width: 42, height: 32)
+                            }
+                        }
+                        if !character.isUsable {
+                            Text("Needs an anchor and a distinct source view").font(CanonType.interface(10)).foregroundStyle(CanonColor.rust)
+                        }
+                    }.opacity(continueWithoutImages ? 0.5 : 1)
+                }
+                if !supportsReferences && !continueWithoutImages {
+                    Text("Character images require Kling 3 Pro · your FAL account.").font(CanonType.interface(10))
+                    Button("Use Kling 3 Pro with my FAL account — review price") {
+                        mode = availability.targetFrame == nil ? .outFrame : .arriveAtFrame
+                        stack = stack.replacingModel(.falKlingV3Pro)
+                        ProviderBilling.select(.personal, for: .video(.falKlingV3Pro))
+                        billingRevision += 1
+                    }.buttonStyle(.plain).underline()
+                }
+                HStack(spacing: 12) {
+                    Button("Review references") { reviewingReferences = true }.buttonStyle(.plain).underline()
+                    Button(continueWithoutImages ? "Attach character images" : "Continue without images") {
+                        continueWithoutImages.toggle()
+                    }.buttonStyle(.plain).underline()
+                }.font(CanonType.interface(10))
+                if continueWithoutImages {
+                    Text("Names remain in the direction; no character images will be sent.").font(CanonType.interface(10))
+                }
+            }
+            .popover(isPresented: $reviewingReferences) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("CHARACTER REFERENCES").font(CanonType.archive(9, weight: .bold))
+                    Text("The first image anchors identity. Kling also needs 1–3 distinct source views, at least 300 pixels per side and an aspect ratio from 0.4 to 2.5. Edit sources in Characters, then refresh references here.")
+                        .font(CanonType.interface(11)).fixedSize(horizontal: false, vertical: true)
+                    ForEach(mentionedReferences) { character in
+                        Text(character.name).font(CanonType.interface(11))
+                        HStack {
+                            ForEach(Array(character.images.enumerated()), id: \.offset) { _, image in
+                                if let thumbnail = StripThumbnailCache.shared.image(path: image.path) {
+                                    Image(nsImage: thumbnail).resizable().scaledToFit().frame(width: 90, height: 90)
+                                }
+                            }
+                        }
+                    }
+                    Button("Refresh from Characters") { savedReferences = []; reviewingReferences = false; onRefresh() }
+                }.padding(14).frame(width: 420)
+            }
+        }
     }
 
     private var executableOutFrameModels: [ShotRenderModel] {
@@ -85,8 +151,24 @@ struct ShotContinuationReviewView: View {
             : String(format: "EST. $%.2f", price)
     }
 
+    private var availableReferences: [ShotCharacterReference] {
+        savedReferences + characterReferences.filter { current in !savedReferences.contains { $0.id == current.id } }
+    }
+    private var mentionedReferences: [ShotCharacterReference] {
+        RosterMentionResolver.resolve(prompt: prompt, entries: availableReferences.map(\.entry)).mentions.compactMap { entry in
+            availableReferences.first { $0.id == entry.id }
+        }
+    }
+    private var referenceRecipe: ShotContinuationReferenceRecipe? {
+        mentionedReferences.isEmpty ? nil : ShotContinuationReferenceRecipe(characters: mentionedReferences, usesImages: !continueWithoutImages)
+    }
+    private var supportsReferences: Bool {
+        _ = billingRevision
+        return mode != .nativeExtend && stack.model == .falKlingV3Pro && !usesGo
+    }
     private var canSubmit: Bool {
         !isPreparing && availability.canContinue
+            && (mentionedReferences.isEmpty || continueWithoutImages || (supportsReferences && mentionedReferences.allSatisfy(\.isUsable)))
             && !prompt.trimmed.isEmpty
             && availability.anchor != nil
             && (usesGo || stack.providerSelection == .civitaiWan || price != nil)
@@ -180,13 +262,8 @@ struct ShotContinuationReviewView: View {
                 .font(CanonType.archive(7.5, weight: .semibold))
                 .kerning(0.8)
                 .foregroundStyle(ShotReviewPalette.ink.opacity(0.65))
-            TextEditor(text: $prompt)
-                .font(CanonType.interface(12))
-                .scrollContentBackground(.hidden)
-                .padding(7)
-                .frame(height: 92)
-                .background(Color.white.opacity(0.56), in: RoundedRectangle(cornerRadius: 7))
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(CanonColor.hairlinePaper, lineWidth: 1))
+            ShotContinuationDirectionEditor(prompt: $prompt, references: availableReferences)
+            referenceControls
 
             HStack(spacing: 8) {
                 Button("CANCEL") { onCancel() }
@@ -198,7 +275,7 @@ struct ShotContinuationReviewView: View {
                         mode: mode,
                         stack: stack,
                         prompt: prompt,
-                        preparedAnchor: anchor, targetFrame: availability.targetFrame,
+                        preparedAnchor: anchor, referenceRecipe: referenceRecipe, targetFrame: availability.targetFrame,
                         baseTakeId: availability.baseTakeId, resolutionOverride: resolutionOverride
                     ))
                 } label: {
@@ -226,13 +303,15 @@ struct ShotContinuationReviewView: View {
         .onChange(of: stack.model) { _, model in
             if let resolutionOverride, !Hailuo3ResolutionPreference.choices(for: model).contains(resolutionOverride) { self.resolutionOverride = nil }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .goFundingChanged)) { _ in onRefresh() }
+        .onReceive(NotificationCenter.default.publisher(for: .goFundingChanged)) { _ in billingRevision += 1; onRefresh() }
         .onChange(of: isPreparing) { _, preparing in
             if !preparing && !hasLoadedRecipe {
                 mode = availability.preferredMode
                 stack = mode == .nativeExtend ? (availability.nativeStack ?? availability.outFrameStack) : availability.outFrameStack
                 if prompt.trimmed.isEmpty { prompt = availability.suggestedPrompt }
                 resolutionOverride = availability.resolutionOverride
+                savedReferences = availability.referenceRecipe?.characters ?? []
+                continueWithoutImages = availability.referenceRecipe?.usesImages == false
                 hasLoadedRecipe = true
             }
         }

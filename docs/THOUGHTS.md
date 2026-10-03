@@ -147,3 +147,27 @@
 2026-09-28T20:50:00Z The existing app builds successfully with Command Line Tools (Swift 6.1.2, macOS SDK 15.5), so installer prerequisites now check the actual compiler and SDK instead of requiring full Xcode selection. Existing swift build and all 1,345 tests pass in the canonical working tree.
 
 2026-09-28T21:23:07Z Portable scene exports reuse the website catalog envelope but retain order and skip state in a separate scene manifest; project ideas remain contextual discovery routes instead of implied frame interpretations.
+
+2026-10-01T02:24:17Z The probe law "429 means auth passed" conflates a throttle with an exhausted balance; a zero-credit key currently reads "Verified". Resolution: a distinct limited outcome that keeps the transport-vs-auth law intact while telling the truth about refusal to work.
+
+2026-10-01T02:24:17Z The welcome's single-hero claim ("start with one OpenAI key") understates that default FAL renders also need FAL credentials; the owner chose an honest two-key studio over just-in-time key prompts for the first session.
+
+2026-10-01T03:05:00Z The stuck render was the coordinator's vendor hold: classify 429-with-string-detail as transient, retry twice, then park on an unbounded continuation whose only signals sit in LOGS. Resolution: refusals fail fast at the artifact; the hold machinery remains only for acceptance-unknown review, which protects against double-spend and still never resubmits.
+
+2026-10-01T03:05:00Z Animate-from-frame runs on CivitAI WAN while setup's heroes are OpenAI and FAL, and the stored motion artifact has no playback surface; surfacing Animate as an activation verb before resolving provider and playback would violate the executable-controls rule.
+
+2026-10-03T04:00:25Z scene-editing-controls: Collect Frame must capture composed player pixels; mapping output time back to a source loses speed, trim and transition semantics. Character references require explicit personal FAL Kling selection; Go does not accept elements.
+
+2026-10-03T04:33:05Z scene-editing-controls: The old source capture projection omitted ranged-preview offsets and picture rates; collecting the active item output also preserves blended transitions. Pausing alone would not repair that projection.
+2026-10-03T04:33:05Z scene-editing-controls: A character element needs an identity image plus a distinct additional view. Do not duplicate one image to manufacture provider eligibility; explicit text-only continuation remains available.
+
+2026-10-03T04:44:26Z scene-editing-controls: The local pixel probe showed AVFoundation can expose a following source sample at a composition's exclusive end; capture now settles on the composition's declared final output sample and rejects item/time changes while waiting for pixels.
+
+2026-10-03T10:27:07Z reel-play-all: The reel currently autoplays the first ready cut while the remaining local bakes run. If that partial reel ends first, its replacement inherits a paused player. Resolve the selected bake batch before starting the full reel; failed or skipped cuts remain explicit on the existing board.
+
+ cut-strip-under-viewer: The shot player stacked Full Shot actions, SOURCES, the scope row and the cut tool row between the viewer and the picture filmstrip, so the strip read as a gauge far from the picture it scrubs. Resolved by making the filmstrip the viewer scrubber — directly under the player at 102pt (60% taller) — with its tool row, legend and scope lines following; the Look control bar keeps the same slot. Tile generation scales with strip height (16:9 tiles, 224px bucket), so no loader change.
+
+2026-10-03T10:34:24Z reel-play-all: An offline playback probe reproduced the first cut ending before the second was ready and then verified the assembled two-cut reel continued across the boundary to its full duration. Readiness must also trigger on the last bake failing or being skipped, because that transition need not change the ready-clip composition key.
+
+2026-10-03T11:09:49Z take-draft-consumption: The take strip was right and the editor was wrong — per-base-take drafts were never consumed, so each base take showed the edit that had already become the next take. Resolved by consuming the one draft at the dispatch persist (regular renders and continuation retakes) and projecting its recipe onto the override lanes; sibling drafts stay. Tension: consuming before the render succeeds means a failed take leaves the edit only on the in-film seed, accepted because the override lane keeps the text and a draft is defined as an unsent edit.
+2026-10-03T11:09:49Z reel-bake-honesty: The running debug binary predated the reel-play-all autoplay gate, and a bake canceled while the reel was open became a nil state the board hides. Canceled is now a named retryable state when a reason is given (Activity); closing the reel still clears silently because the next open re-queues.

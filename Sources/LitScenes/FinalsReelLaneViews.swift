@@ -306,14 +306,23 @@ struct FinalsReelBakeBoard: View {
                 return (entry.cutId, "\(name) — failed: \(message)", true, false)
             case .skipped(let reason):
                 return (entry.cutId, "\(name) — skipped: \(reason)", true, false)
+            case .canceled(let reason):
+                return (entry.cutId, "\(name) — canceled: \(reason)", true, false)
             case .ready, nil:
                 return nil
             }
         }
     }
 
-    private var hasFailure: Bool {
-        states.values.contains { if case .failed = $0 { return true }; return false }
+    /// Failed and canceled bakes left no cached file, so ensure re-queues
+    /// exactly them.
+    private var canRetry: Bool {
+        states.values.contains {
+            switch $0 {
+            case .failed, .canceled: return true
+            default: return false
+            }
+        }
     }
 
     var body: some View {
@@ -333,12 +342,12 @@ struct FinalsReelBakeBoard: View {
                         .lineLimit(1)
                     }
                 }
-                if hasFailure, let onRetry {
-                    Button("Retry Failed Bakes") {
+                if canRetry, let onRetry {
+                    Button("Retry Unfinished Bakes") {
                         onRetry()
                     }
                     .buttonStyle(PlateButtonStyle())
-                    .help("Re-runs only what failed — finished bakes stay cached")
+                    .help("Re-runs only what failed or was canceled — finished bakes stay cached")
                 }
             }
             .padding(8)

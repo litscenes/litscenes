@@ -105,9 +105,16 @@ struct ProviderFailure: Error, LocalizedError, Sendable {
         let funding = status == 402 || fundingCodes.contains(code)
         let auth = status == 401 || (status == 403 && ["invalid_api_key", "authentication_error", "permission_denied"].contains(code))
         let transient = [408, 429, 500, 502, 503, 504, 529].contains(status) && !funding
-        let message = funding ? "The vendor account needs funds or quota."
-            : auth ? "The vendor credential needs attention."
-            : "The vendor returned HTTP \(status)\(code.isEmpty ? "" : " (\(code))")."
+        let name = LitScenesProviderCredential(rawValue: provider)?.label ?? provider
+        // The provider's own explanation, when its body carries one, is the
+        // diagnosis the user acts on — a bare status code is not.
+        let explanation = String(WorkflowPrivacy.text(
+            (error["message"] as? String ?? root["detail"] as? String ?? root["message"] as? String ?? "").trimmed
+        ).prefix(200))
+        let suffix = explanation.isEmpty ? "" : " \(name) says: \(explanation)"
+        let message = funding ? "The \(name) account is out of funds or quota (HTTP \(status)). Add credits with \(name), then retry.\(suffix)"
+            : auth ? "\(name) refused the saved credential (HTTP \(status)). Check the key in Settings, then retry.\(suffix)"
+            : "\(name) returned HTTP \(status)\(code.isEmpty ? "" : " (\(code))").\(suffix)"
         return ProviderFailure(provider: provider, statusCode: status, code: code,
             message: message, accountBlocked: funding || auth, transient: transient,
             acceptanceUnknown: submission && (status == 408 || status >= 500))
