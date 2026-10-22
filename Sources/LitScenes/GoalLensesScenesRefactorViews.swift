@@ -277,6 +277,7 @@ struct GoalV2WorkspaceView: View {
     private var goalFieldRail: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                MeaningGraphProjectControl(library: library)
                 goalMoodboardArticulationSection
                 goalStyleTaxonomySection
                 if isViewingActiveGoalVersion {

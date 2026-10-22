@@ -114,9 +114,9 @@ Personal-key setup offers OpenAI Save & Test. Video and narration request additi
 
 ## Story inference
 
-Personal-key mode uses an OpenAI-compatible provider with the bundled starter meaning vocabulary. Advanced settings support compatible endpoint and model overrides.
+Desktop includes the complete meaning graph as YAML and SQLite. Lookup, relationships, evidence, aesthetic matching and story/form orchestration run locally. Personal-key generation uses an OpenAI-compatible provider; Advanced settings support compatible endpoint and model overrides. [Graph packs and project overlays](docs/meaning-graph.md) are editable and independently updateable.
 
-The Go service bundles hosted story context and managed inference behind one account, without graph service credentials to configure. Billing choices affect future work across projects and preserve existing media. Local import, browsing, editing, and export remain available without a subscription.
+Optional Go credits fund generic provider inference; the same local graph engine runs for every funding choice. No graph service credentials are needed. Billing choices affect future work across projects and preserve existing media. Local import, browsing, editing, and export remain available without a subscription.
 
 ## Troubleshooting
 
@@ -132,7 +132,7 @@ Here is the honest economics of this project.
 
 The code is licensed `AGPL-3.0-only`: you can use, modify, sell, and redistribute LitScenes, but derivatives stay open — the AGPL is what stops a proprietary fork. Separately, trademark policy (not the AGPL) reserves the LitScenes name, icon, and official-build identity, so a modified distribution must rename and re-badge; see `TRADEMARKS.md`. A commercial license is available for organizations that need different terms; see `LICENSING.md`.
 
-Go subscriptions help fund work on the free app through an optional hosted story and generation service. Self-serve use does not require a LitScenes subscription; your chosen vendors bill their usage separately.
+Go subscriptions help fund work on the free app through an optional managed generation service. Self-serve use does not require a LitScenes subscription; your chosen vendors bill their usage separately.
 
 ## Contributing
 

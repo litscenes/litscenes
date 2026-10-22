@@ -50,7 +50,7 @@ enum ProjectGoalMeaningRefSource: String, Codable, Hashable, Sendable {
     case operatorSelected = "operator"
 }
 
-enum ProjectGoalAestheticTermFacetType: String, Codable, Hashable, Sendable {
+enum ProjectGoalAestheticTermFacetType: String, CaseIterable, Codable, Hashable, Sendable {
     case keyMotif = "key_motif"
     case keyValue = "key_value"
     case keyColour = "key_colour"

@@ -1852,6 +1852,8 @@ private struct AppSettingsView: View {
             }
             .toggleStyle(.switch)
 
+            MeaningGraphLibraryPanel()
+
             storyInferenceFieldRow(
                 title: "OpenAI-compatible base URL (personal-key stories, text, and images)",
                 placeholder: "https://api.openai.com (or an OpenRouter-style /v1 base)",

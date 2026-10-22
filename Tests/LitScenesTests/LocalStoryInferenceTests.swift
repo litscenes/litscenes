@@ -30,11 +30,11 @@ private func emptyLensSnapshot(lensId: String) -> SceneStoryLensSnapshot {
     #expect(index.node(forSlug: sample.slug) != nil)
 }
 
-@Test func localResolveHydratesFromBundledVocabularyAndDisclosesGaps() async throws {
+@Test func localResolveHydratesBundledGraphAndDisclosesUnresolvedRefs() async throws {
     let index = try LocalMeaningIndex.loadBundled()
-    let known = try #require(index.nodes.first)
+    let known = try #require(index.nodes.max(by: { $0.edgeDegree < $1.edgeDegree }))
     let client = LocalStoryInferenceClient(
-        apiKey: "test",
+        apiKey: "",
         responsesURL: URL(string: "https://api.openai.com/v1/responses")!,
         storyModel: "gpt-5.5",
         frameFormModel: "gpt-5.5"
@@ -55,19 +55,18 @@ private func emptyLensSnapshot(lensId: String) -> SceneStoryLensSnapshot {
 
     let response = try await client.resolve(request)
     #expect(response.projectId == "project_test")
-    #expect(response.selectedMeaningNodes.count == 2)
+    #expect(response.selectedMeaningNodes.count == 1)
     #expect(response.selectedMeaningNodes[0].slug == known.slug)
     #expect(response.selectedMeaningNodes[0].definition == known.definition)
-    #expect(response.selectedMeaningNodes[1].name == "Invented Ref")
-    #expect(response.meaningEdgeNeighbors.isEmpty)
-    #expect(response.meaningEvidence.isEmpty)
+    #expect(!response.meaningEdgeNeighbors.isEmpty)
+    #expect(response.graphProvenance?.counts["nodes"] == index.nodes.count)
+    #expect(response.graphTraceId?.isEmpty == false)
     // Direct mode must be end-to-end: the Scene Plan generator hard-requires
     // style candidates, so the local resolve serves them from the catalog.
     #expect(!response.styleCandidates.isEmpty)
     #expect(response.styleCandidates.allSatisfy { !$0.styleId.isEmpty && !$0.collectionKey.isEmpty })
-    #expect(response.warnings.contains { $0.contains("Local mode") })
     #expect(response.warnings.contains { $0.contains("never.a-real-slug") })
-    #expect(response.queryStats.resolvedMeaningNodeCount == 2)
+    #expect(response.queryStats.resolvedMeaningNodeCount == 1)
 }
 
 @Test func baseURLEndpointBuilding() {
@@ -97,14 +96,13 @@ private func emptyLensSnapshot(lensId: String) -> SceneStoryLensSnapshot {
         ref.slug = node.slug
         return ref
     }
-    let (candidates, warnings) = LocalFrameFormSelection.candidates(request: request, mode: "initial")
+    let (candidates, _) = LocalFrameFormSelection.candidates(request: request, mode: "initial")
     #expect(candidates.count >= 3)
     let slugs = Set(candidates.prefix(3).map { $0.node.slug })
     #expect(slugs.count == 3)
     #expect(candidates[0].roleHint == "grounded_extreme")
     #expect(candidates[1].roleHint == "tension_middle")
     #expect(candidates[2].roleHint == "abstract_extreme")
-    #expect(warnings.contains { $0.contains("Local mode") })
     #expect(candidates.prefix(3).allSatisfy { !$0.expression.isEmpty })
 }
 
@@ -122,7 +120,7 @@ private func emptyLensSnapshot(lensId: String) -> SceneStoryLensSnapshot {
     #expect(candidates.count >= 3)
     #expect(candidates[0].pole == "negative")
     #expect(candidates.allSatisfy { $0.relationToParent == "catalog" })
-    #expect(warnings.contains { $0.contains("no local graph edges") })
+    #expect(warnings.contains { $0.contains("Sparse graph neighborhood") })
 }
 
 @Test func frameFormDecodeValidatesLengthAndStyleLeaks() throws {

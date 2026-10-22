@@ -2,6 +2,17 @@
 
 LitScenes Desktop is the public, canonical macOS application for turning personal media into story-aware planning, generation, editing, and export workflows.
 
+## Embedded meaning graph
+
+- Ship the complete meaning graph and eligible aesthetic metadata as public YAML with a verified compiled SQLite database. Native lookup, alias search, traversal, evidence, aesthetic scoring and story/form orchestration require no graph server.
+- Projects pin their base pack and ordered custom additions/overrides by content hash, with graph history in project SQLite. Source YAML is stored once per Mac in a content-addressed library store, and the bundled pack is read from the app; documents written with inline YAML migrate on open. Validate and preview changes before atomic activation; a source missing from this Mac blocks activation with a plain message and leaves the current graph intact. In-flight and historical artifacts retain their graph identity.
+- The Goal interview offers only concepts and terms it can hold: bounded concept retrieval with every concept kind represented, and aesthetic terms limited to the Goal facet types with per-facet caps, ranked by relevance then breadth of use.
+- Goal → Meaning graph selects the project's configuration. Applying a change refreshes free local context without launching paid automation or rewriting saved stories/frames. Settings installs packs and sets defaults for newly initialized projects; independent updates require an explicit download and separate project activation.
+- Missing expressions or sparse relationships produce warnings/fallbacks. Invalid schema, unstable identities and dangling references prevent installation/activation without damaging the current graph.
+- Context, deterministic frame selection, provider requests, parsed outputs, failures and artifacts carry graph and workflow provenance through the canonical trace store. Personal and Go funding preserve their existing quotes, payer snapshots and recovery behavior using generic text transport.
+- Full graph pack: 1,529 concepts, 1,229 relationships, 1,545 evidence records, 708 aesthetics, 5,958 terms, 10,360 assignments. Raw corpora, private curation history and reference images remain excluded. See [formats and operation](meaning-graph.md).
+- Implementation is uncommitted pending explicit publication authorization. No release asset or app release is claimed, and the previous hosted service remains an operational cutover concern.
+
 ## Desktop Go onboarding
 
 Personal provider keys are the default setup. Go memberships are retained behind an explicit server feature flag; missing flags or failed configuration disable managed purchases and new generation. App Store purchases remain unavailable unless their existing readiness checks also pass. The following Go purchase requirements apply only when memberships are enabled.
@@ -23,9 +34,9 @@ Personal provider keys are the default setup. Go memberships are retained behind
 ## Product Contract
 
 - The app is local-first. Projects, media indexes, credentials, prompts, traces, and generated artifacts remain on the operator's Mac except for provider requests the operator explicitly configures.
-- An unconfigured Community install performs no background analytics or telemetry and remains usable with its bundled starter meaning and style resources.
+- An unconfigured Community install performs no background analytics or telemetry and remains usable with its bundled complete meaning graph and starter style resources.
 - The primary workflow is MEDIA → STORY → CHARACTERS → SCENES. It should lead with usable content and direct next actions rather than internal pipeline terminology.
-- Direct inference with the operator's own compatible key is a complete path. Optional hosted meaning retrieval may enrich it but must never be presented as required for the app to work.
+- Direct inference with the operator's own compatible key is a complete path. The same complete local graph powers both personal and managed inference; there is no hosted graph dependency.
 - Provider/model/parameter controls must affect the next execution exactly as shown. Unavailable capabilities are visibly locked or omitted, never selectable theater.
 - A provider refusal — credit exhaustion, a throttle persisting past bounded retries, a rejected credential, or an unreachable vendor — fails the requesting work immediately, carrying the provider's own explanation to the artifact that asked for it. No invisible hold and no automatic resubmission; a request whose paid acceptance is genuinely unknown may still pause for review instead of resubmitting. Key probes report a limited provider (HTTP 429) distinctly from a verified one.
 - A failed media analysis marks the failed item itself with the plain-language cause; the run-level banner names the file but the diagnosis lives at the point of intent.

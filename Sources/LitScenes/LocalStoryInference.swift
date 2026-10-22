@@ -1,94 +1,39 @@
 import Foundation
+import MeaningGraphCore
 
-// MARK: - Story Inference modes
-//
-// The story spine (Frame Context resolve → SceneStory generation → Frame Forms)
-// can run two ways:
-//
-//   direct — the app talks straight to an OpenAI-compatible Responses endpoint
-//            with the user's own key. Frame Context resolves against the bundled
-//            starter meaning vocabulary (no graph edges or corpus evidence), and
-//            the SceneStory / Frame Forms prompts and strict schemas run in-app.
-//            This mode needs nothing but OPENAI_API_KEY.
-//
-//   hosted — the existing LitScenes meaning service (endpoint + token): live
-//            meaning-graph retrieval (nodes, edge neighbors, corpus evidence,
-//            curated aesthetic/style candidates) plus managed inference.
-//
-// LITSCENES_STORY_INFERENCE selects explicitly ("direct" / "hosted"); when unset,
-// a configured meaning service wins and the app otherwise falls back to direct.
-
+// Graph resolution and creative orchestration always run on the Mac. This
+// mode identifies only who supplies and pays for the text provider request.
 enum StoryInferenceMode: String, CaseIterable, Identifiable, Sendable {
     case direct
     case hosted
-
     var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .direct: "Direct (your key)"
-        case .hosted: "LitScenes Hosted"
-        }
-    }
-
-    static let preferenceKey = "LITSCENES_STORY_INFERENCE"
-
+    var label: String { self == .direct ? "Your key · local graph" : "Go credits · local graph" }
     static func resolved() -> StoryInferenceMode {
-        if ProviderBilling.source(for: .story) == .go { return .hosted }
-        if GoConnection.isManaged { return .direct }
-        if UserDefaults.standard.string(forKey: "LitScenesFundingMode") == "personal" { return .direct }
-        let raw = LitScenesCredentialStore()
-            .resolvedCredentialValue(forKey: preferenceKey)
-            .trimmed
-            .lowercased()
-        if let explicit = StoryInferenceMode(rawValue: raw) {
-            return explicit
-        }
-        if (try? LensContextClient.fromEnvironment()) != nil {
-            return .hosted
-        }
-        return .direct
+        ProviderBilling.source(for: .story) == .go ? .hosted : .direct
     }
 }
 
-/// The one seam the engine calls for the story spine. Dispatches to the hosted
-/// meaning service or the in-app direct implementation by resolved mode.
-enum StoryInferenceService {
-    case hosted(LensContextClient)
-    case direct(LocalStoryInferenceClient)
+struct StoryInferenceService {
+    private var client: LocalStoryInferenceClient
 
-    static func fromEnvironment() throws -> StoryInferenceService {
-        switch StoryInferenceMode.resolved() {
-        case .hosted:
-            return .hosted(try LensContextClient.fromEnvironment())
-        case .direct:
-            return .direct(try LocalStoryInferenceClient.fromEnvironment())
-        }
+    static func fromEnvironment(for project: ProjectRecord? = nil, projectLibrary: ProjectLibrary = ProjectLibrary()) throws -> StoryInferenceService {
+        var client = try LocalStoryInferenceClient.fromEnvironment()
+        if let project { client.graphSelection = try MeaningGraphProjectStore.load(project: project, library: projectLibrary) }
+        return Self(client: client)
     }
 
-    static var isConfigured: Bool {
-        (try? fromEnvironment()) != nil
-    }
+    static var isConfigured: Bool { ProviderBilling.isConfigured(.story) }
 
     func resolve(_ payload: LensContextResolveRequest) async throws -> LensContextResolveResponse {
-        switch self {
-        case .hosted(let client): try await client.resolve(payload)
-        case .direct(let client): try await client.resolve(payload)
-        }
+        try await client.resolve(payload)
     }
 
     func generateSceneStorySet(_ payload: SceneStoryGenerateRequest) async throws -> SceneStoryGenerateResult {
-        switch self {
-        case .hosted(let client): try await client.generateSceneStorySet(payload)
-        case .direct(let client): try await client.generateSceneStorySet(payload)
-        }
+        try await client.generateSceneStorySet(payload)
     }
 
     func generateFrameForms(_ payload: FrameFormsGenerateRequest) async throws -> FrameFormsGenerateResponse {
-        switch self {
-        case .hosted(let client): try await client.generateFrameForms(payload)
-        case .direct(let client): try await client.generateFrameForms(payload)
-        }
+        try await client.generateFrameForms(payload)
     }
 }
 
@@ -159,13 +104,8 @@ enum OpenAITextEndpointSettings {
     }
 }
 
-// MARK: - Bundled meaning vocabulary
+// MARK: - Local graph vocabulary projection
 
-/// One articulated entry of the bundled starter vocabulary
-/// (Resources/meaning_choice_index.json). The starter index carries slug,
-/// kind, name, definition, tags, and status only — no graph edges, corpus
-/// evidence, pole expressions, or abstraction levels; direct mode discloses
-/// those gaps as warnings instead of pretending parity with the hosted graph.
 struct LocalMeaningIndexNode: Sendable, Hashable {
     var slug: String
     var kind: String
@@ -173,43 +113,42 @@ struct LocalMeaningIndexNode: Sendable, Hashable {
     var definition: String
     var status: String
     var tags: [String]
+    var id: String = ""
+    var abstractionLevel: String = ""
+    var positiveExpression: String = ""
+    var negativeExpression: String = ""
+    var boundary: String = ""
+    var confidenceScore: Double = 0
+    var reuseScore: Double = 0
+    var edgeDegree: Int = 0
+}
+
+extension LocalMeaningIndexNode {
+    init(record: GraphRecord) {
+        self.init(slug: record.text("slug"), kind: record.text("kind"), name: record.text("name"),
+            definition: record.text("definition"), status: record.text("status"), tags: record.strings("tags"),
+            id: record.text("id"), abstractionLevel: record.text("abstraction_level"),
+            positiveExpression: record.text("positive_expression"), negativeExpression: record.text("negative_expression"),
+            boundary: record.text("boundary"), confidenceScore: record.number("confidence_score"),
+            reuseScore: record.number("reuse_score"), edgeDegree: Int(record.number("edge_degree")))
+    }
 }
 
 struct LocalMeaningIndex: Sendable {
     let nodes: [LocalMeaningIndexNode]
     private let nodesBySlug: [String: LocalMeaningIndexNode]
 
-    static let shared: LocalMeaningIndex = (try? LocalMeaningIndex.loadBundled()) ?? LocalMeaningIndex(nodes: [])
-
     init(nodes: [LocalMeaningIndexNode]) {
         self.nodes = nodes
-        self.nodesBySlug = Dictionary(uniqueKeysWithValues: nodes.map { ($0.slug, $0) })
+        nodesBySlug = Dictionary(nodes.map { ($0.slug.lowercased(), $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     static func loadBundled() throws -> LocalMeaningIndex {
-        let url = try packagedResourceURL(named: "meaning_choice_index", extension: "json")
-        let data = try Data(contentsOf: url)
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = object["meaning_node_choices"] as? [[String: Any]] else {
-            return LocalMeaningIndex(nodes: [])
-        }
-        let nodes = choices.compactMap { entry -> LocalMeaningIndexNode? in
-            guard let slug = (entry["slug"] as? String)?.trimmed, !slug.isEmpty else { return nil }
-            return LocalMeaningIndexNode(
-                slug: slug,
-                kind: (entry["kind"] as? String)?.trimmed ?? "",
-                name: (entry["name"] as? String)?.trimmed ?? slug,
-                definition: (entry["definition"] as? String)?.trimmed ?? "",
-                status: (entry["status"] as? String)?.trimmed ?? "",
-                tags: (entry["tags"] as? [String])?.map(\.trimmed).filter { !$0.isEmpty } ?? []
-            )
-        }
-        return LocalMeaningIndex(nodes: nodes)
+        let graph = try MeaningGraphSnapshot.open(packagedResourceURL(named: "MeaningGraph/graph", extension: "sqlite"))
+        return LocalMeaningIndex(nodes: try graph.records("nodes").map(LocalMeaningIndexNode.init(record:)))
     }
 
-    func node(forSlug slug: String) -> LocalMeaningIndexNode? {
-        nodesBySlug[slug.trimmed.lowercased()] ?? nodesBySlug[slug.trimmed]
-    }
+    func node(forSlug slug: String) -> LocalMeaningIndexNode? { nodesBySlug[slug.trimmed.lowercased()] }
 }
 
 // MARK: - Direct client
@@ -219,110 +158,61 @@ struct LocalStoryInferenceClient: Sendable {
     var responsesURL: URL
     var storyModel: String
     var frameFormModel: String
+    var graphSelection: ProjectMeaningGraphSelection? = nil
+    var runId = WorkflowContext.current?.jobId ?? UUID().uuidString.lowercased()
+    var endpointConfigurationError: String? = nil
     private static let localUserID = "local"
 
     static func fromEnvironment() throws -> LocalStoryInferenceClient {
-        let key = LitScenesCredentialStore().personalCredential(for: .openAI)
-        guard !key.isEmpty else {
-            throw ScreenGraphError.credentials(
-                "Direct Story Inference needs an OpenAI-compatible key. Add OPENAI_API_KEY (and optionally OPENAI_BASE_URL) in Settings."
-            )
+        let managed = ProviderBilling.source(for: .story) == .go
+        let key = ProviderBilling.credential(for: .story)
+        var url = URL(string: "https://api.openai.com/v1/responses")!
+        var endpointError: String?
+        if !managed {
+            do { url = try OpenAITextEndpointSettings.responsesURL() }
+            catch { endpointError = error.localizedDescription }
         }
-        return LocalStoryInferenceClient(
-            apiKey: key,
-            responsesURL: try OpenAITextEndpointSettings.responsesURL(),
-            storyModel: OpenAITextEndpointSettings.storyModel(),
-            frameFormModel: OpenAITextEndpointSettings.frameFormModel()
-        )
+        return LocalStoryInferenceClient(apiKey: key, responsesURL: url,
+            storyModel: managed ? OpenAITextEndpointSettings.defaultStoryModel : OpenAITextEndpointSettings.storyModel(),
+            frameFormModel: managed ? OpenAITextEndpointSettings.defaultStoryModel : OpenAITextEndpointSettings.frameFormModel(),
+            endpointConfigurationError: endpointError)
     }
 
-    // MARK: Frame Context (local resolve)
+    // MARK: Local graph context
 
-    /// Hydrates the request's meaning refs from the bundled starter vocabulary
-    /// and scores style candidates from the verified local catalog snapshot
-    /// (bundled starter, or the full set when the user has fetched it), so the
-    /// Goal → Frames → Scene Plan → Story spine completes without any hosted
-    /// service. Edge neighbors, corpus evidence, and curated aesthetic
-    /// candidates require the hosted meaning graph and stay empty — disclosed
-    /// via warnings and degrading gracefully downstream.
     func resolve(_ payload: LensContextResolveRequest) async throws -> LensContextResolveResponse {
         let started = Date()
-        let index = LocalMeaningIndex.shared
-        var warnings: [String] = [
-            "Local mode: resolved against the bundled starter vocabulary. Graph neighbors, corpus evidence, and curated aesthetic candidates require the hosted meaning service."
-        ]
-        let catalogSnapshot = try await CatalogManifestRuntime.shared.loadSnapshot()
-        let styleCandidates = LocalStyleCandidateBuilder.candidates(
-            from: catalogSnapshot.styleBrowse,
-            styleTermRefs: payload.styleTermRefs,
-            limit: max(payload.limits.styleCandidates, 1)
-        )
-        if catalogSnapshot.origin == .bundled {
-            warnings.append("Style candidates come from the bundled starter catalog (\(styleCandidates.count) styles). Refresh the style catalog for the full set.")
+        let traceId = "itrace_\(UUID().uuidString.lowercased())"
+        var request = URLRequest(url: URL(string: "litscenes-local://meaning/resolve")!)
+        request.httpMethod = "POST"
+        request.httpBody = try JSONCoding.encoder.encode(payload)
+        var metadata = WorkflowHTTP.scoped(InferenceTraceRequestMetadata(provider: "local", apiFamily: "meaning_graph", operation: "resolve",
+            projectId: payload.projectId, runId: runId, traceGroupId: runId,
+            workflowName: "story", workflowStep: "meaning_resolve", artifactType: "lens_context", artifactId: payload.goalFingerprint,
+            requestBodyFormat: "application/json", responseBodyFormatHint: "application/json"))
+        do {
+            let graph = try await MeaningGraphRuntime.shared.snapshot(graphSelection)
+            var response = try await Task.detached { try LocalMeaningGraphResolver.resolve(payload, graph: graph) }.value
+            let catalog = try await CatalogManifestRuntime.shared.loadSnapshot()
+            response.styleCandidates = LocalStyleCandidateBuilder.candidates(from: catalog.styleBrowse,
+                styleTermRefs: payload.styleTermRefs, limit: min(max(payload.limits.styleCandidates, 0), 80))
+            try Task.checkCancellation()
+            response.graphTraceId = traceId
+            metadata.requestTextJSON = inferenceTraceJSONString([
+                "graph_provenance": try JSONSerialization.jsonObject(with: GraphCoding.data(graph.provenance)),
+                "request": try JSONSerialization.jsonObject(with: JSONCoding.encoder.encode(payload))])
+            let body = try JSONCoding.encoder.encode(response)
+            metadata.responseTextJSON = String(decoding: body, as: UTF8.self)
+            _ = await InferenceTraceStore.shared.record(request: request, metadata: metadata,
+                response: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "LOCAL", headerFields: nil),
+                responseBody: body, latencyMs: Int(Date().timeIntervalSince(started) * 1000), traceId: traceId)
+            await InferenceTraceStore.shared.enrich(traceId: traceId, parsedOutputJSON: String(decoding: body, as: UTF8.self))
+            return response
+        } catch {
+            _ = await InferenceTraceStore.shared.record(request: request, metadata: metadata, response: nil,
+                responseBody: nil, latencyMs: Int(Date().timeIntervalSince(started) * 1000), error: error, traceId: traceId)
+            throw error
         }
-        var selected: [LensContextMeaningNode] = []
-        var missing: [String] = []
-        for ref in payload.meaningNodeRefs {
-            let slug = ref.slug.trimmed
-            guard !slug.isEmpty else { continue }
-            if let node = index.node(forSlug: slug) {
-                selected.append(LensContextMeaningNode(
-                    id: node.slug,
-                    slug: node.slug,
-                    kind: node.kind,
-                    abstractionLevel: "",
-                    name: node.name,
-                    status: node.status,
-                    confidenceScore: 0,
-                    reuseScore: 0,
-                    definition: node.definition,
-                    tags: node.tags,
-                    edgeDegree: 0
-                ))
-            } else {
-                missing.append(slug)
-                // Refs authored by the GOAL interview but absent from the starter
-                // index still carry their own name/kind — keep them usable.
-                selected.append(LensContextMeaningNode(
-                    id: slug,
-                    slug: slug,
-                    kind: ref.kind.rawValue,
-                    abstractionLevel: "",
-                    name: ref.name.trimmed.isEmpty ? slug : ref.name.trimmed,
-                    status: "",
-                    confidenceScore: 0,
-                    reuseScore: 0,
-                    definition: ref.evidence.trimmed,
-                    tags: [],
-                    edgeDegree: 0
-                ))
-            }
-        }
-        if !missing.isEmpty {
-            warnings.append("Not in the bundled vocabulary (kept from the Goal refs): \(missing.joined(separator: ", "))")
-        }
-        let durationMs = Int(Date().timeIntervalSince(started) * 1000)
-        return LensContextResolveResponse(
-            schemaVersion: "litscenes.lens_context.local.v0.1",
-            userId: Self.localUserID,
-            projectId: payload.projectId,
-            goalFingerprint: payload.goalFingerprint,
-            selectedMeaningNodes: selected,
-            meaningEdgeNeighbors: [],
-            meaningEvidence: [],
-            aestheticCandidates: [],
-            styleCandidates: styleCandidates,
-            warnings: warnings,
-            queryStats: LensContextQueryStats(
-                durationMs: durationMs,
-                meaningRefCount: payload.meaningNodeRefs.count,
-                resolvedMeaningNodeCount: selected.count,
-                meaningEdgeNeighborCount: 0,
-                meaningEvidenceCount: 0,
-                aestheticTermRefCount: payload.aestheticTermRefs.count,
-                aestheticCandidateCount: 0
-            )
-        )
     }
 
     // MARK: SceneStory generation (direct)
@@ -330,12 +220,20 @@ struct LocalStoryInferenceClient: Sendable {
     func generateSceneStorySet(_ payload: SceneStoryGenerateRequest) async throws -> SceneStoryGenerateResult {
         let generatedAt = DateFormats.now()
         let request = normalizedLocalSceneStoryRequest(payload)
+        let graph = try await MeaningGraphRuntime.shared.snapshot(graphSelection)
+        if request.wire.lensContext.graphProvenance?.effectiveHash != graph.provenance.effectiveHash {
+            request.wire.lensContext = try await resolve(LensContextResolveRequest(projectId: payload.projectId,
+                goalFingerprint: payload.goalFingerprint, meaningNodeRefs: payload.goal.meaningNodeRefs,
+                aestheticTermRefs: payload.goal.aestheticTermRefs, styleTermRefs: payload.goal.styleTermRefs,
+                limits: LensContextResolveLimits()))
+        }
         var provenance = SceneStoryGenerationProvenance(
             lambdaPromptVersion: "litscenes.scene_story_prompt.v0.7-local",
             desktopInstructionVersion: "litscenes.scene_story_slot_instructions.v0.2",
             validatorVersion: "litscenes.scene_story_validator.v0.3-local",
             dialoguePolicyVersion: "litscenes.dialogue_policy.v0.1"
         )
+        provenance.graphProvenance = graph.provenance
         let requestId = "local_\(UUID().uuidString.lowercased())"
 
         do {
@@ -346,6 +244,7 @@ struct LocalStoryInferenceClient: Sendable {
             provenance.warnings.append(contentsOf: document.warnings)
             return SceneStoryGenerateResult(document: document, provenance: provenance, hostedRequestId: requestId)
         } catch let error as LocalStoryInferenceValidationError {
+            if let attempt = error.attempt { provenance.openaiAttempts.append(attempt) }
             let retry = request.withRetryCorrection(
                 "The prior candidate failed structural validation: \(error.message). Regenerate the full Story and satisfy task_controls exactly."
             )
@@ -378,7 +277,7 @@ struct LocalStoryInferenceClient: Sendable {
             verbosity: "medium",
             label: "SceneStory",
             operation: "scene_story_generate",
-            projectId: request.wire.projectId
+            projectId: request.wire.projectId, parentTraceId: request.wire.lensContext.graphTraceId ?? ""
         )
         let attempt = SceneStoryOpenAIAttemptProvenance(
             responseId: call.responseId,
@@ -389,43 +288,73 @@ struct LocalStoryInferenceClient: Sendable {
             startedAt: startedAt,
             completedAt: DateFormats.now()
         )
-        guard let data = call.text.data(using: .utf8) else {
-            throw ScreenGraphError.openAI("SceneStory response was not UTF-8 text.")
+        do {
+            guard let data = call.text.data(using: .utf8) else {
+                throw ScreenGraphError.openAI("SceneStory response was not UTF-8 text.")
+            }
+            var document = try SceneStorySetDocument.decode(from: data)
+            if document.model.isEmpty || document.model == storyModel {
+                document.model = call.model
+            }
+            LocalSceneStoryPostProcessing.repairTerminology(&document)
+            LocalSceneStoryPostProcessing.sanitizeDialogue(&document, request: request)
+            LocalSceneStoryPostProcessing.appendCompassHandoffWarnings(&document)
+            document = document.normalized()
+            try LocalSceneStoryValidation.validate(
+                document: document, request: request, userId: Self.localUserID, generatedAt: generatedAt
+            )
+            await InferenceTraceStore.shared.enrich(traceId: call.traceId,
+                parsedOutputJSON: String(decoding: try JSONCoding.encoder.encode(document), as: UTF8.self))
+            await InferenceTraceStore.shared.enrichContext(traceId: call.traceId,
+                parentTraceId: request.wire.lensContext.graphTraceId, artifactType: "scene_story_set", artifactId: document.sceneStorySetId)
+            return (document, attempt)
+        } catch {
+            await recordValidation(call: call, projectId: request.wire.projectId, artifactType: "scene_story_set", error: error)
+            if var validation = error as? LocalStoryInferenceValidationError {
+                validation.attempt = attempt
+                validation.call = call
+                throw validation
+            }
+            throw error
         }
-        var document = try SceneStorySetDocument.decode(from: data)
-        if document.model.isEmpty || document.model == storyModel {
-            document.model = call.model
-        }
-        LocalSceneStoryPostProcessing.repairTerminology(&document)
-        LocalSceneStoryPostProcessing.sanitizeDialogue(&document, request: request)
-        LocalSceneStoryPostProcessing.appendCompassHandoffWarnings(&document)
-        document = document.normalized()
-        try LocalSceneStoryValidation.validate(
-            document: document, request: request, userId: Self.localUserID, generatedAt: generatedAt
-        )
-        return (document, attempt)
     }
 
     // MARK: Frame Forms generation (direct)
 
     func generateFrameForms(_ payload: FrameFormsGenerateRequest) async throws -> FrameFormsGenerateResponse {
         let mode = payload.selectedForm == nil ? "initial" : "expansion"
-        var (candidates, warnings) = LocalFrameFormSelection.candidates(request: payload, mode: mode)
+        let graph = try await MeaningGraphRuntime.shared.snapshot(graphSelection)
+        var (candidates, warnings) = await Task.detached { LocalFrameFormSelection.candidates(request: payload, mode: mode, graph: graph) }.value
         guard candidates.count >= 3 else {
-            throw ScreenGraphError.openAI("Fewer than 3 usable meaning nodes are available in the bundled vocabulary.")
+            throw ScreenGraphError.openAI("The selected graph has no usable frame concepts. Review its graph configuration.")
         }
         candidates = Array(candidates.prefix(3))
+        var selectionRequest = URLRequest(url: URL(string: "litscenes-local://meaning/frame-selection")!)
+        selectionRequest.httpMethod = "POST"
+        selectionRequest.httpBody = try JSONCoding.encoder.encode(payload)
+        let selectionJSON = inferenceTraceJSONString(LocalFrameFormSelection.modelInput(request: payload, candidates: candidates, mode: mode, retryCorrection: ""))
+        let selectionTrace = await InferenceTraceStore.shared.recordEvent(request: selectionRequest,
+            metadata: InferenceTraceRequestMetadata(provider: "local", apiFamily: "meaning_graph", operation: "frame_selection",
+                projectId: payload.projectId, runId: runId, traceGroupId: runId,
+                workflowName: "story", workflowStep: "frame_selection", artifactType: "frame_forms", artifactId: runId,
+                requestTextJSON: inferenceTraceJSONString(["graph_provenance": try JSONSerialization.jsonObject(with: GraphCoding.data(graph.provenance))]),
+                responseTextJSON: selectionJSON))
+        await InferenceTraceStore.shared.enrich(traceId: selectionTrace, parsedOutputJSON: selectionJSON)
 
+        var priorUsage = (input: 0, output: 0)
         var options: [LensFrameFormOption]
         var call: LocalResponsesCallResult
         do {
-            (options, call) = try await frameFormsAttempt(payload: payload, candidates: candidates, mode: mode, correction: "")
+            (options, call) = try await frameFormsAttempt(payload: payload, candidates: candidates, mode: mode, correction: "", parentTraceId: selectionTrace)
         } catch let error as LocalStoryInferenceValidationError {
+            priorUsage = (error.call?.inputTokens ?? 0, error.call?.outputTokens ?? 0)
             let correction = "The prior candidate failed validation: \(error.message). Regenerate all three options and satisfy every hard rule exactly."
-            (options, call) = try await frameFormsAttempt(payload: payload, candidates: candidates, mode: mode, correction: correction)
+            (options, call) = try await frameFormsAttempt(payload: payload, candidates: candidates, mode: mode, correction: correction, parentTraceId: selectionTrace)
         }
 
         var response = FrameFormsGenerateResponse()
+        response.graphProvenance = graph.provenance
+        response.traceId = call.traceId
         response.schemaVersion = "litscenes.frame_forms.v0.1"
         response.userId = Self.localUserID
         response.projectId = payload.projectId
@@ -435,8 +364,8 @@ struct LocalStoryInferenceClient: Sendable {
         response.options = options
         response.warnings = warnings
         response.requestId = call.responseId
-        response.usageInputTokens = call.inputTokens
-        response.usageOutputTokens = call.outputTokens
+        response.usageInputTokens = priorUsage.input + call.inputTokens
+        response.usageOutputTokens = priorUsage.output + call.outputTokens
         return response
     }
 
@@ -444,7 +373,7 @@ struct LocalStoryInferenceClient: Sendable {
         payload: FrameFormsGenerateRequest,
         candidates: [LocalFrameFormCandidate],
         mode: String,
-        correction: String
+        correction: String, parentTraceId: String
     ) async throws -> ([LensFrameFormOption], LocalResponsesCallResult) {
         let call = try await performResponsesCall(
             model: frameFormModel,
@@ -458,10 +387,32 @@ struct LocalStoryInferenceClient: Sendable {
             verbosity: "low",
             label: "Frame Forms",
             operation: "frame_forms_generate",
-            projectId: payload.projectId
+            projectId: payload.projectId, parentTraceId: parentTraceId
         )
-        let options = try LocalFrameFormSelection.decodeAndValidate(text: call.text, candidates: candidates)
-        return (options, call)
+        do {
+            let options = try LocalFrameFormSelection.decodeAndValidate(text: call.text, candidates: candidates)
+            await InferenceTraceStore.shared.enrich(traceId: call.traceId,
+                parsedOutputJSON: String(decoding: try JSONCoding.encoder.encode(options), as: UTF8.self))
+            return (options, call)
+        } catch {
+            await recordValidation(call: call, projectId: payload.projectId, artifactType: "frame_forms", error: error)
+            if var validation = error as? LocalStoryInferenceValidationError {
+                validation.call = call
+                throw validation
+            }
+            throw error
+        }
+    }
+
+    private func recordValidation(call: LocalResponsesCallResult, projectId: String, artifactType: String, error: Error) async {
+        var request = URLRequest(url: URL(string: "litscenes-local://meaning/validate")!)
+        request.httpMethod = "POST"
+        let metadata = InferenceTraceRequestMetadata(provider: "local", apiFamily: "meaning_graph", operation: "validation",
+            projectId: projectId, runId: runId, traceGroupId: runId, parentTraceId: call.traceId,
+            workflowName: "story", workflowStep: "validation_failed", artifactType: artifactType, artifactId: runId,
+            responseTextJSON: inferenceTraceJSONString(["provider_response_id": call.responseId, "error": error.localizedDescription]))
+        _ = await InferenceTraceStore.shared.record(request: request, metadata: metadata, response: nil,
+            responseBody: nil, latencyMs: 0, error: error)
     }
 
     // MARK: Shared Responses transport
@@ -476,8 +427,12 @@ struct LocalStoryInferenceClient: Sendable {
         verbosity: String,
         label: String,
         operation: String,
-        projectId: String
+        projectId: String, parentTraceId: String = ""
     ) async throws -> LocalResponsesCallResult {
+        if let error = endpointConfigurationError { throw ScreenGraphError.credentials(error) }
+        guard !apiKey.isEmpty else { throw ScreenGraphError.credentials("Add a personal OpenAI-compatible key or select Go credits to generate. Graph exploration works without a key.") }
+        try Task.checkCancellation()
+        let graph = try await MeaningGraphRuntime.shared.snapshot(graphSelection)
         let inputData = try JSONSerialization.data(withJSONObject: input, options: [.sortedKeys, .prettyPrinted])
         let inputText = String(data: inputData, encoding: .utf8) ?? "{}"
         // store:false — direct mode runs on the user's own account and keeps
@@ -519,10 +474,17 @@ struct LocalStoryInferenceClient: Sendable {
                 provider: "openai",
                 apiFamily: "responses",
                 operation: operation,
-                projectId: projectId,
+                projectId: projectId, runId: runId, traceGroupId: runId, parentTraceId: parentTraceId,
+                workflowName: "story", workflowStep: operation,
+                artifactType: schemaName, artifactId: runId,
                 model: model,
                 requestBodyFormat: "application/json",
                 responseBodyFormatHint: "application/json",
+                requestTextJSON: inferenceTraceJSONString([
+                    "prompt": instructions + "\n\n" + inputText,
+                    "provider_request": body,
+                    "graph_provenance": try JSONSerialization.jsonObject(with: GraphCoding.data(graph.provenance))
+                ]),
                 providerRequestIDHeaderCandidates: ["x-request-id"]
             )
         )
@@ -552,7 +514,9 @@ struct LocalStoryInferenceClient: Sendable {
         await InferenceTraceStore.shared.enrich(
             traceId: result.traceId,
             providerRequestId: responseId,
-            model: responseModel
+            model: responseModel,
+            usage: InferenceTraceUsage(inputTokens: usage.input, outputTokens: usage.output, totalTokens: usage.input + usage.output),
+            parsedOutputJSON: text
         )
         return LocalResponsesCallResult(
             text: text,
@@ -757,7 +721,7 @@ extension FrameFormsGenerateResponse {
 /// stack. The box keeps one normalized copy on the heap; everything downstream
 /// carries a reference.
 final class LocalSceneStoryRequest {
-    let wire: SceneStoryGenerateRequest
+    var wire: SceneStoryGenerateRequest
     let retryCorrection: String
     let warnings: [String]
 
@@ -772,8 +736,11 @@ final class LocalSceneStoryRequest {
     }
 }
 
-struct LocalStoryInferenceValidationError: Error {
+struct LocalStoryInferenceValidationError: LocalizedError {
     var message: String
+    var errorDescription: String? { message }
+    var attempt: SceneStoryOpenAIAttemptProvenance? = nil
+    var call: LocalResponsesCallResult? = nil
 }
 
 func normalizedLocalSceneStoryRequest(_ payload: SceneStoryGenerateRequest) -> LocalSceneStoryRequest {

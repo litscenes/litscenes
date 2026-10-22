@@ -124,6 +124,8 @@ if [[ "$DISTRIBUTION" == "app-store" && "$CHANNEL" != "development" ]]; then
   UPDATE_FEED_URL=""
 fi
 
+swift build --product MeaningGraphCompiler
+"$(swift build --show-bin-path)/MeaningGraphCompiler" --verify Sources/LitScenes/Resources/MeaningGraph/graph.yaml Sources/LitScenes/Resources/MeaningGraph/graph.sqlite
 swift build --product LitScenes
 BIN_DIR="$(swift build --show-bin-path)"
 APP_DIR="$ROOT/dist/$APP_NAME.app"

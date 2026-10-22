@@ -1,4 +1,5 @@
 import Foundation
+import MeaningGraphCore
 
 enum ProjectLensContextStatus: String, Codable, Hashable, Sendable {
     case missing
@@ -35,6 +36,8 @@ struct LensContextResolveResponse: Codable, Hashable, Sendable {
     var styleCandidates: [LensContextStyleCandidate]
     var warnings: [String]
     var queryStats: LensContextQueryStats
+    var graphProvenance: MeaningGraphProvenance? = nil
+    var graphTraceId: String? = nil
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
@@ -48,10 +51,13 @@ struct LensContextResolveResponse: Codable, Hashable, Sendable {
         case styleCandidates
         case warnings
         case queryStats
+        case graphProvenance, graphTraceId
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        graphProvenance = try container.decodeIfPresent(MeaningGraphProvenance.self, forKey: .graphProvenance)
+        graphTraceId = try container.decodeIfPresent(String.self, forKey: .graphTraceId)
         schemaVersion = container.lensContextString(forKey: .schemaVersion)
         userId = container.lensContextString(forKey: .userId)
         projectId = container.lensContextString(forKey: .projectId)

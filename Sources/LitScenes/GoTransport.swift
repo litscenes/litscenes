@@ -136,11 +136,6 @@ enum GoTransport {
             else if path.contains("/sound-generation") { operation = "sound" }
             else if path.hasSuffix("/voices") { operation = "voices" }
             else { throw GoServiceError(code: "unsupported", message: "This audio operation requires your own API key.") }
-        case "go.litscenes.invalid":
-            if path.hasSuffix("/lens-context/resolve") { operation = "context" }
-            else if path.hasSuffix("/scene-story/generate") { operation = "story" }
-            else if path.hasSuffix("/frame-forms/generate") { operation = "frame_forms" }
-            else { throw URLError(.unsupportedURL) }
         default:
             // A routing marker is never transmitted to a provider or a custom gateway.
             throw GoServiceError(code: "unsupported", message: "This custom provider is available with your own API key.")

@@ -1,0 +1,25 @@
+# Embedded meaning graph: readiness fixes
+
+Approved follow-up to `20261006T222617Z-embedded-meaning-graph.md` after review of the uncommitted implementation.
+
+## Goal choice context
+
+- Offer aesthetic terms only for the facet types the Goal brief can hold, each facet capped (colour 24, motif 160, value 120, decade 40). Rank by token overlap with the conversation and current brief, then by how many aesthetics use the term, then by stable identity.
+- Keep bounded FTS concept retrieval, and top up every concept kind to at least three choices so no kind disappears from the interview.
+- The ranking lives in `MeaningGraphCore`; the facet list and caps live in Desktop beside the Goal model.
+
+## Graph sources by reference
+
+- Project documents and graph history keep source identity only: hash, pack id, version, title, kind, and overlay order. YAML is stored once per Mac at `meaning-graphs/sources/<hash>.yaml`; the bundled pack is read from the app by hash.
+- Documents written with inline YAML migrate on load: the YAML moves to the store and the document is rewritten lean. History documents stay readable.
+- A source missing from this Mac blocks activation with a plain message; the current graph stays intact.
+
+## Tests
+
+- Permanent `MeaningGraphCore` tests on a synthetic pack: compile counts and degrees, id/slug/alias lookup, FTS search, plain and divergent traversal, evidence, overlay add/override/disable, every rejected overlay shape, failed-compile rollback, YAML alias and duplicate-key rejection, aesthetic gating and ordering.
+- Desktop tests: Goal choice caps and kind coverage against the bundled graph; legacy source decode and migration.
+
+## Out of scope
+
+- Category navigation residue, constant `primary_rank`, and citation markers in the aesthetic records belong to the private export generator and are not hand-edited in the public pack.
+- The unreachable aesthetic-direction boost predates this work and is left for a product decision.
