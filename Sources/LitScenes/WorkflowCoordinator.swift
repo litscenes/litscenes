@@ -59,7 +59,7 @@ final class WorkflowCoordinator: ObservableObject {
 
     func run<Value: Sendable>(project: ProjectRecord?, workflow: String, artifactType: String = "", artifactId: String = "", lane: WorkflowLane,
                     recipeJSON: String = "", failure: Value, onAccepted: (() -> Void)? = nil, operation: @escaping @MainActor () async -> Value) async -> Value {
-        if let inherited = WorkflowContext.current, inherited.projectId == project?.projectId {
+        if let inherited = WorkflowContext.current, inherited.projectId == project?.projectId, isLive(inherited.jobId) {
             if stopped.contains(inherited.jobId) { return failure }
             return await operation()
         }
@@ -108,6 +108,14 @@ final class WorkflowCoordinator: ObservableObject {
         live.remove(id)
         queueOrder.removeAll { $0 == id }
         return result
+    }
+
+    /// A job this coordinator is still running. An unstructured task spawned
+    /// inside a job inherits its context and may outlive it; such a context
+    /// counts as none, so new work starts its own job instead of waiting on a
+    /// job that has already closed.
+    func isLive(_ jobId: String) -> Bool {
+        live.contains(jobId) && !(jobs.first { $0.id == jobId }?.state.isTerminal ?? false)
     }
 
     private func waitForAdmission(_ id: String) async -> Bool {
@@ -276,6 +284,9 @@ final class WorkflowCoordinator: ObservableObject {
     func providerStarted(_ metadata: InferenceTraceRequestMetadata, traceId: String, isSubmission: Bool = true) async throws {
         guard let context = WorkflowContext.current else { return }
         guard !terminating, !(isSubmission && stopped.contains(context.jobId)) else { throw CancellationError() }
+        guard isLive(context.jobId) else {
+            throw ScreenGraphError.capture("The workflow that started this request has already finished. Start the work again.")
+        }
         if var job = jobs.first(where: { $0.id == context.jobId }) {
             job.provider = metadata.provider; job.model = metadata.model
             job.phase = metadata.workflowStep.isEmpty ? metadata.operation : metadata.workflowStep

@@ -3382,7 +3382,7 @@ final class LibraryEngine: ObservableObject {
 
     func retryLensContextRetrieval() {
         lensContextRetrievalTask?.cancel()
-        lensContextRetrievalTask = Task {
+        lensContextRetrievalTask = followUpTask { [self] in
             await refreshLensContextForActiveGoal()
         }
     }
@@ -3406,7 +3406,7 @@ final class LibraryEngine: ObservableObject {
         // version (its document is separate), and awaiting it here would stall Frame
         // Context retrieval behind a second LLM call.
         if runAutomation && goalCast.articulatedAt.isEmpty {
-            goalCastArticulationTask = Task { [weak self] in
+            goalCastArticulationTask = followUpTask { [weak self] in
                 await self?.ensureGoalCastArticulation()
             }
         }
@@ -18359,12 +18359,24 @@ final class LibraryEngine: ObservableObject {
         )
     }
 
+    /// Automatic follow-up work starts outside whatever workflow job triggered
+    /// it. An unstructured task inherits the job's task-local context, and a job
+    /// that finishes a moment later would otherwise leave the follow-up waiting
+    /// on it forever.
+    private func followUpTask(_ operation: @escaping @MainActor () async -> Void) -> Task<Void, Never> {
+        Task { @MainActor in
+            await WorkflowContext.$current.withValue(nil) {
+                await ProviderBilling.$snapshot.withValue(nil) { await operation() }
+            }
+        }
+    }
+
     private func queueInitialStoryGenerationIfEligible() {
         guard initialStoryGenerationTask == nil,
               initialStoryGenerationIsEligible else {
             return
         }
-        initialStoryGenerationTask = Task { [weak self] in
+        initialStoryGenerationTask = followUpTask { [weak self] in
             guard let self else { return }
             await Task.yield()
             guard self.initialStoryGenerationIsEligible else {
@@ -23980,7 +23992,7 @@ final class LibraryEngine: ObservableObject {
         lensContext = pending
         lensContextStatus = "Frame Context queued"
         lensContextRetrievalTask?.cancel()
-        lensContextRetrievalTask = Task {
+        lensContextRetrievalTask = followUpTask { [self] in
             await refreshLensContextForActiveGoal()
         }
     }
@@ -23990,7 +24002,7 @@ final class LibraryEngine: ObservableObject {
     /// never-started suggestions. Fully rendered plans are never re-planned on their
     /// own; the stage offers to plan more instead.
     private func queueFramePlanningAfterLensContext(projectId: String, goalVersionId: String) {
-        Task {
+        _ = followUpTask { [self] in
             await Task.yield()
             guard currentProject?.projectId == projectId,
                   projectGoalV2.activeVersion?.versionId == goalVersionId,
@@ -24016,7 +24028,7 @@ final class LibraryEngine: ObservableObject {
     // MARK: - Frame Forms (story-route Form options from the knowledge graph)
 
     private func queueInitialFrameFormsAfterLensContext(projectId: String, goalVersionId: String, goalFingerprint: String) {
-        Task {
+        _ = followUpTask { [self] in
             await Task.yield()
             await generateInitialFrameForms(projectId: projectId, goalVersionId: goalVersionId, goalFingerprint: goalFingerprint)
         }

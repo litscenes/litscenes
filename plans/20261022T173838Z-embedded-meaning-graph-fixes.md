@@ -19,6 +19,14 @@ Approved follow-up to `20261006T222617Z-embedded-meaning-graph.md` after review 
 - Permanent `MeaningGraphCore` tests on a synthetic pack: compile counts and degrees, id/slug/alias lookup, FTS search, plain and divergent traversal, evidence, overlay add/override/disable, every rejected overlay shape, failed-compile rollback, YAML alias and duplicate-key rejection, aesthetic gating and ordering.
 - Desktop tests: Goal choice caps and kind coverage against the bundled graph; legacy source decode and migration.
 
+## Story generation hang (added after the manual pass)
+
+- The first-Stories task was spawned from the Scene Plan save inside the Scene Plan job and inherited its task-local workflow context; one second later that job finished, and the story's first provider call waited forever for admission to it. No request reached the provider.
+- Coordinator: an inherited context whose job is no longer live counts as none. `run` starts a fresh job, `WorkflowHTTP.owned` opens one, and the provider gate fails fast with a plain message.
+- Desktop: every automatic follow-up task starts through one helper that clears the workflow context and billing snapshot task-locals.
+- Tests cover the three coordinator paths with a five-second bound so a regression fails instead of hanging.
+- The trace store's writer connection gets a busy timeout; a transient reader lock no longer fails a provenance save and the provider request behind it.
+
 ## Out of scope
 
 - Category navigation residue, constant `primary_rank`, and citation markers in the aesthetic records belong to the private export generator and are not hand-edited in the public pack.

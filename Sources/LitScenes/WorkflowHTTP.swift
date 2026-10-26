@@ -7,7 +7,9 @@ enum WorkflowHTTP {
     /// these stages into one job through the inherited task context.
     static func owned<Value: Sendable>(metadata: InferenceTraceRequestMetadata,
         operation: @escaping @Sendable () async throws -> Value) async throws -> Value {
-        if WorkflowContext.current != nil { return try await operation() }
+        if let context = WorkflowContext.current, await WorkflowCoordinator.shared.isLive(context.jobId) {
+            return try await operation()
+        }
         let now = DateFormats.now()
         let project = metadata.projectId.isEmpty ? nil : ProjectRecord(projectId: metadata.projectId,
             name: metadata.projectId, createdAt: now, updatedAt: now, sessionCount: 0)

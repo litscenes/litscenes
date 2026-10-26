@@ -230,6 +230,10 @@ actor InferenceTraceStore {
             throw ScreenGraphError.capture("Inference trace DB open failed: \(message)")
         }
         connection = db
+        // Another connection (the Traces viewer, a test probe) may hold a lock for
+        // an instant; waiting briefly beats failing a provenance save, which would
+        // cancel the provider request behind it.
+        sqlite3_busy_timeout(db, 5000)
         try execute("""
         CREATE TABLE IF NOT EXISTS inference_calls (
             trace_id TEXT PRIMARY KEY,

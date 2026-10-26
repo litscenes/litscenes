@@ -40,6 +40,7 @@ Personal provider keys are the default setup. Go memberships are retained behind
 - Provider/model/parameter controls must affect the next execution exactly as shown. Unavailable capabilities are visibly locked or omitted, never selectable theater.
 - A provider refusal — credit exhaustion, a throttle persisting past bounded retries, a rejected credential, or an unreachable vendor — fails the requesting work immediately, carrying the provider's own explanation to the artifact that asked for it. No invisible hold and no automatic resubmission; a request whose paid acceptance is genuinely unknown may still pause for review instead of resubmitting. Key probes report a limited provider (HTTP 429) distinctly from a verified one.
 - A failed media analysis marks the failed item itself with the plain-language cause; the run-level banner names the file but the diagnosis lives at the point of intent.
+- Automatic follow-up work (Frame Context retrieval, frame planning, frame forms, cast articulation, the first Stories) starts as its own workflow job, never inside the job that triggered it. A request whose inherited job has already finished fails with a plain message instead of waiting for an admission that cannot come.
 
 ## Creative Workflow
 

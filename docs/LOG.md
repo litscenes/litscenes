@@ -201,3 +201,7 @@
 2026-10-22T17:38:38Z embedded-meaning-graph-fixes: curate the Goal choice context by Goal facet with per-facet caps and per-kind coverage, store graph YAML once per Mac by content hash instead of inside every project document (with migration), and add permanent MeaningGraphCore tests. No commit or push is authorized.
 
 2026-10-22T17:53:19Z embedded-meaning-graph-fixes: Goal choice packet curated by Goal facet with caps and per-kind coverage; graph YAML stored once per Mac by content hash with legacy-document migration; compiler rejects overlay additions whose targets the same configuration disables; 16 permanent MeaningGraphCore and runtime tests added. Build, 1,364 offline tests, bundled graph verify, source hygiene and diff checks passed. Publication remains pending explicit authorization.
+
+2026-10-26T14:39:38Z story-generation-hang: automatic follow-up tasks spawned inside a finishing workflow job inherited its context and waited forever for admission; make the coordinator treat a finished inherited job as no context and start follow-ups outside the running job. No commit or push is authorized.
+
+2026-10-26T14:46:37Z story-generation-hang: coordinator treats a finished inherited job as no context (fresh job from run and owned requests; provider gate fails fast), all automatic follow-ups start through a context-clearing helper, trace store writer waits on a busy database, four regression tests added. Build, 1,368 offline tests (twice), source hygiene and diff checks passed. No commit or push is authorized.

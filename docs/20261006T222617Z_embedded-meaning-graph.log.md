@@ -27,3 +27,7 @@ The implementation is uncommitted. No branch, commit, push, release asset, app p
 - Compiler: an overlay addition that loses its target only to suppression in the same configuration is rejected; a later layer may still disable an earlier layer's addition.
 - Tests: `MeaningGraphCoreTests` (compile, lookup, search, traversal, evidence, overlays, every rejected overlay shape, rollback, YAML hardening, aesthetic gating, term choices) and `MeaningGraphRuntimeTests` (legacy migration, bundled reuse, store-backed overlay compile and preview, Goal choice caps and kind coverage). A pre-existing trace-probe test now sets a busy timeout on its read-only connection; it had reported SQLITE_BUSY under the larger parallel suite.
 - Build, 1,364 offline tests, bundled graph verify, source hygiene and diff checks passed. REUSE remains unverified locally. Still uncommitted; no release asset, publication or cutover.
+
+## Manual pass finding (2026-10-26)
+
+- Story generation hung at "Creating Story 1 of 3" with a prepared trace and no provider request, on Oct 23 and Oct 26. Cause: the first-Stories task inherited the Scene Plan job's workflow context and waited for admission to a job that had finished. Fixed in the coordinator (a finished inherited job counts as no context; the provider gate fails fast) and at every automatic follow-up spawn site (context cleared). Regression tests added.
