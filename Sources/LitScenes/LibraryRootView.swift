@@ -17,12 +17,9 @@ enum LibraryWorkspaceTab: String, Identifiable {
     case media = "Media"
     case goal = "Story"
     case characters = "Characters"
-    /// The former "Scenes" tab — renamed when the v2 workbench took the
-    /// plain name and the leading position (a deliberate product decision).
-    case aesthetic = "Scenes v1"
     case scenesV2 = "Scenes"
 
-    static let allCases: [LibraryWorkspaceTab] = [.media, .goal, .characters, .scenesV2, .aesthetic]
+    static let allCases: [LibraryWorkspaceTab] = [.media, .goal, .characters, .scenesV2]
 
     var id: String { rawValue }
 
@@ -30,17 +27,15 @@ enum LibraryWorkspaceTab: String, Identifiable {
         max(64, CGFloat(rawValue.count) * 13)
     }
 
-    /// Maps persisted labels across the Goal/Stories consolidation, the earlier
-    /// FRAMES→SCENES rename, the MOODBOARD→MEDIA rename, and the SCENES
-    /// swap. Both former creative tabs now reopen the combined STORY.
-    /// A legacy persisted "Scenes" resolves to the v2 workbench via the
-    /// rawValue init — deliberate: the tab named Scenes IS v2 now.
+    /// Restores former workspace names into the current navigation.
+    /// Every retired Scenes label opens the current Scenes workbench.
     static func fromPersisted(_ rawValue: String) -> LibraryWorkspaceTab? {
         if rawValue == "Goal" || rawValue == "Stories" { return .goal }
         if rawValue == "Moodboard" { return .media }
-        if rawValue == "Scenes v2" { return .scenesV2 }
-        if let tab = LibraryWorkspaceTab(rawValue: rawValue) { return tab }
-        return rawValue == "Frames" ? .aesthetic : nil
+        if rawValue == "Scenes v1" || rawValue == "Scenes v2" || rawValue == "Frames" {
+            return .scenesV2
+        }
+        return LibraryWorkspaceTab(rawValue: rawValue)
     }
 }
 
@@ -263,8 +258,8 @@ struct LibraryRootView: View {
             library.bootstrapAppNoticesOnLaunch()
             resolveLaunchSetup()
         }
-        .onChange(of: library.currentProject?.projectId ?? "") { _, _ in
-            guard !hasHydratedInitialProject else { return }
+        .onChange(of: library.currentProject?.projectId ?? "", initial: true) { _, _ in
+            guard library.currentProject != nil, !hasHydratedInitialProject else { return }
             hasHydratedInitialProject = true
             restoreWorkspaceTabPreference()
         }
@@ -290,14 +285,14 @@ struct LibraryRootView: View {
             // consumes the seed and opens the creator.
             guard seed != nil else { return }
             imagePreviewItem = nil
-            selectWorkspaceTab(.aesthetic)
+            selectWorkspaceTab(.scenesV2)
         }
         .onChange(of: library.pendingWorkbenchFocus) { _, focus in
-            // Creations' "Reveal in Scenes" flips likewise; the workbench
-            // selects the lens and opens the take preview.
+            // Creations and activity links open Scenes, where the workbench
+            // consumes the request and opens the named frame.
             guard focus != nil else { return }
             imagePreviewItem = nil
-            selectWorkspaceTab(.aesthetic)
+            selectWorkspaceTab(.scenesV2)
         }
         .onChange(of: library.mediaAnalysisRunState) { _, state in
             switch state {
@@ -538,7 +533,7 @@ struct LibraryRootView: View {
     private var goalWorkspace: some View {
         GoalV2WorkspaceView(
             library: library,
-            onContinueToFrames: { selectWorkspaceTab(.aesthetic) },
+            onContinueToFrames: { selectWorkspaceTab(.scenesV2) },
             onAddMedia: { addMediaFromMediaEntryPoint() },
             onOpenAppSettings: { showingAppSettings = true },
             dismissedReadinessBannerKeys: $dismissedGoalReadinessBannerKeys
@@ -575,23 +570,6 @@ struct LibraryRootView: View {
                 charactersSession.select(characterId)
                 selectWorkspaceTab(.characters)
             }
-        )
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var aestheticWorkspace: some View {
-        LensWorkbenchView(
-            library: library,
-            onOpenGoal: { selectWorkspaceTab(.goal) },
-            onOpenMedia: { selectWorkspaceTab(.media) },
-            onOpenMediaItem: { item in
-                if item.kind == .video {
-                    openVideoStudio(for: item, autoPlay: true)
-                } else if item.kind == .image {
-                    openImagePreview(item)
-                }
-            },
-            onOpenAppSettings: { showingAppSettings = true }
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -850,8 +828,6 @@ struct LibraryRootView: View {
                 goalWorkspace
             case .characters:
                 charactersWorkspace
-            case .aesthetic:
-                aestheticWorkspace
             case .scenesV2:
                 scenesV2Workspace
             }
@@ -1268,17 +1244,6 @@ struct LibraryRootView: View {
             return "\(library.filteredItems.count) media"
         case .goal:
             return library.isGeneratingSceneStories ? library.sceneStoryStatus : library.goalStatus
-        case .aesthetic:
-            if library.isRetrievingLensContext {
-                return library.lensContextStatus
-            }
-            if library.isGeneratingInitialDraftLenses {
-                return library.aestheticStatus
-            }
-            if !library.readyLenses.isEmpty {
-                return ""
-            }
-            return "Frames workspace"
         case .characters:
             // The CHARACTERS surface carries its own status line.
             return ""
@@ -1337,6 +1302,7 @@ struct LibraryRootView: View {
             resetWorkspaceToMedia()
             return
         }
+        persistedWorkspaceTabRawValue = tab.rawValue
         selectedWorkspaceTab = tab
         displayedWorkspaceTab = tab
     }
@@ -1354,7 +1320,7 @@ struct LibraryRootView: View {
     ) -> LibraryWorkspaceTab {
         guard isGoalReady else { return .goal }
         switch current {
-        case .characters, .scenesV2, .aesthetic:
+        case .characters, .scenesV2:
             return .scenesV2
         case .media, .goal:
             return hasCharacterSheet ? .scenesV2 : .characters

@@ -109,24 +109,18 @@ func continueDestinationForwardsOnceGoalIsReady() {
     // Story once a scene existed is exactly the dead-end this pins against.
     // "Scenes" is the v2 workbench since the tab swap.
     #expect(LibraryRootView.continueDestination(from: .scenesV2, isGoalReady: true, hasCharacterSheet: true) == .scenesV2)
-    #expect(LibraryRootView.continueDestination(from: .aesthetic, isGoalReady: true, hasCharacterSheet: false) == .scenesV2)
 }
 
 @Test
-func workspaceTabSwapKeepsPersistedMeanings() {
-    // The tab swap: v2 owns the plain "Scenes" name and the leading
-    // position; the old tab reads "Scenes v1" to its right.
+func retiredWorkspaceTabsRestoreIntoScenes() {
+    // Scenes is the sole scene workspace; former labels restore into it.
     #expect(LibraryWorkspaceTab.scenesV2.rawValue == "Scenes")
-    #expect(LibraryWorkspaceTab.aesthetic.rawValue == "Scenes v1")
-    #expect(LibraryWorkspaceTab.allCases == [.media, .goal, .characters, .scenesV2, .aesthetic])
+    #expect(LibraryWorkspaceTab.allCases == [.media, .goal, .characters, .scenesV2])
     #expect(LibraryWorkspaceTab.fromPersisted("Characters") == .characters)
-    // Persisted legacy labels keep meaning: "Scenes v2" maps to the v2
-    // workbench; a legacy "Scenes" (once v1) deliberately reopens the tab
-    // NAMED Scenes — v2; the ancient "Frames" still reopens v1.
     #expect(LibraryWorkspaceTab.fromPersisted("Scenes v2") == .scenesV2)
     #expect(LibraryWorkspaceTab.fromPersisted("Scenes") == .scenesV2)
-    #expect(LibraryWorkspaceTab.fromPersisted("Scenes v1") == .aesthetic)
-    #expect(LibraryWorkspaceTab.fromPersisted("Frames") == .aesthetic)
+    #expect(LibraryWorkspaceTab.fromPersisted("Scenes v1") == .scenesV2)
+    #expect(LibraryWorkspaceTab.fromPersisted("Frames") == .scenesV2)
     #expect(LibraryWorkspaceTab.fromPersisted("Moodboard") == .media)
     // The retired Storylines/Beats tabs are gone from the enum: their
     // persisted labels resolve to nil and the restore path falls back to
