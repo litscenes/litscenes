@@ -114,9 +114,7 @@ private struct ReferenceWireCredentials: LitScenesCredentialResolving {
     func credentialStatus(for provider: LitScenesProviderCredential) -> CredentialStatus {
         .init(provider: provider, source: .environment, isConfigured: true, message: "Offline fixture")
     }
-    func lensContextCredentialStatus(for credential: LensContextCredential) -> LensContextCredentialStatus {
-        .init(credential: credential, source: .missing, isConfigured: false, message: "Offline fixture")
-    }
+
 }
 
 @MainActor @Test func continuationReferencesReachWireWithoutChangingAnchorOrLeakingImagesIntoTrace() async throws {

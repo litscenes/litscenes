@@ -1,72 +1,32 @@
 # LitScenes
 
-An open-source A.I. first desktop app for macOS — for stories longer than a prompt. More info at [litscenes.ai](https://litscenes.ai) . Built with Aloha by [oahu.ai](https://oahu.ai)
-
-
+A free, open-source macOS app for stories longer than a prompt. Built with Aloha by [Oʻahu A.I.](https://oahu.ai).
 
 https://github.com/user-attachments/assets/0c371be6-f1b8-4f61-ad32-45be4e5ae80b
 
-
-
-
 ## A letter from the maker
 
-I built LitScenes because I wanted to make videos that hold together as stories — across scenes, across characters, across whole projects — and nothing I tried worked at that layer. I think this is the best interface yet for multi-project, multi-scene, story-rich video generation. The app builds meaning and structure first; frames and renders follow from them.
+I built LitScenes because I wanted to make videos that hold together as stories — across scenes, across characters, across whole projects. The app builds meaning and structure first; frames and renders follow from them.
 
-It is not finished. There are plenty of gaps — some flows are rough, and the documentation trails the app. That is also the good news: LitScenes is easy and ready to improve, and the code is now yours to improve it with.
+LitScenes is a personal creative tool, and the code is yours to study and improve. It runs on your Mac with a complete, editable meaning graph and local projects. There is no LitScenes account or subscription. When you choose to generate, you use your own provider accounts and pay those providers for their usage.
 
-I need to make a living, so I offer LitScenes Go: an optional managed service to help fund work on this free app. Go subscriptions are available through direct checkout; App Store purchases are not yet available. You can use the app with your own provider accounts, with usage billed by those providers.
+If LitScenes helps you drive a good story into the world, I would be delighted. That is the point.
 
-If you find LitScenes useful, and it helps you drive a good story into the world, I would be delighted. That is the point.
+Kevin Riggen
 
-Kevin Riggen - kevin@oahu.ai
+## What you can make
 
-## Features
+- **A story with a spine.** A Goal interview establishes the purpose, Frame Context grounds it in your material, Scene Stories organize the action, and Frame Forms develop concrete frames.
+- **Scenes, shots, and cuts.** Arrange footage and generated frames, shape trims, seams, loops, narration and sound, then assemble and export locally.
+- **A personal visual language.** Browse 26 bundled starter styles, use your own reference images, and keep recurring people and places coherent across scenes.
+- **Meaning you can inspect and change.** The complete graph includes themes, tensions, situations, symbols, motifs, claims, moods, transformations, genre forces, beats and scene roles. Import YAML packs or add project overlays without changing saved work.
+- **Your own workspace.** Projects, media, credentials and inference traces live on your Mac. No telemetry, account service, catalog service or hosted database is required. Provider requests use your configured accounts; graph updates are an explicit GitHub download.
 
-- **Story spine.** A Goal interview establishes what the story is for, Frame Context grounds it in your material, Scene Stories break it into scenes, and Frame Forms turn each scene into concrete frames. Structure comes before pixels. In the app this runs through the MEDIA, STORY, and SCENES workspaces.
-- **Scenes, shots, and cuts.** Compose scenes into shots, edit at the cut layer — trims, skips, seams, loops — and assemble the result locally. The preview is the export.
-- **Renders through your own providers.** Bring your own keys. OpenAI drives story and text; optional providers cover image, video, and voice.
-- **Local-first projects.** Your projects, media, and renders live on your Mac. Network requests serve configured providers, the Go service when you choose to use it, and the style catalog when you enable or refresh it (see below).
-- **No telemetry.** Zero analytics, zero tracking. An unconfigured install makes no background network requests. Choosing a Go option contacts the account service; connected accounts refresh payment and job status. Opening setup on an unconfigured install does not contact Go. The bundled style catalog serves until you turn on the live catalog or explicitly refresh it from catalog.litscenes.ai. The CI test suite runs under a network-deny sandbox to keep this true.
+## Install from source
 
-## Where LitScenes sits
+Requires macOS 15+, Swift 6.1+ and a macOS 15+ SDK (Xcode 16.3+ or compatible Command Line Tools).
 
-Velorn, OpenScene, and SynthCut are excellent AI-native timeline editors and agent-driven editing layers. LitScenes works at a different layer: story — meaning, structure, character continuity, and long-form coherence across scenes and projects.
-
-## Status
-
-LitScenes is in beta. It works, and it has rough edges:
-
-- Self-serve setup is available: start with an OpenAI API key and add other vendors when needed.
-- Go subscriptions are available through direct checkout; App Store purchases are not yet available. The managed service and client integration are described in [Desktop Go integration](docs/desktop-go-integration.md).
-- Documentation trails the app.
-- Some editing flows are unpolished.
-- Provider errors are sometimes surfaced tersely.
-
-Expect steady improvement, and see `CONTRIBUTING.md` if you want to help.
-
-## Install
-
-**Build from source.** Requires macOS 15+, Swift 6.1+, and a macOS 15+ SDK.
-Use Xcode 16.3+ or compatible Command Line Tools. Finish developer-tool setup
-before running the installer.
-
-Paste this into Terminal:
-
-```sh
-curl -fsSL https://litscenes.ai/install.sh | bash
-```
-
-The [installer](scripts/install.sh) clones this public repository, builds the
-Development channel, and installs `~/Applications/LitScenes Development.app`.
-It needs no sudo and never replaces an existing app. Quit and move an existing
-copy aside before reinstalling. Projects and provider keys stay in
-`~/Library/Application Support/LitScenes/`, including an existing Development
-workspace. Source and build output remain under `~/Library/Caches/LitScenes/`;
-the installer prints the exact folder and source revision. Launch the installed
-app from your Applications folder and configure your provider keys.
-
-To inspect before running, download the canonical script first:
+Download and inspect the installer from this repository:
 
 ```sh
 curl -fSL https://raw.githubusercontent.com/litscenes/litscenes/main/scripts/install.sh -o litscenes-install.sh
@@ -74,7 +34,9 @@ less litscenes-install.sh
 bash litscenes-install.sh
 ```
 
-Or build manually:
+The [installer](scripts/install.sh) builds `~/Applications/LitScenes Development.app` without sudo. It preserves existing app bundles, projects and keys, and prints the source revision and retained build directory. Move an existing app aside before reinstalling.
+
+Or build the checkout yourself:
 
 ```sh
 git clone https://github.com/litscenes/litscenes.git
@@ -85,67 +47,42 @@ scripts/build_litscenes_app.sh --channel development
 open "dist/LitScenes Development.app"
 ```
 
-`swift run LitScenes` also works for a quick look, but the bare executable
-skips the app bundle's file-type declarations, so drag-and-drop of media is
-disabled there — prefer the built app. Local builds are unsigned: if
-Gatekeeper objects, right-click the app and choose Open the first time.
-
-**Signed Community DMG.** Signed, notarized builds will be published on the
-GitHub Releases page; until then, build from source.
+Use the packaged app for media drag-and-drop and file associations. `swift run LitScenes` is also useful for a quick look. Local builds are ad-hoc signed, not notarized release downloads; use macOS's Open action if it asks you to approve the app. No signed DMG is required for the source edition.
 
 ## Providers and keys
 
-Choose **Self serve: use your own vendors** in Account & usage and start with one OpenAI API key. Vendor usage is billed directly to your provider accounts; no LitScenes subscription is required. The app ships with no provider secrets.
+Open **Settings → API keys**. Start with OpenAI for media analysis and story work; add FAL for its image/video routes or ElevenLabs for voice. **Advanced providers** holds additional keys, compatible text endpoints, and model overrides. The app ships without credentials.
 
-| Provider | Used for | Required |
-| --- | --- | --- |
-| OpenAI | Story, text, and meaning work | Yes |
-| FAL | Image and video generation | Optional |
-| Stability | Image generation | Optional |
-| ElevenLabs | Voice | Optional |
-| Kling | Video generation | Optional |
-| LTX | Video generation | Optional |
-| CivitAI | Image models and styles | Optional |
-| Decart | Video generation | Optional |
+| Provider | Use |
+| --- | --- |
+| OpenAI or a compatible text endpoint | Analysis, stories and text; OpenAI image generation |
+| FAL | Image and video generation |
+| Stability | Image generation |
+| ElevenLabs | Voice |
+| Kling, LTX, Decart | Video generation |
+| CivitAI | Image and video recipes |
 
-Keys live in a `credentials.env` file with `600` permissions, or in the process environment. They never leave your machine except in calls to the provider they belong to.
+Generation is optional and billed directly by your selected providers. Local browsing, editing, graph lookup and export require no subscription. OpenAI **Save & Test** checks the supplied credential when you request it. Keys are stored in `credentials.env` with owner-only permissions, or supplied through the process environment.
 
-Personal-key setup offers OpenAI Save & Test. Video and narration request additional provider setup when needed. Account & usage is the default Settings tab; additional provider keys, custom endpoints, and model overrides live in Advanced providers.
+## Meaning and provenance
 
-## Story inference
+The bundled edition contains 1,915 concepts, 1,775 relationships, 3,046 evidence records, 708 aesthetics, 5,958 terms and 10,360 assignments. Its 205 original editorial concepts add care, play, ordinary beauty, shared work, contemporary life and practical film grammar to the literary foundation.
 
-Desktop includes the complete meaning graph as YAML and SQLite. Lookup, relationships, evidence, aesthetic matching and story/form orchestration run locally. Personal-key generation uses an OpenAI-compatible provider; Advanced settings support compatible endpoint and model overrides. [Graph packs and project overlays](docs/meaning-graph.md) are editable and independently updateable.
+Relationships are interpretive possibilities, not universal rules. Story receives a small selection of concepts and direct relationships as optional inspiration; your brief takes priority. Bibliographic evidence remains separate from creative prompts. The exact provider-bound prompt and workflow outcome remain inspectable in Traces.
 
-Optional Go credits fund generic provider inference; the same local graph engine runs for every funding choice. No graph service credentials are needed. Billing choices affect future work across projects and preserve existing media. Local import, browsing, editing, and export remain available without a subscription.
+[Graph packs and project overlays](docs/meaning-graph.md) explain the YAML format, offline rebuilds, evidence, version pinning and explicit updates. Existing projects retain their graph version and artifacts. Historical managed-job records remain readable; generating again requires an explicit new run with a personal provider key.
 
-## Troubleshooting
+## Status and support
 
-- **Where things live.** Projects, media indexes, and `credentials.env` sit under `~/Library/Application Support/LitScenes Community/` (a development-channel build uses `…/LitScenes/`).
-- **Costs.** Personal-key renders bill your provider accounts. The Go integration requires a server quote and maximum credit approval before generation; direct checkout is available when the service reports ready.
-- **Provider errors.** Personal key problems show in setup or Advanced settings; other failures surface on the render's status line.
-- **Setup on launch.** Account & usage reappears each launch until an OpenAI key or confirmed subscription is configured. Dismiss it to explore for that launch, or reopen it from App Settings anytime. The optional Welcome Journey is available from Advanced providers; its dismissal does not finish account setup.
-- **Updates.** There is no auto-update; watch the GitHub Releases page.
+LitScenes is beta software. Some editing flows and provider error messages still need refinement. Reproducible reports and ideas are welcome in [GitHub Issues](https://github.com/litscenes/litscenes/issues); see [CONTRIBUTING.md](CONTRIBUTING.md). Individual support and response times are not included.
 
-## Sustainability
+Development builds keep projects in `~/Library/Application Support/LitScenes/`; Community builds use `~/Library/Application Support/LitScenes Community/`. There is no automatic app updater. Watch [GitHub Releases](https://github.com/litscenes/litscenes/releases) for published versions.
 
-Here is the honest economics of this project.
+## License and identity
 
-The code is licensed `AGPL-3.0-only`: you can use, modify, sell, and redistribute LitScenes, but derivatives stay open — the AGPL is what stops a proprietary fork. Separately, trademark policy (not the AGPL) reserves the LitScenes name, icon, and official-build identity, so a modified distribution must rename and re-badge; see `TRADEMARKS.md`. A commercial license is available for organizations that need different terms; see `LICENSING.md`.
+LitScenes Desktop is licensed under `AGPL-3.0-only`; aesthetic metadata retains its `CC-BY-SA-3.0` attribution and terms. The 26 generated starter previews are included under the repository license. Purchased reference composites, raw corpora and private operational history are not included. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
-Go subscriptions help fund work on the free app through an optional managed generation service. Self-serve use does not require a LitScenes subscription; your chosen vendors bill their usage separately.
-
-## Contributing
-
-See `CONTRIBUTING.md`. GitHub Issues for reproducible bugs and GitHub Discussions for questions are welcome. LitScenes is provided as a community project: individual support, implementation assistance, and response times are not included. Pull requests are currently limited while the contributor license agreement is finalized.
-
-## License and Trademarks
-
-LitScenes Desktop is licensed under `AGPL-3.0-only`; see `LICENSE` and `LICENSING.md`. A separate commercial license is available. The LitScenes name, logo, icon, and official-build identity are reserved marks; see `TRADEMARKS.md`.
-
----
-
-Created and maintained by [Kevin Riggen](https://litscenes.ai).
-
+The LitScenes name, logo and official-build identity remain reserved marks; modified distributions should follow [TRADEMARKS.md](TRADEMARKS.md). See [LICENSING.md](LICENSING.md) for the source and commercial licensing terms.
 
 ## Export a scene
 
@@ -153,4 +90,4 @@ In **Scenes**, open a scene card’s context menu and choose **Export Scene…**
 
 The folder contains one composite image, available ordered frame JPEGs, an optional current-playback MP4 including edits/audio, and `scene.json` / `catalog.json` metadata. Footage placements include a still from their selected start. Missing media is listed as an omission; skipped entries stay marked, and an empty scene can still export. The composite shows up to 16 included frames, with all available frame images saved separately.
 
-The catalog uses the website’s existing collection-v2 envelope, with relative hashed media references and saved ideas marked as project context. It includes no prompts, credentials, inference traces or original local file paths. This is not an editable project backup; website import and reviewed publication are separate workflows. The feature is implemented in the working tree and is not yet published.
+The catalog uses the website’s existing collection-v2 envelope, with relative hashed media references and saved ideas marked as project context. It includes no prompts, credentials, inference traces or original local file paths. This is not an editable project backup; website import and reviewed publication are separate workflows.

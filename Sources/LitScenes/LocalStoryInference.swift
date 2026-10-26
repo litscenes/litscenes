@@ -7,7 +7,7 @@ enum StoryInferenceMode: String, CaseIterable, Identifiable, Sendable {
     case direct
     case hosted
     var id: String { rawValue }
-    var label: String { self == .direct ? "Your key · local graph" : "Go credits · local graph" }
+    var label: String { self == .direct ? "Your key · local graph" : "Retired managed job · local graph" }
     static func resolved() -> StoryInferenceMode {
         ProviderBilling.source(for: .story) == .go ? .hosted : .direct
     }
@@ -228,7 +228,7 @@ struct LocalStoryInferenceClient: Sendable {
                 limits: LensContextResolveLimits()))
         }
         var provenance = SceneStoryGenerationProvenance(
-            lambdaPromptVersion: "litscenes.scene_story_prompt.v0.7-local",
+            lambdaPromptVersion: "litscenes.scene_story_prompt.v0.8-local",
             desktopInstructionVersion: "litscenes.scene_story_slot_instructions.v0.2",
             validatorVersion: "litscenes.scene_story_validator.v0.3-local",
             dialoguePolicyVersion: "litscenes.dialogue_policy.v0.1"
@@ -430,7 +430,7 @@ struct LocalStoryInferenceClient: Sendable {
         projectId: String, parentTraceId: String = ""
     ) async throws -> LocalResponsesCallResult {
         if let error = endpointConfigurationError { throw ScreenGraphError.credentials(error) }
-        guard !apiKey.isEmpty else { throw ScreenGraphError.credentials("Add a personal OpenAI-compatible key or select Go credits to generate. Graph exploration works without a key.") }
+        guard !apiKey.isEmpty else { throw ScreenGraphError.credentials("Add your own OpenAI-compatible key to generate. Graph exploration works without a key.") }
         try Task.checkCancellation()
         let graph = try await MeaningGraphRuntime.shared.snapshot(graphSelection)
         let inputData = try JSONSerialization.data(withJSONObject: input, options: [.sortedKeys, .prettyPrinted])

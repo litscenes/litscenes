@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Legacy welcome-version policy retained for existing preference compatibility.
-/// Account setup at launch is decided by GoAccountStore, independently of this tour.
+/// Provider setup at launch is independent of this tour.
 enum FirstRunWelcomeEligibility {
     static let currentVersion = 2
 
@@ -21,14 +21,12 @@ enum FirstRunWelcomeEligibility {
 }
 
 /// Optional welcome tour, reopenable from Settings. Launch setup uses the
-/// API-key setup, or Account & usage when memberships are available.
+/// API-key setup without an application account.
 struct FirstRunWelcomeView: View {
     @ObservedObject var library: LibraryEngine
     var onCreateProject: () -> Void
     var onOpenAppSettings: () -> Void
     var onDismiss: () -> Void
-    @ObservedObject private var go = GoAccountStore.shared
-    @State private var showingPersonalKey = false
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -40,34 +38,12 @@ struct FirstRunWelcomeView: View {
                         Text("Turn your media into a story worth sharing.")
                             .font(CanonType.editorial(17)).foregroundStyle(CanonColor.muted)
                     }.padding(.top, 24)
-                    if !GoAvailability.membershipsEnabled {
-                        PersonalKeySetupView(library: library)
-                    } else if go.isSignedIn && go.account.bool("managed_access") {
-                        Text("You’re ready. \(go.account.int("available_credits")) credits available.")
-                            .font(CanonType.interface(17, weight: .semibold))
-                        Button("Create your first project", action: onCreateProject)
-                            .buttonStyle(CanonSecondaryButtonStyle())
-                        SelfServeOption(library: library, isExpanded: $showingPersonalKey)
-                    } else {
-                        GoOfferCard(library: library, showPersonalKey: $showingPersonalKey)
-                    }
-                    if !GoAvailability.membershipsEnabled || showingPersonalKey {
-                        Button("Continue to my project", action: onCreateProject)
-                            .buttonStyle(CanonSecondaryButtonStyle())
-                    }
-                    if GoAvailability.membershipsEnabled {
-                        Button("Already subscribed? Sign in", action: onOpenAppSettings)
-                            .buttonStyle(CanonUtilityButtonStyle())
-                    }
+                    PersonalKeySetupView(library: library)
+                    Button("Continue to my project", action: onCreateProject)
+                        .buttonStyle(CanonSecondaryButtonStyle())
                     Button("Explore first", action: onDismiss)
                         .buttonStyle(CanonUtilityButtonStyle())
-                    GoConnectionNotice()
-                    if GoAvailability.membershipsEnabled && !go.message.isEmpty {
-                        Text(go.message).font(CanonType.interface(12)).foregroundStyle(CanonColor.brass)
-                    }
-                    Text(GoAvailability.membershipsEnabled
-                        ? "Your projects stay on your Mac. Open Account & usage anytime to change how you create."
-                        : "Your projects stay on your Mac. Manage your API keys anytime in Settings.")
+                    Text("Your projects stay on your Mac. Manage your API keys anytime in Settings.")
                         .font(CanonType.interface(11)).foregroundStyle(CanonColor.muted)
                 }
                 .foregroundStyle(CanonColor.bone)
@@ -78,15 +54,8 @@ struct FirstRunWelcomeView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(CanonColor.archiveWell)
-        .onChange(of: go.fundingManaged) { _, managed in
-            if managed { showingPersonalKey = false }
-        }
-        .task {
-            await GoServiceConfiguration.shared.refresh()
-            guard go.shouldReconnect else { return }
-            await go.refresh()
-            await GoStorePurchaseController.shared.start(configuration: go.configuration)
-        }
+
+
     }
 }
 

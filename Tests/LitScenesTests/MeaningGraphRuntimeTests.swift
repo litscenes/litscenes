@@ -40,6 +40,23 @@ struct MeaningGraphRuntimeTests {
         #expect(snapshot.provenance == (try MeaningGraphSourceStore.bundledProvenance()))
         #expect(snapshot.url == (try MeaningGraphSourceStore.bundledDatabaseURL()))
         #expect(try await MeaningGraphRuntime.shared.snapshot(nil).provenance == snapshot.provenance)
+
+        try MeaningGraphSourceStore.retainAvailableSources(ProjectMeaningGraphSelection(base: bundled))
+        #expect(FileManager.default.fileExists(atPath: MeaningGraphSourceStore.fileURL(bundled.hash).path))
+        let old = MeaningGraphSource(hash: "18837552df160cc544646b20c798a3bcf0913061dba5736d458eefbcf7627f44",
+            packId: "litscenes.meaning", version: "1a4c25a6016fc1e8", title: "LitScenes Meaning Graph", kind: "base")
+        #expect(MeaningGraphSourceStore.isAvailable(old))
+        let oldSelection = ProjectMeaningGraphSelection(base: old)
+        try MeaningGraphSourceStore.retainAvailableSources(oldSelection)
+        #expect(GraphCoding.hash(try Data(contentsOf: MeaningGraphSourceStore.fileURL(old.hash))) == old.hash)
+        let oldSnapshot = try await MeaningGraphRuntime.shared.snapshot(oldSelection)
+        #expect(oldSnapshot.provenance.counts["nodes"] == 1529)
+        #expect(oldSnapshot.provenance.baseHash == old.hash)
+        #expect(oldSnapshot.provenance.effectiveHash == oldSelection.effectiveHash)
+        #expect(oldSnapshot.provenance.baseHash != snapshot.provenance.baseHash)
+        var invalid = old; invalid.hash = "../graph"
+        #expect(!MeaningGraphSourceStore.isAvailable(invalid))
+        #expect(throws: (any Error).self) { try MeaningGraphSourceStore.yaml(for: invalid) }
     }
 
     @Test func installedSourcesCompileOverlaysThroughTheStore() async throws {

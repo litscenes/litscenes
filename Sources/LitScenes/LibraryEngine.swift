@@ -2692,7 +2692,7 @@ final class LibraryEngine: ObservableObject {
             case .direct:
                 blockers.append("Configure an OpenAI-compatible key for Story Inference (OPENAI_API_KEY, optional OPENAI_BASE_URL).")
             case .hosted:
-                blockers.append("Connect Go in Account & usage, or choose your own provider key in Settings.")
+                blockers.append("This old managed job cannot resume. Start a new run with your own provider key in Settings.")
             }
         }
         if isGeneratingSceneStories {
@@ -18235,12 +18235,7 @@ final class LibraryEngine: ObservableObject {
         ).canRender
     }
 
-    var lensContextCredentialStatuses: [LensContextCredentialStatus] {
-        _ = providerCredentialsRevision
-        return LensContextCredential.allCases.map {
-            videoCredentialStore.lensContextCredentialStatus(for: $0)
-        }
-    }
+
 
     /// Re-reads render_stacks.yaml (bundled + user overlay) and republishes.
     func reloadRenderStacks() {
@@ -18266,7 +18261,7 @@ final class LibraryEngine: ObservableObject {
         falPricing = nil
         providerCredentialsRevision += 1
         NotificationCenter.default.post(name: .civitaiCredentialsChanged, object: nil)
-        refreshVideoChainAfterCredentialChange(status: GoConnection.isManaged ? "LitScenes Go connected" : "Credentials reloaded from credentials.env")
+        refreshVideoChainAfterCredentialChange(status: "Provider credentials reloaded")
         if StoryInferenceMode.resolved() == .direct { queueInitialStoryGenerationIfEligible() }
     }
 
@@ -18308,32 +18303,9 @@ final class LibraryEngine: ObservableObject {
         refreshVideoChainAfterCredentialChange(status: "\(provider.label) credential removed")
     }
 
-    func saveLensContextCredential(_ credential: LensContextCredential, value: String) throws {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            try removeLensContextCredential(credential)
-            return
-        }
-        var values = loadDotEnv(from: OpenAIKeyStore.savedKeyURL)
-        for key in credential.keyCandidates where key != credential.primaryWritableKey {
-            values.removeValue(forKey: key)
-        }
-        values[credential.primaryWritableKey] = trimmed
-        try OpenAIKeyStore.saveCredentialValues(values)
-        providerCredentialsRevision += 1
-        lensContextStatus = "\(credential.label) saved"
-        queueInitialStoryGenerationIfEligible()
-    }
 
-    func removeLensContextCredential(_ credential: LensContextCredential) throws {
-        var values = loadDotEnv(from: OpenAIKeyStore.savedKeyURL)
-        for key in credential.keyCandidates {
-            values.removeValue(forKey: key)
-        }
-        try OpenAIKeyStore.saveCredentialValues(values)
-        providerCredentialsRevision += 1
-        lensContextStatus = "\(credential.label) removed"
-    }
+
+
 
     /// Story Inference settings are plain credentials.env values: the mode key
     /// plus the OpenAI-compatible base URL / model overrides. Empty removes.
@@ -28638,7 +28610,7 @@ final class LibraryEngine: ObservableObject {
     /// snapshot can read it, else the stack's own note, else "" (unpriced).
     func priceNote(for stack: RenderStack, attachesReferences: Bool) -> String {
         if ProviderBilling.source(for: .image(stack)) == .go {
-            return "Go · credit quote before generation"
+            return "Retired managed job · start a new run"
         }
         return FALImagePricing.displayNote(stack: stack, attachesReferences: attachesReferences, snapshot: falPricing)
     }
@@ -28670,31 +28642,18 @@ final class LibraryEngine: ObservableObject {
         guard !isFetchingFALPricing else { return }
         isFetchingFALPricing = true
         defer { isFetchingFALPricing = false }
-        var combined = falPricing ?? FALPricingSnapshot(fetchedAt: .distantPast, prices: [:])
-        for managed in [false, true] {
-            let cacheURL = falPricingCacheURL(managed: managed)
-            var cached = (try? Data(contentsOf: cacheURL)).flatMap { try? JSONDecoder().decode(FALPricingSnapshot.self, from: $0) }
-            let wanted = managed
-                ? ["fal-ai/nano-banana-2", "fal-ai/nano-banana-2/edit", "fal-ai/kling-video/v3/pro/image-to-video"]
-                : falPricingEndpointIds
-            let billing = ProviderBillingSnapshot.capture()
-            let mayContactGo = billing.defaultSource == .go || billing.overrides.values.contains(.go)
-                || GoVault.read("session") != nil
-            let key = managed ? (mayContactGo ? GoConnection.marker : "") : videoCredentialStore.personalCredential(for: .fal).trimmed
-            if !key.isEmpty && (cached == nil || cached!.ageSeconds >= maxAge || !Set(wanted).isSubset(of: Set(cached!.prices.keys))) {
-                do {
-                    let prices = try await FALPricingClient().fetchPrices(endpointIds: wanted, apiKey: key)
-                    cached = FALPricingSnapshot(fetchedAt: Date(), prices: Dictionary(prices.map { ($0.endpointId, $0) }, uniquingKeysWith: { first, _ in first }))
-                    try? ensureDirectory(litScenesApplicationSupportDirectory())
-                    if let data = try? JSONEncoder().encode(cached) { try? data.write(to: cacheURL, options: .atomic) }
-                } catch { /* Retain the last rate from this same billing source. */ }
-            }
-            if let cached {
-                if managed { combined.goPrices = cached.prices; combined.goFetchedAt = cached.fetchedAt }
-                else { combined.prices = cached.prices; combined.fetchedAt = cached.fetchedAt }
-            }
+        let cacheURL = falPricingCacheURL(managed: false)
+        var cached = falPricing ?? (try? Data(contentsOf: cacheURL)).flatMap { try? JSONDecoder().decode(FALPricingSnapshot.self, from: $0) }
+        let key = videoCredentialStore.personalCredential(for: .fal).trimmed
+        if !key.isEmpty && (cached == nil || cached!.ageSeconds >= maxAge || !Set(falPricingEndpointIds).isSubset(of: Set(cached!.prices.keys))) {
+            do {
+                let prices = try await FALPricingClient().fetchPrices(endpointIds: falPricingEndpointIds, apiKey: key)
+                cached = FALPricingSnapshot(fetchedAt: Date(), prices: Dictionary(prices.map { ($0.endpointId, $0) }, uniquingKeysWith: { first, _ in first }))
+                try? ensureDirectory(litScenesApplicationSupportDirectory())
+                if let data = try? JSONEncoder().encode(cached) { try? data.write(to: cacheURL, options: .atomic) }
+            } catch { /* Keep the previous vendor rate with its original age. */ }
         }
-        falPricing = combined
+        falPricing = cached
     }
 
     /// Momentum rule: a frame derived from a staged frame (sibling, variation,

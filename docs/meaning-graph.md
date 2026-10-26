@@ -1,8 +1,8 @@
 # Meaning graph packs
 
-The complete creative meaning engine runs in Desktop: concept and alias lookup, FTS5 candidate retrieval, incoming/outgoing relationships, evidence, aesthetic matching, frame poles and branching, and story/form prompt assembly and validation. Provider requests still need a personal key or an available Go account. Resolving graph context needs neither.
+The complete creative meaning engine runs in Desktop: concept and alias lookup, FTS5 candidate retrieval, incoming/outgoing relationships, evidence, aesthetic matching, frame poles and branching, and story/form prompt assembly and validation. Provider requests use a personal key. Resolving graph context requires no credential.
 
-YAML is the editable source; SQLite is a compiled, disposable query cache. `MeaningGraphCore` is shared by the app and `MeaningGraphCompiler`. The bundled pack contains 1,529 concepts, 1,229 relationships, 1,545 evidence records, 708 aesthetics, 5,958 terms and 10,360 assignments. It includes citations/rationales and aesthetic source attribution; raw source texts, private curation history and reference images are excluded.
+YAML is the editable source; SQLite is a compiled, disposable query cache. `MeaningGraphCore` is shared by the app and `MeaningGraphCompiler`. The bundled pack contains 1,915 concepts, 1,775 relationships, 3,046 evidence records, 708 aesthetics, 5,958 terms and 10,360 assignments. It includes citations/rationales and aesthetic source attribution; raw source texts, private curation history and purchased reference composites are excluded. The separate starter catalog includes 26 generated reference images for offline use.
 
 ## Project controls
 
@@ -10,9 +10,19 @@ In STORY's Goal workspace, open **Meaning graph**. Select a base pack, import YA
 
 Settings → Story Inference → **Meaning graph library** imports packs, downloads an official update on explicit request, and sets the default for newly initialized projects. Installing a pack does not activate it in existing projects. The update source is this repository's release manifest, with a pinned GitHub release asset URL, SHA-256 and size check. Updates need no app release. If a manifest or asset is unavailable, the installed graph remains usable.
 
-Each project stores the identity of its graph sources (content hash, pack id, version, title, kind) and overlay ordering in its existing SQLite document store. The YAML itself is kept once per Mac, by content hash, under Application Support `meaning-graphs/sources/`; the bundled pack is read from the app by hash. Applying a graph atomically writes the current selection and graph history. Hashes include the engine version, base source and enabled overlays in order. Running jobs capture their own configuration, and the compiled cache can be rebuilt from the stored sources. A project whose source is not installed on this Mac says so and keeps its current graph until that YAML is imported or another graph is chosen. Documents written with inline YAML migrate to the shared store the next time the project opens. Inactive overlays do not change runtime identity.
+Each project stores the identity of its graph sources (content hash, pack id, version, title, kind) and overlay ordering in its existing SQLite document store. The YAML itself is kept once per Mac, by content hash, under Application Support `meaning-graphs/sources/`; bundled sources are copied into this store on first project use. The prior bundled YAML is also shipped unchanged, so projects pinned to its hash can reopen and retain it locally. Applying a graph atomically writes the current selection and graph history. Hashes include the engine version, base source and enabled overlays in order. Running jobs capture their own configuration, and the compiled cache can be rebuilt from the stored sources. A project whose source is not installed on this Mac says so and keeps its current graph until that YAML is imported or another graph is chosen. Documents written with inline YAML migrate to the shared store the next time the project opens. Inactive overlays do not change runtime identity.
 
 The Goal interview receives a bounded choice packet from the project's graph: the brief's own concepts, concepts matched to the conversation, at least three of every concept kind, and aesthetic terms limited to the facets the Goal brief can hold (colour 24, motif 160, value 120, decade 40 at most), ranked by relevance to the conversation and then by how many aesthetics use the term.
+
+## Editorial contract
+
+This edition resolves the remaining concepts into 181 additions and 25 aliases before establishing a 1,710-concept baseline. The 205 original concepts add 11.99% to that baseline; repairs, aliases and relationships do not count toward that growth. Existing canonical IDs and slugs are preserved. All concepts have positive/negative expressions and boundaries, and each has at least one justified relationship. Distinct components are allowed; a graph need not assert relationships merely to be connected.
+
+`provenance_kind` distinguishes `literary_interpretation`, `editorial_original`, `editorial_refinement`, and `unspecified`. Original editorial concepts carry their purpose in `editorial_rationale`; they do not claim literary evidence. Optional scores remain absent when no extraction score exists. Evidence retains work, passage location, source link, rights status and node/edge target; it is an interpretation of a source, not proof of a universal rule.
+
+Scene Story receives at most six selected concepts and eight direct relationships. Relationship slots rotate across selections and prefer stronger direct links with deterministic ties. Only abstract `editorial_rationale` is offered as a relationship note; source-specific `rationale`, bibliographic evidence and private review history stay out of creative prompts. The graph suggests possibilities; the user's intent controls whether they are used. Older fields decode tolerantly.
+
+Aesthetic categories come from the captured source page's actual category membership, excluding navigation and maintenance labels. All 708 eligible entries remain available; their unset primary ranks remain unset rather than implying a new popularity order.
 
 ## Base YAML format
 
@@ -20,8 +30,8 @@ Required header fields: `schema_version: litscenes.meaning_graph.v1`, `pack_id`,
 
 | Table | Identity and references | Common content |
 | --- | --- | --- |
-| nodes | unique `id`, unique case-insensitive `slug`, nonempty `name` and `kind` | definition, aliases, tags, abstraction_level, positive_expression, negative_expression, boundary, examples, anti_examples, confidence_score, reuse_score |
-| edges | unique `id`; source_node_id, target_node_id; nonempty relation_type; unique endpoint/relation tuple | strength, confidence_score, rationale |
+| nodes | unique `id`, unique case-insensitive `slug`, nonempty `name` and `kind` | definition, aliases, tags, abstraction_level, positive_expression, negative_expression, boundary, examples, anti_examples, confidence_score, reuse_score, provenance_kind, editorial_rationale |
+| edges | unique `id`; source_node_id, target_node_id; nonempty relation_type; unique endpoint/relation tuple | strength, confidence_score, rationale, provenance_kind, editorial_rationale |
 | evidence | unique `id`; target_type (`node` or `edge`), target_id | context_type/id, role, rationale, weight, confidence_score, work_title/author, passage_id/index, section_title, source_url, rights_status |
 | aesthetics | unique `id` | slug, title, description, aliases, categories, primary_rank, source_url, source_license |
 | terms | unique `id` | slug, display_name, normalized_value, facet_type, color_family, color_hex |

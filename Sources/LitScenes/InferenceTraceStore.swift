@@ -88,7 +88,7 @@ actor InferenceTraceStore {
                let safe = try? JSONSerialization.jsonObject(with: WorkflowPrivacy.body(body)) as? [String: Any] {
                 fields = safe
             }
-            fields["billing_source"] = metadata.provider == "litscenes" || GoConnection.selectsManaged(request) ? "go" : "personal"
+            fields["billing_source"] = metadata.provider == "litscenes" || LegacyManagedWork.selectsManaged(request) ? "go" : "personal"
             metadata.requestTextJSON = inferenceTraceJSONString(fields)
         }
         let traceId = existingTraceId ?? "itrace_\(UUID().uuidString.lowercased())"
@@ -539,9 +539,7 @@ enum TracedHTTPTransport {
     @TaskLocal static var session: URLSession = .shared
 
     static func send(request: URLRequest, recordedRequest: URLRequest? = nil, metadata: InferenceTraceRequestMetadata) async throws -> TracedHTTPResult {
-        if GoConnection.selectsManaged(request) {
-            return try await GoTransport.send(request, metadata: WorkflowHTTP.scoped(metadata))
-        }
+
         return try await WorkflowHTTP.owned(metadata: metadata) {
             let metadata = WorkflowHTTP.scoped(metadata)
             var prepared = metadata
@@ -551,6 +549,7 @@ enum TracedHTTPTransport {
             guard !traceId.isEmpty else { throw ScreenGraphError.capture("Could not save request provenance; no provider request was sent") }
             let started = Date()
             do {
+                try LegacyManagedWork.requirePersonal(request)
                 try await WorkflowCoordinator.shared.providerStarted(metadata, traceId: traceId, isSubmission: metadata.apiFamily != "pricing" && !["GET", "HEAD"].contains(request.httpMethod ?? "GET"))
                 let (data, response) = try await WorkflowHTTP.send(request: request, recordedRequest: recordedRequest, metadata: metadata, bytes: { $0 }) { attempt in
                     try await ImagePromptPreparation.submitted(metadata)
@@ -578,6 +577,7 @@ enum TracedHTTPTransport {
             guard !traceId.isEmpty else { throw ScreenGraphError.capture("Could not save request provenance; no provider request was sent") }
             let started = Date()
             do {
+                try LegacyManagedWork.requirePersonal(request)
                 try await WorkflowCoordinator.shared.providerStarted(metadata, traceId: traceId, isSubmission: true)
                 let (data, response) = try await WorkflowHTTP.send(request: request, recordedRequest: recordedRequest, metadata: metadata, bytes: { $0 }) { attempt in
                     try await URLSession.shared.upload(for: attempt, fromFile: fileURL)
@@ -594,7 +594,7 @@ enum TracedHTTPTransport {
     }
 
     static func download(request: URLRequest, recordedRequest: URLRequest? = nil, metadata: InferenceTraceRequestMetadata) async throws -> TracedHTTPDownloadResult {
-        if var cached = try await GoOutputStore.shared.transfer(request) {
+        if var cached = try await LegacyManagedOutputStore.shared.transfer(request) {
             var local = metadata
             local.captureRequestBody = false
             local.captureResponseBody = false
@@ -611,6 +611,7 @@ enum TracedHTTPTransport {
             guard !traceId.isEmpty else { throw ScreenGraphError.capture("Could not save request provenance; no provider request was sent") }
             let started = Date()
             do {
+                try LegacyManagedWork.requirePersonal(request)
                 try await WorkflowCoordinator.shared.providerStarted(metadata, traceId: traceId, isSubmission: false)
                 let (url, response) = try await WorkflowHTTP.send(request: request, recordedRequest: recordedRequest, metadata: metadata, bytes: { _ in Data() }) { attempt in
                     try await URLSession.shared.download(for: attempt)

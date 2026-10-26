@@ -41,6 +41,7 @@ The product's north-star questions are: what is a frame literally showing; what 
 
 - `Sources/` and `Tests/` must contain no private services, Graph Review source, official-commercial assets, credentials, development-era dated comments, personal operational identifiers, or retired QA-control interfaces.
 - The complete meaning graph, eligible aesthetic metadata, YAML pack format, and native creative graph engine are public resources and shared source. Private ingestion/curation generators, raw corpora, private images, and operational records remain outside this repository.
+- The independent Desktop release includes the 26 verified generated starter previews as public assets. Purchased reference composites remain private. The approved final-curator pass may resolve pending material and add 8–16% original concepts without item-level approval; private decision history stays outside this repository.
 - Community, Development, and Official Commercial release identities remain distinct. Shared behavior lands here first; private consumers pin a public commit afterward.
 - Run `scripts/check_source_hygiene.sh`, `swift build`, `swift test`, and `git diff --check` before ending material Desktop work. Also run REUSE validation when the `reuse` command is available.
 

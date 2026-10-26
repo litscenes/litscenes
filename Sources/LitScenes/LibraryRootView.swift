@@ -95,7 +95,6 @@ extension View {
 }
 
 struct LibraryRootView: View {
-    @ObservedObject private var service = GoServiceConfiguration.shared
     @ObservedObject private var workflows = WorkflowCoordinator.shared
     @ObservedObject var library: LibraryEngine
     @ObservedObject var recorder: RecorderEngine
@@ -252,7 +251,10 @@ struct LibraryRootView: View {
             }
         }
         .background(CanonColor.room)
-        .modifier(GoLifecycleModifier(library: library, showingAccount: $showingAppSettings))
+        .onReceive(NotificationCenter.default.publisher(for: .providerCredentialsChanged)) { _ in
+            library.reloadProviderCredentials()
+            library.reloadRenderStacks()
+        }
         .onAppear {
             library.reloadProjects()
             library.bootstrapAppNoticesOnLaunch()
@@ -737,7 +739,6 @@ struct LibraryRootView: View {
         VStack(spacing: 0) {
             workspaceHeader
             ImagePromptNoticeBanner(projectId: library.currentProject?.projectId ?? "")
-            if !isWelcomeActive { GoUpgradeBanner { showingAppSettings = true } }
             Rectangle()
                 .fill(CanonColor.hairlineDark)
                 .frame(height: 1)
@@ -918,7 +919,7 @@ struct LibraryRootView: View {
                 } label: {
                     LitIconView(icon: .notices)
                         .overlay(alignment: .topTrailing) {
-                            if library.diskUsageNeedsAttention || service.announcements.contains(where: { !library.acknowledgedAnnouncementIDs.contains($0.id) }) {
+                            if library.diskUsageNeedsAttention {
                                 Circle()
                                     .fill(CanonColor.brass)
                                     .frame(width: 6, height: 6)
@@ -1284,7 +1285,7 @@ struct LibraryRootView: View {
     }
 
     private func resolveLaunchSetup() {
-        if GoAccountStore.shared.needsSetupOnLaunch() {
+        if ProviderSetupEligibility.shared.needsSetupOnLaunch() {
             showingAppSettings = true
         }
     }
@@ -1350,7 +1351,6 @@ struct LibraryRootView: View {
 }
 
 private struct AppSettingsView: View {
-    @ObservedObject private var service = GoServiceConfiguration.shared
     private enum SettingsTab: String, CaseIterable, Identifiable {
         case account = "Account & usage"
         case credentials = "Advanced providers"
@@ -1397,7 +1397,7 @@ private struct AppSettingsView: View {
             VStack(alignment: .leading, spacing: 0) {
                 Picker("Settings", selection: $selectedTab) {
                     ForEach(SettingsTab.allCases) { tab in
-                        Text(tab == .account && !service.membershipsEnabled ? "API keys" : tab.rawValue).tag(tab)
+                        Text(tab == .account ? "API keys" : tab.rawValue).tag(tab)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -1410,7 +1410,7 @@ private struct AppSettingsView: View {
 
                 switch selectedTab {
                 case .account:
-                    GoAccountView(library: library)
+                    ScrollView { PersonalKeySetupView(library: library).padding(24).frame(maxWidth: 680, alignment: .leading) }
                 case .credentials:
                     credentialsContent
                 case .stacks:
@@ -1429,9 +1429,7 @@ private struct AppSettingsView: View {
     private var settingsSubtitle: String {
         switch selectedTab {
         case .account:
-            return service.membershipsEnabled
-                ? "Your plan, credits, and account. Changes apply to future creations across your projects."
-                : "Use your own provider accounts. Keys apply to future creations across your projects."
+            return "Use your own provider accounts. Keys apply to future creations across your projects."
         case .credentials:
             return "Provider credentials are saved to credentials.env or read from process environment variables."
         case .stacks:
@@ -1447,9 +1445,7 @@ private struct AppSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 credentialsFilePanel
-                Text(service.membershipsEnabled
-                    ? "Personal provider keys work alongside Go. Direct usage is billed by each provider; adding a key does not change your Go subscription."
-                    : "Usage is billed directly by each provider. Add the keys for the features and models you want to use.")
+                Text("Usage is billed directly by each provider. Add the keys for the features and models you want to use.")
                     .font(CanonType.interface(12)).foregroundStyle(CanonColor.muted)
                 Text("Text and analysis").font(CanonType.interface(13, weight: .semibold))
                 ProviderBillingControl(target: .text)
@@ -1785,38 +1781,11 @@ private struct AppSettingsView: View {
                     .foregroundStyle(CanonColor.muted)
             }
 
-            Text(service.membershipsEnabled
-                ? "Personal provider settings apply to future runs using your own API key. Go uses its included models and connections."
-                : "Personal provider settings apply to future runs using your own API key.")
+            Text("Personal provider settings apply to future runs using your own API key.")
                 .font(CanonType.interface(11)).foregroundStyle(CanonColor.muted)
 
-            Toggle(isOn: Binding(
-                get: { CatalogFetchPolicy.liveCatalogEnabled() },
-                set: { enabled in
-                    do {
-                        try library.saveStoryInferenceSetting(
-                            key: CatalogFetchPolicy.preferenceKey,
-                            value: enabled ? "1" : ""
-                        )
-                        settingsMessage = enabled
-                            ? "Live style catalog on — the app may fetch catalog.litscenes.ai."
-                            : "Live style catalog off — bundled catalog only; Refresh fetches on demand."
-                    } catch {
-                        settingsMessage = "Could not save the catalog setting: \(error.localizedDescription)"
-                    }
-                }
-            )) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Live style catalog")
-                        .font(CanonType.interface(12, weight: .semibold))
-                        .foregroundStyle(CanonColor.bone)
-                    Text("Off by default: the app makes no unconfigured requests and uses the bundled starter catalog. On, it may fetch the full style set from catalog.litscenes.ai. An explicit Refresh always fetches.")
-                        .font(CanonType.interface(11))
-                        .foregroundStyle(CanonColor.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .toggleStyle(.switch)
+            Text("Starter styles are included with the app and work offline.")
+                .font(CanonType.interface(11)).foregroundStyle(CanonColor.muted)
 
             MeaningGraphLibraryPanel()
 
@@ -1876,10 +1845,7 @@ private struct AppSettingsView: View {
         return LitScenesCredentialStore().personalCredentialStatus(for: provider)
     }
 
-    private func status(for credential: LensContextCredential) -> LensContextCredentialStatus {
-        library.lensContextCredentialStatuses.first { $0.credential == credential }
-            ?? LensContextCredentialStatus(credential: credential, source: .missing, isConfigured: false, message: "\(credential.label) missing")
-    }
+
 }
 
 private struct ProjectPromptSettingsPanel: View {
@@ -2188,142 +2154,7 @@ private struct CharacterSheetPromptTemplateEditor: View {
     }
 }
 
-private struct LensContextCredentialSettingsRow: View {
-    let credential: LensContextCredential
-    let status: LensContextCredentialStatus
-    let onSave: (String) throws -> Void
-    let onRemove: () throws -> Void
-    @State private var draftValue = ""
-    @State private var rowMessage = ""
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Label(credential.label, systemImage: iconName)
-                    .font(CanonType.interface(12, weight: .semibold))
-                    .foregroundStyle(CanonColor.bone)
-                Text(statusLabel)
-                    .font(CanonType.archive(10, weight: .semibold))
-                    .foregroundStyle(status.isConfigured ? CanonColor.olive : CanonColor.rust)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(CanonColor.paperInset.opacity(0.58), in: Capsule())
-                Spacer()
-                Text(status.source.label)
-                    .font(CanonType.interface(11))
-                    .foregroundStyle(CanonColor.muted)
-            }
-
-            Text(description)
-                .font(CanonType.interface(11))
-                .foregroundStyle(CanonColor.muted)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(credential.keyCandidates.joined(separator: " / "))
-                    .font(CanonType.archive(10, weight: .semibold))
-                    .foregroundStyle(CanonColor.ink.opacity(0.64))
-                    .lineLimit(1)
-                Spacer()
-                Text(status.message)
-                    .font(CanonType.interface(11))
-                    .foregroundStyle(CanonColor.muted)
-                    .lineLimit(2)
-            }
-
-            if credential.isSecret {
-                SecureField(inputPlaceholder, text: $draftValue)
-                    .textFieldStyle(.roundedBorder)
-            } else {
-                TextField(inputPlaceholder, text: $draftValue)
-                    .textFieldStyle(.roundedBorder)
-                    .textSelection(.enabled)
-            }
-
-            HStack(alignment: .center, spacing: 8) {
-                Button {
-                    save()
-                } label: {
-                    Label("Save", systemImage: "checkmark.circle")
-                }
-                .buttonStyle(CanonSecondaryButtonStyle())
-                .disabled(draftValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                Button {
-                    remove()
-                } label: {
-                    Label(removeLabel, systemImage: "trash")
-                }
-                .buttonStyle(CanonUtilityButtonStyle())
-
-                Spacer(minLength: 0)
-
-                if !rowMessage.isEmpty {
-                    Text(rowMessage)
-                        .font(CanonType.interface(10, weight: .semibold))
-                        .foregroundStyle(rowMessage.hasPrefix("Could") ? CanonColor.rust : CanonColor.olive)
-                        .lineLimit(2)
-                }
-            }
-        }
-        .padding(10)
-        .background(CanonColor.paperInset.opacity(0.38), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(status.isConfigured ? CanonColor.olive.opacity(0.35) : CanonColor.rust.opacity(0.45)))
-    }
-
-    private var statusLabel: String {
-        status.isConfigured ? "Configured" : "Missing"
-    }
-
-    private var iconName: String {
-        switch credential {
-        case .endpointURL: "link"
-        case .token: "key"
-        }
-    }
-
-    private var description: String {
-        switch credential {
-        case .endpointURL:
-            return "Base URL for the hosted Meaning service. The app appends /lens-context/resolve or /scene-story/generate when needed."
-        case .token:
-            return "Bearer token used by Desktop to authenticate Frame Context and SceneStory requests."
-        }
-    }
-
-    private var inputPlaceholder: String {
-        switch credential {
-        case .endpointURL:
-            return status.isConfigured ? "Saved or environment URL" : "https://..."
-        case .token:
-            return status.isConfigured ? "Saved or environment token" : credential.primaryWritableKey
-        }
-    }
-
-    private var removeLabel: String {
-        credential.isSecret ? "Remove Local Token" : "Remove Local URL"
-    }
-
-    private func save() {
-        do {
-            try onSave(draftValue)
-            draftValue = ""
-            rowMessage = "Saved"
-        } catch {
-            rowMessage = "Could not save: \(error.localizedDescription)"
-        }
-    }
-
-    private func remove() {
-        do {
-            try onRemove()
-            draftValue = ""
-            rowMessage = "Removed local value"
-        } catch {
-            rowMessage = "Could not remove: \(error.localizedDescription)"
-        }
-    }
-}
 
 private struct ProviderCredentialSettingsRow: View {
     let provider: LitScenesProviderCredential

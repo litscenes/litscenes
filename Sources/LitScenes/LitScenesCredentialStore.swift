@@ -76,45 +76,9 @@ struct CredentialStatus: Hashable, Identifiable {
     var message: String
 }
 
-enum LensContextCredential: String, CaseIterable, Identifiable {
-    case endpointURL = "lens_context_url"
-    case token = "lens_context_token"
 
-    var id: String { rawValue }
 
-    var label: String {
-        switch self {
-        case .endpointURL: "Meaning Service URL"
-        case .token: "Meaning Service Token"
-        }
-    }
 
-    var keyCandidates: [String] {
-        switch self {
-        case .endpointURL: ["LITSCENES_LENS_CONTEXT_URL", "LITSCENES_THEME_CONTEXT_URL"]
-        case .token: ["LITSCENES_LENS_CONTEXT_TOKEN", "LITSCENES_THEME_CONTEXT_TOKEN", "AUTH_TOKEN"]
-        }
-    }
-
-    var primaryWritableKey: String {
-        switch self {
-        case .endpointURL: "LITSCENES_LENS_CONTEXT_URL"
-        case .token: "LITSCENES_LENS_CONTEXT_TOKEN"
-        }
-    }
-
-    var isSecret: Bool {
-        self == .token
-    }
-}
-
-struct LensContextCredentialStatus: Hashable, Identifiable {
-    var credential: LensContextCredential
-    var id: String { credential.rawValue }
-    var source: CredentialSource
-    var isConfigured: Bool
-    var message: String
-}
 
 protocol LitScenesCredentialResolving {
     func personalCredential(for provider: LitScenesProviderCredential) -> String
@@ -123,13 +87,12 @@ protocol LitScenesCredentialResolving {
     func resolvedCredentialValue(forKey key: String) -> String
     func resolvedCredentialValue(forKeys keys: [String]) -> String
     func credentialStatus(for provider: LitScenesProviderCredential) -> CredentialStatus
-    func lensContextCredentialStatus(for credential: LensContextCredential) -> LensContextCredentialStatus
 }
 
 extension LitScenesCredentialResolving {
     func personalCredential(for provider: LitScenesProviderCredential) -> String {
         let key = resolvedCredential(for: provider)
-        return key == GoConnection.marker ? "" : key
+        return key == LegacyManagedWork.marker ? "" : key
     }
     func personalCredentialStatus(for provider: LitScenesProviderCredential) -> CredentialStatus {
         let status = credentialStatus(for: provider)
@@ -147,10 +110,11 @@ struct LitScenesCredentialStore: LitScenesCredentialResolving {
         if provider == .kling {
             return resolvedKlingCredential()
         }
-        if let file = credentialsFileCredential(for: provider), !file.isEmpty {
+        if let file = credentialsFileCredential(for: provider), !file.isEmpty, file != LegacyManagedWork.marker {
             return file
         }
-        return environmentCredential(for: provider) ?? ""
+        let key = environmentCredential(for: provider) ?? ""
+        return key == LegacyManagedWork.marker ? "" : key
     }
 
     func resolvedCredentialValue(forKey key: String) -> String {
@@ -175,7 +139,7 @@ struct LitScenesCredentialStore: LitScenesCredentialResolving {
 
     func credentialStatus(for provider: LitScenesProviderCredential) -> CredentialStatus {
         if ProviderBilling.source(for: ProviderBilling.defaultTarget(for: provider)) == .go {
-            return CredentialStatus(provider: provider, source: .managed, isConfigured: true, message: "LitScenes Go")
+            return CredentialStatus(provider: provider, source: .managed, isConfigured: false, message: LegacyManagedWork.message)
         }
         return personalCredentialStatus(for: provider)
     }
@@ -184,44 +148,16 @@ struct LitScenesCredentialStore: LitScenesCredentialResolving {
         if provider == .kling {
             return klingCredentialStatus()
         }
-        if let file = credentialsFileCredential(for: provider), !file.isEmpty {
+        if let file = credentialsFileCredential(for: provider), !file.isEmpty, file != LegacyManagedWork.marker {
             return CredentialStatus(provider: provider, source: .credentialsFile, isConfigured: true, message: "Configured in credentials.env")
         }
-        if let environment = environmentCredential(for: provider), !environment.isEmpty {
+        if let environment = environmentCredential(for: provider), !environment.isEmpty, environment != LegacyManagedWork.marker {
             return CredentialStatus(provider: provider, source: .environment, isConfigured: true, message: "Configured through process environment")
         }
         return CredentialStatus(provider: provider, source: .missing, isConfigured: false, message: "\(provider.label) credential missing")
     }
 
-    func lensContextCredentialStatus(for credential: LensContextCredential) -> LensContextCredentialStatus {
-        let fileValues = loadDotEnv(from: OpenAIKeyStore.savedKeyURL)
-        let savedValue = firstValue(in: fileValues, keys: credential.keyCandidates)
-        if !savedValue.isEmpty {
-            return lensContextCredentialStatus(
-                credential: credential,
-                source: .credentialsFile,
-                value: savedValue,
-                fallbackMessage: "Configured in credentials.env"
-            )
-        }
 
-        let environmentValue = firstEnvironmentValue(keys: credential.keyCandidates)
-        if !environmentValue.isEmpty {
-            return lensContextCredentialStatus(
-                credential: credential,
-                source: .environment,
-                value: environmentValue,
-                fallbackMessage: "Configured through environment or dot-env fallback"
-            )
-        }
-
-        return LensContextCredentialStatus(
-            credential: credential,
-            source: .missing,
-            isConfigured: false,
-            message: "\(credential.label) missing"
-        )
-    }
 
     private func credentialsFileCredential(for provider: LitScenesProviderCredential) -> String? {
         let saved = loadDotEnv(from: OpenAIKeyStore.savedKeyURL)
@@ -311,32 +247,7 @@ struct LitScenesCredentialStore: LitScenesCredentialResolving {
         return ""
     }
 
-    private func lensContextCredentialStatus(
-        credential: LensContextCredential,
-        source: CredentialSource,
-        value: String,
-        fallbackMessage: String
-    ) -> LensContextCredentialStatus {
-        if credential == .endpointURL {
-            let url = URL(string: value)
-            let scheme = url?.scheme?.lowercased() ?? ""
-            let hasValidHTTPURL = (scheme == "http" || scheme == "https") && url?.host != nil
-            guard hasValidHTTPURL else {
-                return LensContextCredentialStatus(
-                    credential: credential,
-                    source: source,
-                    isConfigured: false,
-                    message: "Frame Context URL must be an HTTP(S) URL."
-                )
-            }
-        }
-        return LensContextCredentialStatus(
-            credential: credential,
-            source: source,
-            isConfigured: true,
-            message: fallbackMessage
-        )
-    }
+
 
     private func klingCredentialLooksUsable(_ value: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)

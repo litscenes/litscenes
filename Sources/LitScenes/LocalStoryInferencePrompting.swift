@@ -102,8 +102,15 @@ enum LocalStoryInferencePrompts {
         1. Goal, success criteria, required entities, explicit constraints, and audience shift.
         2. One coherent cause-and-effect Story.
         3. Saved resolved visual treatment.
-        4. Optional meaning line.
+        4. Optional meaning line and meaning_guidance.
         5. Novelty.
+
+        meaning_guidance offers bounded, optional conceptual inspiration. Its definitions,
+        boundaries, expressions, and directed relationships are possibilities, not required
+        plot events or factual claims. Use only what serves the user's intent. Never turn a
+        concept into a compulsory emotion, moral, genre, or ending. Meaning-edge references
+        must match a supplied selected_slug, direction, relation_type, and neighbor_slug;
+        leave them empty when no relationship actually shaped the story.
 
         The visual treatment is the user-approved resolved Lens language. Follow it as provided. Do not reintroduce source aesthetic taxonomy or invent a different visual treatment.
 
@@ -325,12 +332,59 @@ enum LocalSceneStoryProjection {
 
         return [
             "creative_brief": creativeBrief,
+            "meaning_guidance": meaningGuidance(wire.lensContext),
             "visual_treatment": visualTreatment(wire),
             "story_task": storyTask,
             "task_controls": taskControls,
             "media_anchors": mediaAnchors(wire.mediaAnchors),
             "memory": memoryProjection(wire.storyMemory, currentSessionId: wire.generationSessionId)
         ]
+    }
+
+    /// Only explicit selections and their direct neighbors cross the creative boundary.
+    /// Evidence and source-specific rationales stay in graph review; only abstract editorial relationship notes enter Story.
+    static func meaningGuidance(_ context: LensContextResolveResponse) -> [String: Any] {
+        var seenNodes = Set<String>()
+        let selected = Array(context.selectedMeaningNodes.filter {
+            $0.isUsable && seenNodes.insert($0.slug).inserted
+        }.prefix(6))
+        let nodes: [[String: Any]] = selected.map { node in
+            ["slug": node.slug, "kind": node.kind,
+             "name": localCompactString(node.name, limit: 100),
+             "definition": localCompactString(node.definition, limit: 400),
+             "boundary": localCompactString(node.boundary, limit: 240),
+             "positive_expression": localCompactString(node.positiveExpression, limit: 200),
+             "negative_expression": localCompactString(node.negativeExpression, limit: 200)]
+        }
+        let queues = selected.map { node in
+            context.meaningEdgeNeighbors.filter { $0.selectedSlug == node.slug && $0.isUsable }
+                .sorted {
+                    if $0.strength != $1.strength { return $0.strength > $1.strength }
+                    if $0.confidenceScore != $1.confidenceScore { return $0.confidenceScore > $1.confidenceScore }
+                    return ($0.neighbor.slug, $0.relationType, $0.direction, $0.edgeId) < ($1.neighbor.slug, $1.relationType, $1.direction, $1.edgeId)
+                }
+        }
+        var edges: [[String: Any]] = []
+        var seenEdges = Set<String>()
+        for offset in 0..<(queues.map(\.count).max() ?? 0) {
+            for queue in queues where offset < queue.count && edges.count < 8 {
+                let edge = queue[offset]
+                let source = edge.direction == "incoming" ? edge.neighbor.slug : edge.selectedSlug
+                let target = edge.direction == "incoming" ? edge.selectedSlug : edge.neighbor.slug
+                let key = [source, edge.relationType, target].joined(separator: "|")
+                guard seenEdges.insert(key).inserted else { continue }
+                edges.append([
+                    "selected_slug": edge.selectedSlug, "direction": edge.direction,
+                    "relation_type": edge.relationType, "neighbor_slug": edge.neighbor.slug,
+                    "neighbor_name": localCompactString(edge.neighbor.name, limit: 100),
+                    "neighbor_definition": localCompactString(edge.neighbor.definition, limit: 240),
+                    "neighbor_boundary": localCompactString(edge.neighbor.boundary, limit: 160),
+                    "rationale": localCompactString(edge.editorialRationale, limit: 260)
+                ])
+            }
+            if edges.count == 8 { break }
+        }
+        return ["concepts": nodes, "relationships": edges]
     }
 
     /// The brief with the service's fallback rules applied (audience effect,

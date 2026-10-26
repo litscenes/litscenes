@@ -1,9 +1,9 @@
 {
   "schema_version": "litscenes.meaning_graph_manifest.v1",
   "pack_id": "litscenes.meaning",
-  "version": "1a4c25a6016fc1e8",
+  "version": "fa52672dbc8acd66",
   "title": "LitScenes Meaning Graph",
-  "sha256": "18837552df160cc544646b20c798a3bcf0913061dba5736d458eefbcf7627f44",
-  "byte_size": 7589857,
-  "url": "https://github.com/litscenes/litscenes/releases/download/meaning-graph-1a4c25a6016fc1e8/graph.yaml"
+  "sha256": "932c8fbb36eeef1b837cf5688be6171897d5776465c1c118610e29957047d068",
+  "byte_size": 9163766,
+  "url": "https://github.com/litscenes/litscenes/releases/download/meaning-graph-fa52672dbc8acd66/graph.yaml"
 }

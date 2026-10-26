@@ -443,8 +443,8 @@ func environmentValue(_ key: String, cwd: URL = URL(fileURLWithPath: FileManager
     return nil
 }
 
-func packagedResourceURL(named name: String, extension ext: String) throws -> URL {
-    let filename = "\(name).\(ext)"
+func packagedResourceURL(named name: String, extension ext: String? = nil) throws -> URL {
+    let filename = ext.map { "\(name).\($0)" } ?? name
     let bundleNames = ["LitScenes_LitScenes.bundle", "ScreenGraphRecorder_ScreenGraphRecorder.bundle"]
     var candidates: [URL] = []
     if let resourceURL = Bundle.main.resourceURL {

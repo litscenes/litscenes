@@ -9,6 +9,7 @@ enum LocalMeaningGraphResolver {
         var evidence: [LensContextMeaningEvidence] = []
         var warnings: [String] = []
         var seen = Set<String>()
+        var neighborQueues: [[LensContextMeaningEdgeNeighbor]] = []
         let edgeLimit = min(max(payload.limits.meaningEdgeNeighbors, 0), 120)
         let evidenceLimit = min(max(payload.limits.meaningEvidence, 0), 40)
         for ref in payload.meaningNodeRefs.prefix(32) {
@@ -18,14 +19,19 @@ enum LocalMeaningGraphResolver {
             }
             guard seen.insert(node.text("id")).inserted else { continue }
             selected.append(try decode(LensContextMeaningNode.self, node))
-            if neighbors.count < edgeLimit {
-                neighbors += try graph.neighbors(of: node.text("slug"), limit: edgeLimit - neighbors.count)
-                    .map { try decode(LensContextMeaningEdgeNeighbor.self, $0) }
-            }
+            neighborQueues.append(try graph.neighbors(of: node.text("slug"), limit: edgeLimit)
+                .map { try decode(LensContextMeaningEdgeNeighbor.self, $0) })
             if evidence.count < evidenceLimit {
                 evidence += try graph.evidence(for: node.text("slug"), limit: min(payload.limits.perNodeEvidence, evidenceLimit - evidence.count))
                     .map { try decode(LensContextMeaningEvidence.self, $0) }
             }
+        }
+        // Each selected concept gets a turn before another consumes the budget.
+        for offset in 0..<(neighborQueues.map(\.count).max() ?? 0) {
+            for queue in neighborQueues where offset < queue.count && neighbors.count < edgeLimit {
+                neighbors.append(queue[offset])
+            }
+            if neighbors.count == edgeLimit { break }
         }
         if neighbors.isEmpty && !selected.isEmpty { warnings.append("These concepts have no relationships in the selected graph. Continue with their definitions and available evidence.") }
         let terms = payload.aestheticTermRefs.filter { $0.role != .avoidance }.map { ref in

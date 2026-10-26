@@ -192,6 +192,60 @@ private func emptyLensSnapshot(lensId: String) -> SceneStoryLensSnapshot {
     _ = try JSONSerialization.data(withJSONObject: input)
     #expect(input["creative_brief"] != nil)
     #expect(input["task_controls"] != nil)
+
+    // Different creative subjects and renamed entities obey the same structural contract.
+    for (project, subject) in [("harbor-workshop", "Passing a practical skill between neighbors"),
+                               ("alpine-survey", "Comparing uncertain measurements on a field expedition")] {
+        var context = emptyLensContextResponse()
+        for index in 0..<7 {
+            let slug = "theme.\(project)-\(index)"
+            let node: [String: Any] = ["id": slug, "slug": slug, "kind": "theme", "name": subject,
+                "definition": String(repeating: subject + " ", count: 30),
+                "positive_expression": "A possible expression", "negative_expression": "A different expression",
+                "boundary": "No particular ending is required.", "editorial_rationale": "PRIVATE_EDITORIAL_HISTORY"]
+            context.selectedMeaningNodes.append(try JSONCoding.decoder.decode(LensContextMeaningNode.self,
+                from: JSONSerialization.data(withJSONObject: node)))
+            for neighbor in 0..<12 {
+                let edge: [String: Any] = ["selected_slug": slug, "direction": "outgoing",
+                    "relation_type": "co_occurs_with", "edge_id": "edge-\(index)-\(neighbor)",
+                    "strength": Double(neighbor) / 12, "rationale": "PRIVATE_SOURCE_TITLE_AND_PASSAGE",
+                    "editorial_rationale": "These patterns can meet without requiring one another.",
+                    "neighbor": ["slug": "motif.\(project)-\(index)-\(neighbor)", "kind": "motif",
+                                 "name": "A repeated action", "definition": subject, "boundary": "Context determines significance."]]
+                context.meaningEdgeNeighbors.append(try JSONCoding.decoder.decode(LensContextMeaningEdgeNeighbor.self,
+                    from: JSONSerialization.data(withJSONObject: edge)))
+            }
+        }
+        context.meaningEvidence = [try JSONCoding.decoder.decode(LensContextMeaningEvidence.self,
+            from: Data(#"{"node_slug":"theme.private","work_title":"PRIVATE_SOURCE_TITLE_AND_PASSAGE","rationale":"PRIVATE_EVIDENCE"}"#.utf8))]
+        context.warnings = ["PRIVATE_REVIEW_HISTORY"]
+        wire.projectId = project
+        wire.goal = ProjectGoalBriefV2(goal: subject)
+        wire.lensContext = context
+        let projected = LocalSceneStoryProjection.modelInput(request: normalizedLocalSceneStoryRequest(wire))
+        let guidance = try #require(projected["meaning_guidance"] as? [String: Any])
+        let concepts = try #require(guidance["concepts"] as? [[String: Any]])
+        let relationships = try #require(guidance["relationships"] as? [[String: Any]])
+        #expect(concepts.count == 6)
+        #expect(relationships.count == 8)
+        #expect(Set(relationships.compactMap { $0["selected_slug"] as? String }).count == 6)
+        #expect((relationships.first?["neighbor_slug"] as? String)?.hasSuffix("-0-11") == true,
+                "stronger direct relationships precede weaker ones without starving other selections")
+        #expect(concepts.allSatisfy { (($0["definition"] as? String)?.count ?? 0) <= 400 })
+        #expect(relationships.allSatisfy { $0["rationale"] as? String == "These patterns can meet without requiring one another." })
+        let serialized = String(decoding: try JSONSerialization.data(withJSONObject: projected, options: .sortedKeys), as: UTF8.self)
+        #expect(!serialized.contains("PRIVATE_"))
+        context.meaningEdgeNeighbors.reverse()
+        let reordered = LocalSceneStoryProjection.meaningGuidance(context)
+        #expect(try JSONSerialization.data(withJSONObject: reordered, options: .sortedKeys)
+            == JSONSerialization.data(withJSONObject: guidance, options: .sortedKeys))
+        // Legacy packs have no abstract editorial notes: never substitute their source rationale.
+        context.meaningEdgeNeighbors = context.meaningEdgeNeighbors.map { edge in
+            var legacy = edge; legacy.editorialRationale = ""; return legacy
+        }
+        let legacy = try #require(LocalSceneStoryProjection.meaningGuidance(context)["relationships"] as? [[String: Any]])
+        #expect(legacy.allSatisfy { $0["rationale"] as? String == "" })
+    }
 }
 
 @Test func storyInferenceInstructionsCarryModeAndArchitectureContracts() {
@@ -232,10 +286,8 @@ private func emptyLensSnapshot(lensId: String) -> SceneStoryLensSnapshot {
     #expect(candidates.last?.score ?? -1 <= top.score)
 }
 
-@Test func catalogFetchPolicyDefaultsToBundledFirst() {
-    // With no LITSCENES_LIVE_CATALOG configured, an unconfigured install must
-    // make no catalog requests on its own.
-    if LitScenesCredentialStore().resolvedCredentialValue(forKey: CatalogFetchPolicy.preferenceKey).isEmpty {
-        #expect(!CatalogFetchPolicy.liveCatalogEnabled())
-    }
+@Test func catalogRefreshStaysBundled() async throws {
+    let snapshot = try await CatalogManifestRuntime.shared.loadSnapshot(force: true)
+    #expect(snapshot.origin == .bundled)
+    #expect(snapshot.styleBrowse.styles.count == 26)
 }

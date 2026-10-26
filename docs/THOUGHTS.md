@@ -185,3 +185,17 @@
 2026-10-26T14:40Z Workflow context is inherited by every unstructured task, so a follow-up spawned inside a finishing job silently joined that job and waited forever once it closed. Two rules resolve it: the coordinator treats a context whose job is no longer live as no context, and Desktop starts automatic follow-ups through one helper that clears the task-locals. The direct-key path carried this trap before the branch; the hosted path bypassed the coordinator and masked it.
 
 2026-10-26T15:05Z The inference trace store wrote through a connection with no busy timeout, so a reader holding a lock for an instant failed a job save, and a failed provenance save cancels the provider request behind it. The parallel suite surfaced it twice from both sides. The writer now waits up to five seconds; test probes do the same.
+
+2026-10-26T15:18:48Z A complete graph export still needs editorial repair, candidate evidence recovery and a source-retention migration before replacing the bundled graph.
+
+2026-10-26T17:57:49Z Candidate resolution sets the growth baseline before original additions: 205 concepts add 11.99% to 1,710, while aliases, repairs and relationship work do not inflate that percentage.
+
+2026-10-26T17:57:49Z A relationship should express a defensible semantic connection rather than improve a connectivity metric; all concepts have relationships, but distinct components remain valid.
+
+2026-10-26T17:57:49Z Source-specific literary rationale and abstract creative guidance serve different purposes; Story receives only the latter through explicit editorial fields, with user intent controlling their use.
+
+2026-10-26T17:57:49Z A successful launch beside a SwiftPM build tree did not prove portable packaging: blocking source-checkout access exposed missing Desktop and icon-bundle lookup paths, now fixed and verified in the copied app.
+
+2026-10-26T19:43:49Z Removing the legacy Scenes tab also requires moving its pending Frame Creator and frame-preview consumers, otherwise Media and activity links can navigate without opening the requested artifact.
+
+2026-10-26T19:54:15Z Native navigation validation found that a project loaded before the root view appeared skipped tab restoration; initial project observation must restore the preference while an empty library must leave that restoration pending.

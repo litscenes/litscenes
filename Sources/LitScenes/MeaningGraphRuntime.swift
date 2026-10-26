@@ -70,17 +70,44 @@ enum MeaningGraphSourceStore {
     static func bundledDatabaseURL() throws -> URL { try packagedResourceURL(named: "MeaningGraph/graph", extension: "sqlite") }
     static func bundledProvenance() throws -> MeaningGraphProvenance { try MeaningGraphSnapshot.open(bundledDatabaseURL()).provenance }
 
+    private static func validHash(_ hash: String) -> Bool {
+        hash.count == 64 && hash.allSatisfy { "0123456789abcdef".contains($0) }
+    }
+
+    private static func legacyBundledURL(_ hash: String) -> URL? {
+        guard validHash(hash) else { return nil }
+        return try? packagedResourceURL(named: "MeaningGraph/Legacy/\(hash)", extension: "yaml")
+    }
+
     static func isAvailable(_ source: MeaningGraphSource) -> Bool {
-        (try? bundledProvenance().baseHash) == source.hash || FileManager.default.fileExists(atPath: fileURL(source.hash).path)
+        guard validHash(source.hash) else { return false }
+        return (try? bundledProvenance().baseHash) == source.hash || legacyBundledURL(source.hash) != nil
+            || FileManager.default.fileExists(atPath: fileURL(source.hash).path)
+    }
+
+    /// Pin source bytes before a later application bundle replaces them.
+    static func retainAvailableSources(_ selection: ProjectMeaningGraphSelection) throws {
+        for source in [selection.base] + selection.overlays.map(\.source) where isAvailable(source) {
+            if !FileManager.default.fileExists(atPath: fileURL(source.hash).path) {
+                try store(yaml: yaml(for: source), hash: source.hash)
+            }
+            let metadataURL = MeaningGraphProjectStore.libraryURL.appendingPathComponent(source.hash + ".json")
+            if !FileManager.default.fileExists(atPath: metadataURL.path) {
+                try JSONCoding.encoder.encode(source).write(to: metadataURL, options: .atomic)
+            }
+        }
     }
 
     /// The exact YAML for a source, verified against its hash.
     static func yaml(for source: MeaningGraphSource) throws -> String {
+        guard validHash(source.hash) else { throw MeaningGraphError("Invalid graph source identity.") }
         let data: Data
         if try bundledProvenance().baseHash == source.hash {
             data = try Data(contentsOf: packagedResourceURL(named: "MeaningGraph/graph", extension: "yaml"))
         } else if FileManager.default.fileExists(atPath: fileURL(source.hash).path) {
             data = try Data(contentsOf: fileURL(source.hash))
+        } else if let bundled = legacyBundledURL(source.hash) {
+            data = try Data(contentsOf: bundled)
         } else if let legacy = source.legacyYAML {
             data = Data(legacy.utf8)
         } else {
@@ -95,8 +122,8 @@ enum MeaningGraphSourceStore {
     /// Writes YAML once; identical content shares one file.
     static func store(yaml: String, hash: String) throws {
         let data = Data(yaml.utf8)
-        guard GraphCoding.hash(data) == hash else { throw MeaningGraphError("Graph source checksum mismatch.") }
-        if FileManager.default.fileExists(atPath: fileURL(hash).path) { return }
+        guard validHash(hash), GraphCoding.hash(data) == hash else { throw MeaningGraphError("Graph source checksum mismatch.") }
+        if let existing = try? Data(contentsOf: fileURL(hash)), GraphCoding.hash(existing) == hash { return }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try data.write(to: fileURL(hash), options: .atomic)
     }
@@ -144,6 +171,7 @@ enum MeaningGraphProjectStore {
     static func load(project: ProjectRecord, library: ProjectLibrary) throws -> ProjectMeaningGraphSelection {
         let store = ProjectSQLiteDocumentStore(projectLibrary: library)
         if var selection = try store.loadDocument(ProjectMeaningGraphSelection.self, for: project, documentType: documentType) {
+            try MeaningGraphSourceStore.retainAvailableSources(selection)
             if try selection.migrateLegacySources() { try save(selection, project: project, library: library) }
             return selection
         }
@@ -166,6 +194,7 @@ enum MeaningGraphProjectStore {
     }
 
     static func save(_ selection: ProjectMeaningGraphSelection, project: ProjectRecord, library: ProjectLibrary) throws {
+        try MeaningGraphSourceStore.retainAvailableSources(selection)
         let data = try JSONCoding.encoder.encode(selection)
         let store = ProjectSQLiteDocumentStore(projectLibrary: library)
         var writes = [ProjectDocumentBatchWrite(data: data, documentType: documentType),

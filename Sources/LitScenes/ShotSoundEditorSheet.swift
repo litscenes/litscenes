@@ -78,7 +78,7 @@ struct ShotSoundEditorSheet: View {
         VStack(spacing: 0) {
             header
             ProviderBillingControl(target: .audio).padding(.horizontal, 16)
-            GoProviderSetupHint(provider: .elevenLabs)
+            ProviderSetupHint(provider: .elevenLabs)
             Rectangle().fill(PlateColor.hairline).frame(height: 1)
             consoleBand
             Rectangle().fill(PlateColor.hairline).frame(height: 1)

@@ -116,6 +116,8 @@ public struct MeaningGraphSnapshot: Sendable {
         let divergence = divergent ? "CASE json_extract(e.payload,'$.relation_type') WHEN 'contrasts_with' THEN 0 WHEN 'inverts' THEN 1 WHEN 'corrupts' THEN 2 WHEN 'intensifies' THEN 3 WHEN 'resolves' THEN 4 WHEN 'transforms_into' THEN 5 WHEN 'foreshadows' THEN 6 ELSE 9 END," : ""
         return try db.records("""
         SELECT json_object('selected_slug', ?, 'direction', \(direction),
+            'edge_id', e.id, 'provenance_kind', json_extract(e.payload,'$.provenance_kind'),
+            'editorial_rationale', json_extract(e.payload,'$.editorial_rationale'),
             'relation_type', json_extract(e.payload,'$.relation_type'),
             'strength', json_extract(e.payload,'$.strength'), 'confidence_score', json_extract(e.payload,'$.confidence_score'),
             'rationale', json_extract(e.payload,'$.rationale'), 'neighbor', json(n.payload))

@@ -205,3 +205,15 @@
 2026-10-26T14:39:38Z story-generation-hang: automatic follow-up tasks spawned inside a finishing workflow job inherited its context and waited forever for admission; make the coordinator treat a finished inherited job as no context and start follow-ups outside the running job. No commit or push is authorized.
 
 2026-10-26T14:46:37Z story-generation-hang: coordinator treats a finished inherited job as no context (fresh job from run and owned requests; provider gate fails fast), all automatic follow-ups start through a context-clearing helper, trace store writer waits on a busy database, four regression tests added. Build, 1,368 offline tests (twice), source hygiene and diff checks passed. No commit or push is authorized.
+
+2026-10-26T15:18:48Z independent-desktop-graph: implement the approved final graph curation, bounded creative guidance, local starter assets and direct-provider-only release. Preserve existing project data and graph identities.
+
+2026-10-26T17:57:49Z independent-desktop-graph: completed the final curated edition (1,915 concepts; 205 originals, 11.99%), independent provider setup, offline starter assets, old-pack retention and portable packaging. Public build, 1,368 offline tests, graph compiler verification, native isolated-app validation and hygiene passed. Work remains uncommitted/unpublished; no cloud shutdown.
+
+2026-10-26T19:43:49Z retire-scenes-v1: remove the legacy Scenes V1 tab, redirect saved selections and Story/Media/activity handoffs into Scenes, and preserve existing project artifacts. Implement the approved plan in the canonical public checkout; no commit or publication is authorized.
+
+2026-10-26T19:55:43Z retire-scenes-v1: removed the legacy tab and redirected Story/Media/activity navigation, preserved frame handoffs, and fixed restoration for already-loaded projects. Build, 1,368 offline tests, source hygiene and diff checks passed; isolated native validation confirmed the four tabs and legacy preference restoration into Scenes. Work remains uncommitted.
+
+2026-10-26T20:19:18Z retire-scenes-v1: owner authorized committing the completed tab removal; stage only its source, existing assertions and documentation, preserving the unrelated provider/graph migration. No push or merge is authorized.
+
+2026-10-26T20:21:05Z independent-desktop-graph: owner expanded commit authorization to all remaining public Desktop changes, including the graph/provider migration, starter assets, packaging and navigation documentation. Scenes V1 source is committed as 62a91aa; publication, merge and private integration remain separate.
