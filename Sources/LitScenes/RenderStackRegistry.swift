@@ -625,8 +625,6 @@ final class RenderStackRegistry: @unchecked Sendable {
     /// The first stack (in order) whose credential is satisfied — reproduces
     /// the old seeded-default chain (openai → civitai WAN → nil).
     func defaultStack(hasOpenAI: Bool, hasCivitai: Bool, hasFAL: Bool, hasStability: Bool = false) -> RenderStack? {
-        if GoConnection.isManaged, hasFAL,
-           let managed = stack(id: RenderStackID.falNanoBanana2), ProviderBilling.isConfigured(.image(managed)) { return managed }
         return frameCreatorStacks().first { stack in
             switch stack.credentialProvider {
             case .openAI: return hasOpenAI
@@ -639,7 +637,6 @@ final class RenderStackRegistry: @unchecked Sendable {
     }
 
     var fallback: RenderStack {
-        if GoConnection.isManaged, let included = stack(id: RenderStackID.falNanoBanana2) { return included }
         return stack(id: RenderStackID.openAIBase) ?? RenderStack.builtInOpenAIFallback
     }
 

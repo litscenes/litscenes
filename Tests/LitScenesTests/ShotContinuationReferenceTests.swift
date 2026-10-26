@@ -50,6 +50,8 @@ import Testing
     var db: OpaquePointer?
     #expect(sqlite3_open_v2(InferenceTraceSettings.databaseURL.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK)
     defer { sqlite3_close(db) }
+    // Other suites write traces concurrently; a read-only probe waits for them instead of reporting SQLITE_BUSY.
+    sqlite3_busy_timeout(db, 5000)
     var statement: OpaquePointer?
     #expect(sqlite3_prepare_v2(db, "SELECT request_text_json, media_refs_json, trace_id FROM inference_calls WHERE artifact_id = ?", -1, &statement, nil) == SQLITE_OK)
     defer { sqlite3_finalize(statement) }
@@ -112,9 +114,7 @@ private struct ReferenceWireCredentials: LitScenesCredentialResolving {
     func credentialStatus(for provider: LitScenesProviderCredential) -> CredentialStatus {
         .init(provider: provider, source: .environment, isConfigured: true, message: "Offline fixture")
     }
-    func lensContextCredentialStatus(for credential: LensContextCredential) -> LensContextCredentialStatus {
-        .init(credential: credential, source: .missing, isConfigured: false, message: "Offline fixture")
-    }
+
 }
 
 @MainActor @Test func continuationReferencesReachWireWithoutChangingAnchorOrLeakingImagesIntoTrace() async throws {
@@ -164,6 +164,8 @@ private struct ReferenceWireCredentials: LitScenesCredentialResolving {
     var db: OpaquePointer?
     #expect(sqlite3_open_v2(InferenceTraceSettings.databaseURL.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK)
     defer { sqlite3_close(db) }
+    // Other suites write traces concurrently; a read-only probe waits for them instead of reporting SQLITE_BUSY.
+    sqlite3_busy_timeout(db, 5000)
     var statement: OpaquePointer?
     #expect(sqlite3_prepare_v2(db, "SELECT trace_id FROM inference_calls WHERE artifact_id = ?", -1, &statement, nil) == SQLITE_OK)
     defer { sqlite3_finalize(statement) }

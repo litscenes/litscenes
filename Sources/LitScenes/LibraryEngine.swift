@@ -1,6 +1,7 @@
 import AppKit
 @preconcurrency import AVFoundation
 import Foundation
+import MeaningGraphCore
 import ImageIO
 import UniformTypeIdentifiers
 
@@ -1772,6 +1773,7 @@ final class LibraryEngine: ObservableObject {
     @Published private(set) var creativeSchemaState: CreativeSchemaCompatibilityState = .needsBootstrap
     @Published private(set) var creativeResetArchivePath = ""
     @Published private(set) var projectGoalV2: ProjectGoalDocumentV2 = .empty()
+    @Published private(set) var projectMeaningGraphSelection: ProjectMeaningGraphSelection?
     @Published private(set) var lensContext: ProjectLensContextDocument = .empty()
     /// Story-route Form options from the knowledge-graph lambda: the initial trio
     /// lands at GOAL time, expansions branch from selected options. Hot-loaded with
@@ -2615,7 +2617,8 @@ final class LibraryEngine: ObservableObject {
     }
 
     var hasFreshLensContextForActiveGoal: Bool {
-        guard let version = projectGoalV2.activeVersion else { return false }
+        guard let version = projectGoalV2.activeVersion, let selection = projectMeaningGraphSelection,
+              lensContext.response?.graphProvenance?.effectiveHash == selection.effectiveHash else { return false }
         return lensContext.isReady(
             forGoalVersionId: version.versionId,
             goalFingerprint: currentLensContextGoalFingerprint
@@ -2689,7 +2692,7 @@ final class LibraryEngine: ObservableObject {
             case .direct:
                 blockers.append("Configure an OpenAI-compatible key for Story Inference (OPENAI_API_KEY, optional OPENAI_BASE_URL).")
             case .hosted:
-                blockers.append("Configure the hosted Story provider endpoint and token, or switch Story Inference to Direct.")
+                blockers.append("This old managed job cannot resume. Start a new run with your own provider key in Settings.")
             }
         }
         if isGeneratingSceneStories {
@@ -3328,7 +3331,7 @@ final class LibraryEngine: ObservableObject {
                 selectedMediaSummary: selectedGoalMediaSummary(mediaIds: mediaIds),
                 mediaArchiveSummary: goalMediaArchiveSummary(),
                 moodboardAnalysisContext: goalMoodboardAnalysisContext(),
-                meaningChoiceContextJSON: try meaningChoiceContextJSON(),
+                meaningChoiceContextJSON: try await meaningChoiceContextJSON(query: submittedText),
                 currentCastSummary: goalCast.interviewContextSummary,
                 userMessage: submittedText,
                 generatedAt: now
@@ -3379,12 +3382,12 @@ final class LibraryEngine: ObservableObject {
 
     func retryLensContextRetrieval() {
         lensContextRetrievalTask?.cancel()
-        lensContextRetrievalTask = Task {
+        lensContextRetrievalTask = followUpTask { [self] in
             await refreshLensContextForActiveGoal()
         }
     }
 
-    func refreshLensContextForActiveGoal() async {
+    func refreshLensContextForActiveGoal(runAutomation: Bool = true) async {
         guard let project = currentProject else {
             lensContextStatus = "Create or select a project first"
             return
@@ -3393,7 +3396,7 @@ final class LibraryEngine: ObservableObject {
             lensContextStatus = "Save a Goal first"
             return
         }
-        if version.brief.styleTermRefs.isEmpty {
+        if runAutomation && version.brief.styleTermRefs.isEmpty {
             let committed = await ensureGoalStyleTaxonomyRefs()
             if committed {
                 return
@@ -3402,13 +3405,14 @@ final class LibraryEngine: ObservableObject {
         // Cast articulation runs fire-and-forget in parallel: it never commits a brief
         // version (its document is separate), and awaiting it here would stall Frame
         // Context retrieval behind a second LLM call.
-        if goalCast.articulatedAt.isEmpty {
-            goalCastArticulationTask = Task { [weak self] in
+        if runAutomation && goalCast.articulatedAt.isEmpty {
+            goalCastArticulationTask = followUpTask { [weak self] in
                 await self?.ensureGoalCastArticulation()
             }
         }
         let goalFingerprint = lensContextFingerprint(projectId: project.projectId, version: version)
-        let retrievalKey = "\(project.projectId):\(version.versionId):\(goalFingerprint)"
+        let graphHash = projectMeaningGraphSelection?.effectiveHash ?? ""
+        let retrievalKey = "\(project.projectId):\(version.versionId):\(goalFingerprint):\(graphHash)"
         let request = LensContextResolveRequest(
             projectId: project.projectId,
             goalFingerprint: goalFingerprint,
@@ -3438,12 +3442,13 @@ final class LibraryEngine: ObservableObject {
         }
 
         do {
-            let client = try StoryInferenceService.fromEnvironment()
+            let client = try StoryInferenceService.fromEnvironment(for: project, projectLibrary: projectLibrary)
             let response = try await client.resolve(request)
             try Task.checkCancellation()
             guard currentProject?.projectId == project.projectId,
                   projectGoalV2.activeVersion?.versionId == version.versionId,
                   currentLensContextGoalFingerprint == goalFingerprint,
+                  projectMeaningGraphSelection?.effectiveHash == graphHash,
                   activeLensContextRetrievalKey == retrievalKey else {
                 return
             }
@@ -3460,13 +3465,15 @@ final class LibraryEngine: ObservableObject {
             print(
                 "[lens_context_retrieval] completed project_id=\(project.projectId) goal_version_id=\(version.versionId) meaning_nodes=\(response.selectedMeaningNodes.count) edge_neighbors=\(response.meaningEdgeNeighbors.count) evidence=\(response.meaningEvidence.count) aesthetic_candidates=\(response.aestheticCandidates.count) style_candidates=\(response.styleCandidates.count)"
             )
-            queueFramePlanningAfterLensContext(projectId: project.projectId, goalVersionId: version.versionId)
-            queueInitialFrameFormsAfterLensContext(
-                projectId: project.projectId,
-                goalVersionId: version.versionId,
-                goalFingerprint: goalFingerprint
-            )
-            queueInitialStoryGenerationIfEligible()
+            if runAutomation {
+                queueFramePlanningAfterLensContext(projectId: project.projectId, goalVersionId: version.versionId)
+                queueInitialFrameFormsAfterLensContext(
+                    projectId: project.projectId,
+                    goalVersionId: version.versionId,
+                    goalFingerprint: goalFingerprint
+                )
+                queueInitialStoryGenerationIfEligible()
+            }
         } catch {
             if Task.isCancelled || isCancellationLikeError(error) {
                 return
@@ -3474,6 +3481,7 @@ final class LibraryEngine: ObservableObject {
             guard currentProject?.projectId == project.projectId,
                   projectGoalV2.activeVersion?.versionId == version.versionId,
                   currentLensContextGoalFingerprint == goalFingerprint,
+                  projectMeaningGraphSelection?.effectiveHash == graphHash,
                   activeLensContextRetrievalKey == retrievalKey else {
                 return
             }
@@ -18227,12 +18235,7 @@ final class LibraryEngine: ObservableObject {
         ).canRender
     }
 
-    var lensContextCredentialStatuses: [LensContextCredentialStatus] {
-        _ = providerCredentialsRevision
-        return LensContextCredential.allCases.map {
-            videoCredentialStore.lensContextCredentialStatus(for: $0)
-        }
-    }
+
 
     /// Re-reads render_stacks.yaml (bundled + user overlay) and republishes.
     func reloadRenderStacks() {
@@ -18258,7 +18261,7 @@ final class LibraryEngine: ObservableObject {
         falPricing = nil
         providerCredentialsRevision += 1
         NotificationCenter.default.post(name: .civitaiCredentialsChanged, object: nil)
-        refreshVideoChainAfterCredentialChange(status: GoConnection.isManaged ? "LitScenes Go connected" : "Credentials reloaded from credentials.env")
+        refreshVideoChainAfterCredentialChange(status: "Provider credentials reloaded")
         if StoryInferenceMode.resolved() == .direct { queueInitialStoryGenerationIfEligible() }
     }
 
@@ -18300,32 +18303,9 @@ final class LibraryEngine: ObservableObject {
         refreshVideoChainAfterCredentialChange(status: "\(provider.label) credential removed")
     }
 
-    func saveLensContextCredential(_ credential: LensContextCredential, value: String) throws {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            try removeLensContextCredential(credential)
-            return
-        }
-        var values = loadDotEnv(from: OpenAIKeyStore.savedKeyURL)
-        for key in credential.keyCandidates where key != credential.primaryWritableKey {
-            values.removeValue(forKey: key)
-        }
-        values[credential.primaryWritableKey] = trimmed
-        try OpenAIKeyStore.saveCredentialValues(values)
-        providerCredentialsRevision += 1
-        lensContextStatus = "\(credential.label) saved"
-        queueInitialStoryGenerationIfEligible()
-    }
 
-    func removeLensContextCredential(_ credential: LensContextCredential) throws {
-        var values = loadDotEnv(from: OpenAIKeyStore.savedKeyURL)
-        for key in credential.keyCandidates {
-            values.removeValue(forKey: key)
-        }
-        try OpenAIKeyStore.saveCredentialValues(values)
-        providerCredentialsRevision += 1
-        lensContextStatus = "\(credential.label) removed"
-    }
+
+
 
     /// Story Inference settings are plain credentials.env values: the mode key
     /// plus the OpenAI-compatible base URL / model overrides. Empty removes.
@@ -18351,12 +18331,24 @@ final class LibraryEngine: ObservableObject {
         )
     }
 
+    /// Automatic follow-up work starts outside whatever workflow job triggered
+    /// it. An unstructured task inherits the job's task-local context, and a job
+    /// that finishes a moment later would otherwise leave the follow-up waiting
+    /// on it forever.
+    private func followUpTask(_ operation: @escaping @MainActor () async -> Void) -> Task<Void, Never> {
+        Task { @MainActor in
+            await WorkflowContext.$current.withValue(nil) {
+                await ProviderBilling.$snapshot.withValue(nil) { await operation() }
+            }
+        }
+    }
+
     private func queueInitialStoryGenerationIfEligible() {
         guard initialStoryGenerationTask == nil,
               initialStoryGenerationIsEligible else {
             return
         }
-        initialStoryGenerationTask = Task { [weak self] in
+        initialStoryGenerationTask = followUpTask { [weak self] in
             guard let self else { return }
             await Task.yield()
             guard self.initialStoryGenerationIsEligible else {
@@ -18559,7 +18551,7 @@ final class LibraryEngine: ObservableObject {
         print("[story_generation] starting project_id=\(project.projectId) session_id=\(session.generationSessionId) origin=\(origin.rawValue) lens_count=\(lensRefs.count) cast_count=\(goalCastSnapshot.count) requested_stories=\(requestedCount) prior_signatures=\(priorSignatures.count)")
 
         do {
-            let client = try StoryInferenceService.fromEnvironment()
+            let client = try StoryInferenceService.fromEnvironment(for: project, projectLibrary: projectLibrary)
             var sameSessionSignatures: [StorySignatureDocument] = []
             var savedStoryTitles: [String] = []
             for slotIndex in session.slots.indices {
@@ -21891,6 +21883,8 @@ final class LibraryEngine: ObservableObject {
         initialDraftLensGenerationProgress = .idle
         stopVideoPlayback()
         currentProject = project
+        do { projectMeaningGraphSelection = try MeaningGraphProjectStore.load(project: project, library: projectLibrary) }
+        catch { projectMeaningGraphSelection = nil; lastError = "Project graph: \(error.localizedDescription)" }
         // Retired predecessor-ghost still cache — best-effort sweep of the
         // orphaned directory (placed handoff frames are ordinary hero images
         // under aestheticProof and are untouched).
@@ -23970,7 +23964,7 @@ final class LibraryEngine: ObservableObject {
         lensContext = pending
         lensContextStatus = "Frame Context queued"
         lensContextRetrievalTask?.cancel()
-        lensContextRetrievalTask = Task {
+        lensContextRetrievalTask = followUpTask { [self] in
             await refreshLensContextForActiveGoal()
         }
     }
@@ -23980,7 +23974,7 @@ final class LibraryEngine: ObservableObject {
     /// never-started suggestions. Fully rendered plans are never re-planned on their
     /// own; the stage offers to plan more instead.
     private func queueFramePlanningAfterLensContext(projectId: String, goalVersionId: String) {
-        Task {
+        _ = followUpTask { [self] in
             await Task.yield()
             guard currentProject?.projectId == projectId,
                   projectGoalV2.activeVersion?.versionId == goalVersionId,
@@ -24006,7 +24000,7 @@ final class LibraryEngine: ObservableObject {
     // MARK: - Frame Forms (story-route Form options from the knowledge graph)
 
     private func queueInitialFrameFormsAfterLensContext(projectId: String, goalVersionId: String, goalFingerprint: String) {
-        Task {
+        _ = followUpTask { [self] in
             await Task.yield()
             await generateInitialFrameForms(projectId: projectId, goalVersionId: goalVersionId, goalFingerprint: goalFingerprint)
         }
@@ -24034,7 +24028,7 @@ final class LibraryEngine: ObservableObject {
             meaningNodeRefs: version.brief.meaningNodeRefs
         )
         do {
-            let client = try StoryInferenceService.fromEnvironment()
+            let client = try StoryInferenceService.fromEnvironment(for: project, projectLibrary: projectLibrary)
             let response = try await client.generateFrameForms(request)
             try Task.checkCancellation()
             guard currentProject?.projectId == projectId,
@@ -24047,7 +24041,7 @@ final class LibraryEngine: ObservableObject {
                 status: "ready",
                 updatedAt: DateFormats.now()
             )
-            document.generations = [frameFormGeneration(mode: "initial", parentOptionId: "", options: response.options)]
+            document.generations = [frameFormGeneration(mode: "initial", parentOptionId: "", response: response)]
             guard document.hasInitialGeneration else {
                 print("[frame_forms] initial returned no options project_id=\(projectId)")
                 return
@@ -24072,7 +24066,7 @@ final class LibraryEngine: ObservableObject {
         }
     }
 
-    /// Mode B: expand the route from a selected Form. The lambda walks the
+    /// Mode B: expand the route from a selected Form. The local engine walks the
     /// meaning graph's edges from the option's node and returns a branching trio.
     /// One expansion per option; returns [] on any failure so the UI degrades
     /// silently.
@@ -24100,12 +24094,12 @@ final class LibraryEngine: ObservableObject {
                 priorFormGists: Array(priorGists)
             )
             do {
-                let client = try StoryInferenceService.fromEnvironment()
+                let client = try StoryInferenceService.fromEnvironment(for: project, projectLibrary: projectLibrary)
                 let response = try await client.generateFrameForms(request)
                 try Task.checkCancellation()
                 guard currentProject?.projectId == project.projectId, !response.options.isEmpty else { return [] }
                 guard !frameForms.hasExpansion(fromOptionId: selectedId) else { return [] }
-                let generation = frameFormGeneration(mode: "expansion", parentOptionId: selectedId, options: response.options)
+                let generation = frameFormGeneration(mode: "expansion", parentOptionId: selectedId, response: response)
                 var document = frameForms
                 document.projectId = project.projectId
                 document.status = "ready"
@@ -24144,20 +24138,27 @@ final class LibraryEngine: ObservableObject {
         ))
     }
 
-    private func frameFormGeneration(mode: String, parentOptionId: String, options: [LensFrameFormOption]) -> LensFrameFormGeneration {
+    private func frameFormGeneration(mode: String, parentOptionId: String, response: FrameFormsGenerateResponse) -> LensFrameFormGeneration {
         let now = DateFormats.now()
-        let stamped = options.map { option -> LensFrameFormOption in
+        let stamped = response.options.map { option -> LensFrameFormOption in
             var value = option.normalized()
             value.optionId = "form_\(shortHash("\(value.meaningSlug):\(value.pole):\(value.title):\(now):\(UUID().uuidString)", length: 12))"
             return value
         }
-        return LensFrameFormGeneration(
+        var generation = LensFrameFormGeneration(
             generationId: "formgen_\(shortHash("\(mode):\(parentOptionId):\(now):\(UUID().uuidString)", length: 12))",
             mode: mode,
             parentOptionId: parentOptionId,
             options: stamped,
             generatedAt: now
         )
+        generation.graphProvenance = response.graphProvenance
+        generation.traceId = response.traceId
+        if let traceId = response.traceId {
+            Task { await InferenceTraceStore.shared.enrichContext(traceId: traceId,
+                artifactType: "frame_forms", artifactId: generation.generationId) }
+        }
+        return generation
     }
 
     // MARK: - Shot timeline (the flat ordered workspace)
@@ -28609,7 +28610,7 @@ final class LibraryEngine: ObservableObject {
     /// snapshot can read it, else the stack's own note, else "" (unpriced).
     func priceNote(for stack: RenderStack, attachesReferences: Bool) -> String {
         if ProviderBilling.source(for: .image(stack)) == .go {
-            return "Go · credit quote before generation"
+            return "Retired managed job · start a new run"
         }
         return FALImagePricing.displayNote(stack: stack, attachesReferences: attachesReferences, snapshot: falPricing)
     }
@@ -28641,31 +28642,18 @@ final class LibraryEngine: ObservableObject {
         guard !isFetchingFALPricing else { return }
         isFetchingFALPricing = true
         defer { isFetchingFALPricing = false }
-        var combined = falPricing ?? FALPricingSnapshot(fetchedAt: .distantPast, prices: [:])
-        for managed in [false, true] {
-            let cacheURL = falPricingCacheURL(managed: managed)
-            var cached = (try? Data(contentsOf: cacheURL)).flatMap { try? JSONDecoder().decode(FALPricingSnapshot.self, from: $0) }
-            let wanted = managed
-                ? ["fal-ai/nano-banana-2", "fal-ai/nano-banana-2/edit", "fal-ai/kling-video/v3/pro/image-to-video"]
-                : falPricingEndpointIds
-            let billing = ProviderBillingSnapshot.capture()
-            let mayContactGo = billing.defaultSource == .go || billing.overrides.values.contains(.go)
-                || GoVault.read("session") != nil
-            let key = managed ? (mayContactGo ? GoConnection.marker : "") : videoCredentialStore.personalCredential(for: .fal).trimmed
-            if !key.isEmpty && (cached == nil || cached!.ageSeconds >= maxAge || !Set(wanted).isSubset(of: Set(cached!.prices.keys))) {
-                do {
-                    let prices = try await FALPricingClient().fetchPrices(endpointIds: wanted, apiKey: key)
-                    cached = FALPricingSnapshot(fetchedAt: Date(), prices: Dictionary(prices.map { ($0.endpointId, $0) }, uniquingKeysWith: { first, _ in first }))
-                    try? ensureDirectory(litScenesApplicationSupportDirectory())
-                    if let data = try? JSONEncoder().encode(cached) { try? data.write(to: cacheURL, options: .atomic) }
-                } catch { /* Retain the last rate from this same billing source. */ }
-            }
-            if let cached {
-                if managed { combined.goPrices = cached.prices; combined.goFetchedAt = cached.fetchedAt }
-                else { combined.prices = cached.prices; combined.fetchedAt = cached.fetchedAt }
-            }
+        let cacheURL = falPricingCacheURL(managed: false)
+        var cached = falPricing ?? (try? Data(contentsOf: cacheURL)).flatMap { try? JSONDecoder().decode(FALPricingSnapshot.self, from: $0) }
+        let key = videoCredentialStore.personalCredential(for: .fal).trimmed
+        if !key.isEmpty && (cached == nil || cached!.ageSeconds >= maxAge || !Set(falPricingEndpointIds).isSubset(of: Set(cached!.prices.keys))) {
+            do {
+                let prices = try await FALPricingClient().fetchPrices(endpointIds: falPricingEndpointIds, apiKey: key)
+                cached = FALPricingSnapshot(fetchedAt: Date(), prices: Dictionary(prices.map { ($0.endpointId, $0) }, uniquingKeysWith: { first, _ in first }))
+                try? ensureDirectory(litScenesApplicationSupportDirectory())
+                if let data = try? JSONEncoder().encode(cached) { try? data.write(to: cacheURL, options: .atomic) }
+            } catch { /* Keep the previous vendor rate with its original age. */ }
         }
-        falPricing = combined
+        falPricing = cached
     }
 
     /// Momentum rule: a frame derived from a staged frame (sibling, variation,
@@ -33952,8 +33940,7 @@ final class LibraryEngine: ObservableObject {
             lensContextStatus = "Frame context missing"
             return
         }
-        let fingerprint = currentLensContextGoalFingerprint
-        if lensContext.isReady(forGoalVersionId: version.versionId, goalFingerprint: fingerprint),
+        if hasFreshLensContextForActiveGoal,
            let stats = lensContext.response?.queryStats {
             lensContextStatus = "Frame Context ready: \(stats.resolvedMeaningNodeCount) nodes, \(stats.meaningEdgeNeighborCount) edges, \(stats.aestheticCandidateCount) aesthetic candidates"
             return
@@ -34163,12 +34150,25 @@ final class LibraryEngine: ObservableObject {
         return text
     }
 
-    private func meaningChoiceContextJSON() throws -> String {
-        let url = try packagedResourceURL(named: "meaning_choice_index", extension: "json")
-        let data = try Data(contentsOf: url)
-        let object = try JSONSerialization.jsonObject(with: data)
-        let minified = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
-        return String(data: minified, encoding: .utf8) ?? ""
+    private func meaningChoiceContextJSON(query: String) async throws -> String {
+        guard let selection = projectMeaningGraphSelection else { throw MeaningGraphError("The project graph configuration could not be loaded.") }
+        return try await MeaningGraphRuntime.shared.choiceContext(selection: selection,
+            query: query + " " + currentGoalBriefV2JSON(from: projectGoalV2.activeBrief),
+            selectedSlugs: projectGoalV2.activeBrief.meaningNodeRefs.map(\.slug),
+            termCaps: MeaningGraphRuntime.goalTermCaps)
+    }
+
+    func applyMeaningGraph(_ selection: ProjectMeaningGraphSelection, projectId: String, replacing hash: String) async throws {
+        _ = try await MeaningGraphRuntime.shared.snapshot(selection)
+        guard let project = currentProject, project.projectId == projectId,
+              projectMeaningGraphSelection?.effectiveHash == hash else {
+            throw MeaningGraphError("The active project or graph changed. Open the graph controls again.")
+        }
+        try MeaningGraphProjectStore.save(selection, project: project, library: projectLibrary)
+        projectMeaningGraphSelection = selection
+        lensContextRetrievalTask?.cancel()
+        activeLensContextRetrievalKey = ""
+        await refreshLensContextForActiveGoal(runAutomation: false)
     }
 
     private func styleContract(from brief: ProjectAestheticBriefDocument) -> String {

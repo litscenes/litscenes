@@ -171,3 +171,31 @@
 
 2026-10-03T11:09:49Z take-draft-consumption: The take strip was right and the editor was wrong — per-base-take drafts were never consumed, so each base take showed the edit that had already become the next take. Resolved by consuming the one draft at the dispatch persist (regular renders and continuation retakes) and projecting its recipe onto the override lanes; sibling drafts stay. Tension: consuming before the render succeeds means a failed take leaves the edit only on the in-film seed, accepted because the override lane keeps the text and a draft is defined as an unsent edit.
 2026-10-03T11:09:49Z reel-bake-honesty: The running debug binary predated the reel-play-all autoplay gate, and a bake canceled while the reel was open became a nil state the board hides. Canceled is now a named retryable state when a reason is given (Activity); closing the reel still clears silently because the next open re-queues.
+
+2026-10-06T22:26:17Z The owner approved publishing the full meaning graph and eligible aesthetic metadata; private ingestion, curation, raw corpora, images, and operations remain outside the public repository.
+
+2026-10-06T23:04:43Z The public/private source boundary now places creative graph data and execution in Desktop; private corpus ingestion, curation, raw media and operational services remain separate, as requested.
+
+2026-10-22T17:38Z Graph sources live once per Mac, keyed by content hash, and project documents keep identity only. Inlining the 7.6 MB base YAML in every project (twice, with history) was the cost of exact-source retention; a content-addressed store keeps the guarantee per machine, migrates old documents on open, and reports a missing source plainly instead of guessing. Portability across Macs is by importing the same YAML, whose hash the project already names.
+
+2026-10-22T17:38Z The Goal interview choice packet is curated by what the brief can hold. Terms are limited to the Goal facet types with the previous per-facet caps, ranked by relevance to the conversation and then by how many aesthetics use them; concept retrieval tops up every kind to three so no kind disappears. The ranking lives in MeaningGraphCore; the facet list and caps live in Desktop beside the Goal model.
+
+2026-10-22T17:38Z An overlay addition that only loses its target to suppression is a conflict, not an omission. A later layer may still disable an earlier layer's addition, which is ordinary layering. Aesthetic data defects in the public pack (shared category navigation residue, constant primary_rank, citation markers) belong to the private export generator and were not hand-edited here.
+
+2026-10-26T14:40Z Workflow context is inherited by every unstructured task, so a follow-up spawned inside a finishing job silently joined that job and waited forever once it closed. Two rules resolve it: the coordinator treats a context whose job is no longer live as no context, and Desktop starts automatic follow-ups through one helper that clears the task-locals. The direct-key path carried this trap before the branch; the hosted path bypassed the coordinator and masked it.
+
+2026-10-26T15:05Z The inference trace store wrote through a connection with no busy timeout, so a reader holding a lock for an instant failed a job save, and a failed provenance save cancels the provider request behind it. The parallel suite surfaced it twice from both sides. The writer now waits up to five seconds; test probes do the same.
+
+2026-10-26T15:18:48Z A complete graph export still needs editorial repair, candidate evidence recovery and a source-retention migration before replacing the bundled graph.
+
+2026-10-26T17:57:49Z Candidate resolution sets the growth baseline before original additions: 205 concepts add 11.99% to 1,710, while aliases, repairs and relationship work do not inflate that percentage.
+
+2026-10-26T17:57:49Z A relationship should express a defensible semantic connection rather than improve a connectivity metric; all concepts have relationships, but distinct components remain valid.
+
+2026-10-26T17:57:49Z Source-specific literary rationale and abstract creative guidance serve different purposes; Story receives only the latter through explicit editorial fields, with user intent controlling their use.
+
+2026-10-26T17:57:49Z A successful launch beside a SwiftPM build tree did not prove portable packaging: blocking source-checkout access exposed missing Desktop and icon-bundle lookup paths, now fixed and verified in the copied app.
+
+2026-10-26T19:43:49Z Removing the legacy Scenes tab also requires moving its pending Frame Creator and frame-preview consumers, otherwise Media and activity links can navigate without opening the requested artifact.
+
+2026-10-26T19:54:15Z Native navigation validation found that a project loaded before the root view appeared skipped tab restoration; initial project observation must restore the preference while an empty library must leave that restoration pending.

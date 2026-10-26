@@ -183,7 +183,7 @@ struct LensBlendConsoleView: View {
                 // can never paint outside its share of the bar.
                 Color.clear
                     .overlay(
-                        AsyncImage(url: URL(string: slot.url)) { phase in
+                        CatalogImage(address: slot.url) { phase in
                             switch phase {
                             case .success(let image):
                                 image.fittedThumbnail()

@@ -1,9 +1,8 @@
 import Foundation
+import MeaningGraphCore
 
-// Direct-mode ports of the meaning service's SceneStory / Frame Forms prompt
-// assembly, strict schemas, post-processing, and validation. The wire request
-// and document types are shared with the hosted path; only transport and the
-// graph-backed retrieval differ (see LocalStoryInference.swift).
+// Native SceneStory and Frame Forms prompt assembly, strict schemas,
+// post-processing, and validation, shared by personal and managed funding.
 
 // MARK: - Shared projection limits and helpers
 
@@ -103,8 +102,15 @@ enum LocalStoryInferencePrompts {
         1. Goal, success criteria, required entities, explicit constraints, and audience shift.
         2. One coherent cause-and-effect Story.
         3. Saved resolved visual treatment.
-        4. Optional meaning line.
+        4. Optional meaning line and meaning_guidance.
         5. Novelty.
+
+        meaning_guidance offers bounded, optional conceptual inspiration. Its definitions,
+        boundaries, expressions, and directed relationships are possibilities, not required
+        plot events or factual claims. Use only what serves the user's intent. Never turn a
+        concept into a compulsory emotion, moral, genre, or ending. Meaning-edge references
+        must match a supplied selected_slug, direction, relation_type, and neighbor_slug;
+        leave them empty when no relationship actually shaped the story.
 
         The visual treatment is the user-approved resolved Lens language. Follow it as provided. Do not reintroduce source aesthetic taxonomy or invent a different visual treatment.
 
@@ -326,12 +332,59 @@ enum LocalSceneStoryProjection {
 
         return [
             "creative_brief": creativeBrief,
+            "meaning_guidance": meaningGuidance(wire.lensContext),
             "visual_treatment": visualTreatment(wire),
             "story_task": storyTask,
             "task_controls": taskControls,
             "media_anchors": mediaAnchors(wire.mediaAnchors),
             "memory": memoryProjection(wire.storyMemory, currentSessionId: wire.generationSessionId)
         ]
+    }
+
+    /// Only explicit selections and their direct neighbors cross the creative boundary.
+    /// Evidence and source-specific rationales stay in graph review; only abstract editorial relationship notes enter Story.
+    static func meaningGuidance(_ context: LensContextResolveResponse) -> [String: Any] {
+        var seenNodes = Set<String>()
+        let selected = Array(context.selectedMeaningNodes.filter {
+            $0.isUsable && seenNodes.insert($0.slug).inserted
+        }.prefix(6))
+        let nodes: [[String: Any]] = selected.map { node in
+            ["slug": node.slug, "kind": node.kind,
+             "name": localCompactString(node.name, limit: 100),
+             "definition": localCompactString(node.definition, limit: 400),
+             "boundary": localCompactString(node.boundary, limit: 240),
+             "positive_expression": localCompactString(node.positiveExpression, limit: 200),
+             "negative_expression": localCompactString(node.negativeExpression, limit: 200)]
+        }
+        let queues = selected.map { node in
+            context.meaningEdgeNeighbors.filter { $0.selectedSlug == node.slug && $0.isUsable }
+                .sorted {
+                    if $0.strength != $1.strength { return $0.strength > $1.strength }
+                    if $0.confidenceScore != $1.confidenceScore { return $0.confidenceScore > $1.confidenceScore }
+                    return ($0.neighbor.slug, $0.relationType, $0.direction, $0.edgeId) < ($1.neighbor.slug, $1.relationType, $1.direction, $1.edgeId)
+                }
+        }
+        var edges: [[String: Any]] = []
+        var seenEdges = Set<String>()
+        for offset in 0..<(queues.map(\.count).max() ?? 0) {
+            for queue in queues where offset < queue.count && edges.count < 8 {
+                let edge = queue[offset]
+                let source = edge.direction == "incoming" ? edge.neighbor.slug : edge.selectedSlug
+                let target = edge.direction == "incoming" ? edge.selectedSlug : edge.neighbor.slug
+                let key = [source, edge.relationType, target].joined(separator: "|")
+                guard seenEdges.insert(key).inserted else { continue }
+                edges.append([
+                    "selected_slug": edge.selectedSlug, "direction": edge.direction,
+                    "relation_type": edge.relationType, "neighbor_slug": edge.neighbor.slug,
+                    "neighbor_name": localCompactString(edge.neighbor.name, limit: 100),
+                    "neighbor_definition": localCompactString(edge.neighbor.definition, limit: 240),
+                    "neighbor_boundary": localCompactString(edge.neighbor.boundary, limit: 160),
+                    "rationale": localCompactString(edge.editorialRationale, limit: 260)
+                ])
+            }
+            if edges.count == 8 { break }
+        }
+        return ["concepts": nodes, "relationships": edges]
     }
 
     /// The brief with the service's fallback rules applied (audience effect,
@@ -1345,128 +1398,116 @@ struct LocalFrameFormCandidate {
 }
 
 enum LocalFrameFormSelection {
-    static func candidates(request: FrameFormsGenerateRequest, mode: String) -> ([LocalFrameFormCandidate], [String]) {
-        let index = LocalMeaningIndex.shared
-        var warnings: [String] = [
-            "Local mode: forms drawn from the bundled starter vocabulary (definitions as expressions; no graph edges)."
-        ]
-
-        if mode == "expansion" {
-            // No local graph edges exist to branch along; substitute a canonical
-            // top-up trio and say so instead of faking a neighborhood walk.
-            warnings.append("no local graph edges; branched from the bundled canonical vocabulary instead")
-            var exclude = Set<String>()
-            if let selected = request.selectedForm {
-                exclude.insert(selected.meaningSlug.trimmed.lowercased())
+    static func candidates(request: FrameFormsGenerateRequest, mode: String, graph supplied: MeaningGraphSnapshot? = nil) -> ([LocalFrameFormCandidate], [String]) {
+        do {
+            let graph = try supplied ?? MeaningGraphSnapshot.open(packagedResourceURL(named: "MeaningGraph/graph", extension: "sqlite"))
+            let nodes = try graph.records("nodes").map(LocalMeaningIndexNode.init(record:))
+            var warnings: [String] = []
+            let catalog = nodes.sorted {
+                let left = $0.confidenceScore + $0.reuseScore, right = $1.confidenceScore + $1.reuseScore
+                if left != right { return left > right }
+                if $0.edgeDegree != $1.edgeDegree { return $0.edgeDegree > $1.edgeDegree }
+                return $0.slug < $1.slug
             }
-            let priorGists = request.priorFormGists.map { $0.lowercased() }
-            let startPole = request.selectedForm?.pole.trimmed.lowercased() == "positive" ? "negative" : "positive"
             var candidates: [LocalFrameFormCandidate] = []
-            for node in canonicalNodes(index, excluding: exclude) {
-                guard candidates.count < 3 else { break }
-                let mentioned = priorGists.contains { gist in
-                    gist.contains(node.slug) || (!node.name.isEmpty && gist.contains(node.name.lowercased()))
+            var seen = Set<String>()
+            let prior = request.priorFormGists.map { $0.lowercased() }
+            func mentioned(_ node: LocalMeaningIndexNode) -> Bool {
+                prior.contains { $0.contains(node.slug.lowercased()) || (!node.name.isEmpty && $0.contains(node.name.lowercased())) }
+            }
+            if mode == "expansion", let parent = request.selectedForm {
+                seen.insert(parent.meaningSlug)
+                let firstPole = parent.pole == "positive" ? "negative" : "positive"
+                for edge in try graph.neighbors(of: parent.meaningSlug, limit: 120, divergent: true) {
+                    let node = LocalMeaningIndexNode(record: edge["neighbor"]?.object ?? [:])
+                    guard !seen.contains(node.slug), !mentioned(node) else { continue }
+                    seen.insert(node.slug)
+                    let wanted = candidates.count % 2 == 0 ? firstPole : opposite(firstPole)
+                    candidates.append(candidate(node, wanted: wanted, role: "branch", relation: edge.text("relation_type"), warnings: &warnings))
+                    if candidates.count == 3 { break }
                 }
-                if mentioned { continue }
-                let pole = candidates.count % 2 == 0 ? startPole : (startPole == "positive" ? "negative" : "positive")
-                candidates.append(LocalFrameFormCandidate(
-                    node: node,
-                    pole: pole,
-                    expression: node.definition,
-                    relationToParent: "catalog",
-                    roleHint: "branch"
-                ))
-            }
-            return (candidates, warnings)
-        }
-
-        var resolved: [LocalMeaningIndexNode] = []
-        var seen = Set<String>()
-        var missing: [String] = []
-        for ref in request.meaningNodeRefs {
-            let slug = ref.slug.trimmed
-            guard !slug.isEmpty, !seen.contains(slug.lowercased()) else { continue }
-            seen.insert(slug.lowercased())
-            if let node = index.node(forSlug: slug) {
-                resolved.append(node)
+                if candidates.count < 3 {
+                    warnings.append("Sparse graph neighborhood; additional options use the selected catalog.")
+                    for node in catalog where !seen.contains(node.slug) && !mentioned(node) {
+                        seen.insert(node.slug)
+                        candidates.append(candidate(node, wanted: candidates.count % 2 == 0 ? firstPole : opposite(firstPole), role: "branch", relation: "catalog", warnings: &warnings))
+                        if candidates.count == 3 { break }
+                    }
+                }
             } else {
-                missing.append(slug)
+                var pool: [LocalMeaningIndexNode] = []
+                for ref in request.meaningNodeRefs.prefix(32) {
+                    if let row = try graph.node(ref.slug) {
+                        let node = LocalMeaningIndexNode(record: row)
+                        if seen.insert(node.slug).inserted { pool.append(node) }
+                    } else { warnings.append("Meaning reference not resolved: \(ref.slug)") }
+                }
+                if pool.count < 6 {
+                    let targetCount = pool.count + 12
+                    for node in catalog where seen.insert(node.slug).inserted {
+                        pool.append(node)
+                        if pool.count >= targetCount { break }
+                    }
+                }
+                let sorted = pool.sorted {
+                    let left = abstractionRank($0.abstractionLevel), right = abstractionRank($1.abstractionLevel)
+                    if left != right { return left < right }
+                    let a = $0.confidenceScore + $0.reuseScore, b = $1.confidenceScore + $1.reuseScore
+                    if a != b { return a > b }
+                    return $0.slug < $1.slug
+                }
+                if let grounded = sorted.first, let abstract = sorted.last {
+                    let middle = sorted.filter { $0.slug != grounded.slug && $0.slug != abstract.slug }.sorted {
+                        let a = tensionScore($0), b = tensionScore($1)
+                        return a == b ? $0.slug < $1.slug : a > b
+                    }.first ?? grounded
+                    candidates = [candidate(grounded, wanted: "positive", role: "grounded_extreme", warnings: &warnings),
+                                  candidate(middle, wanted: "negative", role: "tension_middle", warnings: &warnings),
+                                  candidate(abstract, wanted: "positive", role: "abstract_extreme", warnings: &warnings)]
+                    if Set(candidates.map(\.node.slug)).count < 3 { warnings.append("This graph has limited coverage; some alternatives share a concept.") }
+                }
             }
-        }
-        for slug in missing {
-            warnings.append("meaning node ref not resolved: \(slug)")
-        }
-        if resolved.count < 6 {
-            if resolved.count < 3 {
-                warnings.append("meaning refs resolved fewer than 3 nodes; topped up from the bundled canonical vocabulary")
+            if candidates.isEmpty, let node = catalog.first {
+                candidates.append(candidate(node, wanted: "positive", role: "branch", relation: "catalog", warnings: &warnings))
             }
-            for node in canonicalNodes(index, excluding: seen) {
-                guard resolved.count < 6 + 6 else { break }
-                resolved.append(node)
-                seen.insert(node.slug.lowercased())
-                if resolved.count >= 12 { break }
+            if !candidates.isEmpty && candidates.count < 3 {
+                let existing = candidates
+                while candidates.count < 3 {
+                    let source = existing[candidates.count % existing.count]
+                    candidates.append(candidate(source.node, wanted: opposite(source.pole), role: source.roleHint, relation: source.relationToParent, warnings: &warnings))
+                }
+                warnings.append("This graph has limited coverage; some alternatives share a concept.")
             }
+            return (candidates, uniqueNonEmpty(warnings))
+        } catch {
+            return ([], [error.localizedDescription])
         }
-        let trio = extremeTrio(from: resolved)
-        return (trio, warnings)
     }
 
-    private static func canonicalNodes(_ index: LocalMeaningIndex, excluding: Set<String>) -> [LocalMeaningIndexNode] {
-        index.nodes
-            .filter { $0.status == "canonical" && !excluding.contains($0.slug.lowercased()) }
-            .sorted { lhs, rhs in
-                let lhsRank = kindRank(lhs.kind)
-                let rhsRank = kindRank(rhs.kind)
-                if lhsRank != rhsRank { return lhsRank < rhsRank }
-                return lhs.slug < rhs.slug
+    private static func abstractionRank(_ value: String) -> Int {
+        ["literal", "symbolic", "dramatic", "thematic", "mythic", "philosophical"].firstIndex(of: value.lowercased()) ?? 3
+    }
+
+    private static func tensionScore(_ node: LocalMeaningIndexNode) -> Double {
+        node.confidenceScore + node.reuseScore + Double(node.edgeDegree) / 24 + (node.kind == "value_tension" ? 10 : 0)
+    }
+
+    private static func opposite(_ pole: String) -> String { pole == "positive" ? "negative" : "positive" }
+
+    private static func candidate(_ node: LocalMeaningIndexNode, wanted: String, role: String, relation: String = "", warnings: inout [String]) -> LocalFrameFormCandidate {
+        var pole = wanted
+        var expression = pole == "positive" ? node.positiveExpression : node.negativeExpression
+        if expression.isEmpty {
+            let alternate = pole == "positive" ? node.negativeExpression : node.positiveExpression
+            if !alternate.isEmpty {
+                pole = opposite(pole); expression = alternate
+                warnings.append("Used the available \(pole) expression for \(node.name).")
+            } else {
+                expression = node.definition
+                warnings.append("\(node.name) has no pole expressions; using its definition.")
             }
-    }
-
-    /// The bundled index has no abstraction levels; node kind serves as a local
-    /// concreteness ladder so the trio still spans grounded-to-abstract.
-    private static func kindRank(_ kind: String) -> Int {
-        switch kind {
-        case "symbol", "motif": 1
-        case "mood", "scene_role", "beat_function": 2
-        case "archetypal_situation", "transformation", "genre_force", "value_tension": 3
-        case "theme", "meaning_claim": 4
-        default: 3
         }
-    }
-
-    private static func extremeTrio(from nodes: [LocalMeaningIndexNode]) -> [LocalFrameFormCandidate] {
-        var usable: [LocalMeaningIndexNode] = []
-        var seen = Set<String>()
-        for node in nodes where !node.slug.isEmpty && !seen.contains(node.slug) {
-            seen.insert(node.slug)
-            usable.append(node)
-        }
-        guard usable.count >= 3 else { return [] }
-
-        let sorted = usable.sorted { lhs, rhs in
-            let lhsRank = kindRank(lhs.kind)
-            let rhsRank = kindRank(rhs.kind)
-            if lhsRank != rhsRank { return lhsRank < rhsRank }
-            return lhs.slug < rhs.slug
-        }
-        let grounded = sorted[0]
-        var abstract = sorted[sorted.count - 1]
-        if abstract.slug == grounded.slug {
-            abstract = sorted[sorted.count - 2]
-        }
-        // Highest-tension middle: value tensions first, then remaining order.
-        let middle = sorted.first { node in
-            node.slug != grounded.slug && node.slug != abstract.slug && node.kind == "value_tension"
-        } ?? sorted.first { node in
-            node.slug != grounded.slug && node.slug != abstract.slug
-        }
-        guard let middle else { return [] }
-
-        return [
-            LocalFrameFormCandidate(node: grounded, pole: "positive", expression: grounded.definition, roleHint: "grounded_extreme"),
-            LocalFrameFormCandidate(node: middle, pole: "negative", expression: middle.definition, roleHint: "tension_middle"),
-            LocalFrameFormCandidate(node: abstract, pole: "positive", expression: abstract.definition, roleHint: "abstract_extreme")
-        ]
+        return LocalFrameFormCandidate(node: node, pole: pole, expression: expression, relationToParent: relation, roleHint: role)
     }
 
     static func modelInput(
@@ -1482,10 +1523,10 @@ enum LocalFrameFormSelection {
                 "meaning_slug": candidate.node.slug,
                 "name": candidate.node.name,
                 "kind": candidate.node.kind,
-                "abstraction_level": "",
+                "abstraction_level": candidate.node.abstractionLevel,
                 "pole": candidate.pole,
                 "expression": candidate.expression,
-                "boundary": "",
+                "boundary": candidate.node.boundary,
                 "definition": candidate.node.definition,
                 "role_hint": candidate.roleHint
             ]
@@ -1560,7 +1601,7 @@ enum LocalFrameFormSelection {
                 meaningSlug: candidate.node.slug,
                 meaningName: candidate.node.name,
                 pole: candidate.pole,
-                abstractionLevel: "",
+                abstractionLevel: candidate.node.abstractionLevel,
                 relationToParent: candidate.relationToParent
             ))
         }
@@ -1570,11 +1611,8 @@ enum LocalFrameFormSelection {
 
 // MARK: - Local style candidates (direct-mode Frame Context)
 
-/// Scores the local catalog's styles against the Goal's style terms so direct
-/// mode can populate `styleCandidates` — the field the Scene Plan generator
-/// hard-requires. Every style is returned (zero-score entries last) so the
-/// spine never dead-ends on an empty candidate list; the honest difference
-/// from the hosted service is corpus breadth, not an artificial gate.
+/// Scores the installed style catalog against the Goal terms. Zero-score
+/// entries follow matches so sparse style coverage remains usable.
 enum LocalStyleCandidateBuilder {
     static func candidates(
         from catalog: StyleBrowseCatalog,

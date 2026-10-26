@@ -69,11 +69,7 @@ struct FALPricingClient {
 
     func fetchPrices(endpointIds: [String], apiKey: String) async throws -> [FALModelPrice] {
         let key = apiKey.trimmed
-        if key == GoConnection.marker {
-            let configuration = try await GoAPI.call("config", authenticated: false)
-            let data = try JSONSerialization.data(withJSONObject: ["prices": configuration.object["managed_prices"] ?? []])
-            return try JSONDecoder().decode(PricingResponse.self, from: data).prices
-        }
+        try LegacyManagedWork.requirePersonal(key)
         guard !key.isEmpty else { throw FALPricingClientError.missingAPIKey }
         var components = URLComponents(string: "https://api.fal.ai/v1/models/pricing")!
         components.queryItems = [URLQueryItem(name: "endpoint_id", value: endpointIds.joined(separator: ","))]

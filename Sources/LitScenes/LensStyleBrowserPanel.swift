@@ -265,7 +265,7 @@ struct LensStyleBrowserPanel: View {
             Button {
                 onPreviewStyle(StyleImagePreviewRequest(url: style.url, label: style.displayLabel, detail: style.medium))
             } label: {
-                AsyncImage(url: URL(string: style.url)) { phase in
+                CatalogImage(address: style.url) { phase in
                     switch phase {
                     case .success(let image):
                         image.fittedThumbnail()

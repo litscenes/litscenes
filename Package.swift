@@ -8,23 +8,28 @@ let package = Package(
         .macOS(.v15)
     ],
     products: [
-        .executable(name: "LitScenes", targets: ["LitScenes"])
+        .executable(name: "LitScenes", targets: ["LitScenes"]),
+        .library(name: "MeaningGraphCore", targets: ["MeaningGraphCore"]),
+        .executable(name: "MeaningGraphCompiler", targets: ["MeaningGraphCompiler"])
     ],
     dependencies: [
         .package(path: "Vendor/PhosphorSwift"),
         .package(url: "https://github.com/jpsim/Yams.git", from: "5.1.0")
     ],
     targets: [
+        .target(name: "MeaningGraphCore", dependencies: [.product(name: "Yams", package: "Yams")]),
+        .executableTarget(name: "MeaningGraphCompiler", dependencies: ["MeaningGraphCore"]),
         .executableTarget(
             name: "LitScenes",
             dependencies: [
+                "MeaningGraphCore",
                 .product(name: "PhosphorSwift", package: "PhosphorSwift"),
                 .product(name: "Yams", package: "Yams")
             ],
             resources: [
                 .process("Resources/Pricing"),
                 .process("Resources/Schemas"),
-                .process("Resources/meaning_choice_index.json"),
+                .copy("Resources/MeaningGraph"),
                 .process("Resources/render_stacks.yaml"),
                 .process("Resources/story_pattern_index.json"),
                 .copy("Resources/CatalogFallback"),
@@ -33,7 +38,7 @@ let package = Package(
         ),
         .testTarget(
             name: "LitScenesTests",
-            dependencies: ["LitScenes"],
+            dependencies: ["LitScenes", "MeaningGraphCore"],
             resources: [
                 .process("Fixtures")
             ]

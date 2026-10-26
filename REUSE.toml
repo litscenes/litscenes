@@ -38,9 +38,9 @@ SPDX-FileCopyrightText = "2026 Kevin Riggen"
 SPDX-License-Identifier = "AGPL-3.0-only"
 
 [[annotations]]
-path = ["Sources/LitScenes/Resources/meaning_choice_index.json"]
+path = ["Sources/LitScenes/Resources/MeaningGraph/**"]
 precedence = "override"
-SPDX-FileCopyrightText = "2026 Kevin Riggen; aesthetic term names derived from the Aesthetics Wiki (aesthetics.fandom.com), CC BY-SA 3.0"
+SPDX-FileCopyrightText = "2026 Kevin Riggen; aesthetic metadata derived from the Aesthetics Wiki (aesthetics.fandom.com), CC BY-SA 3.0"
 SPDX-License-Identifier = "AGPL-3.0-only AND CC-BY-SA-3.0"
 
 [[annotations]]

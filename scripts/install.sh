@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build the canonical public source and install a Development-channel app.
-# Usage: curl -fsSL https://litscenes.ai/install.sh | bash
+# Usage: download this script from github.com/litscenes/litscenes, inspect it, then run bash install.sh
 
 main() (
   set -eu

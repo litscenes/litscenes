@@ -277,6 +277,7 @@ struct GoalV2WorkspaceView: View {
     private var goalFieldRail: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                MeaningGraphProjectControl(library: library)
                 goalMoodboardArticulationSection
                 goalStyleTaxonomySection
                 if isViewingActiveGoalVersion {
@@ -1537,8 +1538,6 @@ struct LensWorkbenchView: View {
             syncProjectScope()
             reconcileWorkbenchSelection()
             syncDraft()
-            consumeFrameCreatorSeed(library.pendingFrameCreatorSeed)
-            consumeWorkbenchFocus(library.pendingWorkbenchFocus)
         }
         .onChange(of: library.currentProject?.projectId) { _, _ in
             syncProjectScope()
@@ -1548,12 +1547,6 @@ struct LensWorkbenchView: View {
         .onChange(of: library.projectLenses.activeVersionId) { _, _ in
             reconcileWorkbenchSelection()
             syncDraft()
-        }
-        .onChange(of: library.pendingFrameCreatorSeed) { _, seed in
-            consumeFrameCreatorSeed(seed)
-        }
-        .onChange(of: library.pendingWorkbenchFocus) { _, focus in
-            consumeWorkbenchFocus(focus)
         }
         .onChange(of: workbenchSelection) { _, _ in
             lensTreatmentWeightDrafts = [:]
@@ -2970,39 +2963,6 @@ struct LensWorkbenchView: View {
             isPaused: library.isGenerationPaused,
             onTogglePause: showPauseControl ? { library.setGenerationPaused(!library.isGenerationPaused) } : nil
         )
-    }
-
-    /// Media's "Use in Frame Creator" hand-off: land on the lens and open the
-    /// creator with the chosen images pre-attached in the reference well. A
-    /// stale lens id clears the request quietly.
-    private func consumeFrameCreatorSeed(_ seed: FrameCreatorSeedRequest?) {
-        guard let seed else { return }
-        guard library.projectLenses.lenses.contains(where: { $0.lensId == seed.lensId }) else {
-            library.clearFrameCreatorSeed()
-            return
-        }
-        workbenchSelection = .editingLens(lensId: seed.lensId)
-        workbenchFrameCreatorLaunch = WorkbenchFrameCreatorLaunch(
-            lensId: seed.lensId,
-            context: .blankFrame(category: .scenery),
-            referenceMediaIds: seed.mediaIds
-        )
-        library.clearFrameCreatorSeed()
-    }
-
-    /// Creations' "Reveal in Scenes" hand-off: select the lens and (when a
-    /// take is named) open its magnified preview. Stale ids clear quietly.
-    private func consumeWorkbenchFocus(_ focus: WorkbenchFocusRequest?) {
-        guard let focus else { return }
-        guard library.projectLenses.lenses.contains(where: { $0.lensId == focus.lensId }) else {
-            library.clearWorkbenchFocus()
-            return
-        }
-        workbenchSelection = .editingLens(lensId: focus.lensId)
-        if !focus.imageId.isEmpty {
-            magnifiedLensHeroPreview = lensHeroPreviewRequest(lensId: focus.lensId, imageId: focus.imageId)
-        }
-        library.clearWorkbenchFocus()
     }
 
     /// Frame Creator presented from the hero preview's Variation action — same

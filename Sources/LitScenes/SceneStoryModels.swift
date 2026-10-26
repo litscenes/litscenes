@@ -1,4 +1,5 @@
 import Foundation
+import MeaningGraphCore
 
 struct SceneStoryGenerateRequest: Codable, Hashable, Sendable {
     var projectId: String
@@ -1230,6 +1231,7 @@ struct SceneStoryOpenAIAttemptProvenance: Codable, Hashable, Sendable {
 }
 
 struct SceneStoryGenerationProvenance: Codable, Hashable, Sendable {
+    var graphProvenance: MeaningGraphProvenance? = nil
     var lambdaPromptVersion: String = ""
     var desktopInstructionVersion: String = ""
     var validatorVersion: String = ""

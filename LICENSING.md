@@ -30,6 +30,6 @@ Unless expressly identified otherwise, the Desktop license does not grant rights
 - the LitScenes marks or official-build identity; or
 - third-party material, which remains under its identified license.
 
-Prompt templates and routing code actually included in this repository remain covered by their identified source license. The exclusions above do not remove rights granted for that included source.
+The included meaning graph, native engine, prompt templates and routing code remain covered by their identified licenses. Bundled aesthetic metadata retains its source attribution and CC BY-SA 3.0 terms; see THIRD_PARTY_LICENSES.md. The exclusions above do not remove rights granted for that included source.
 
 The preferred source for a specific AGPL binary is the exact source revision or archive linked from that binary's **Licensing & Source** window—not an arbitrary newer monorepo or website snapshot.

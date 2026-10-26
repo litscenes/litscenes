@@ -394,6 +394,8 @@ struct ScenesV2WorkbenchView: View {
         }
         .onAppear {
             reconcileSession()
+            consumeFrameCreatorSeed(library.pendingFrameCreatorSeed)
+            consumeWorkbenchFocus(library.pendingWorkbenchFocus)
             reelUndo.applyState = { snapshot in library.restoreReelState(snapshot) }
             // THE SCOPED STATUS: whatever the engine was saying when SCENES
             // appeared belongs to the previous tab.
@@ -411,6 +413,12 @@ struct ScenesV2WorkbenchView: View {
         }
         .onChange(of: library.currentProject?.projectId) { _, _ in
             reconcileSession()
+        }
+        .onChange(of: library.pendingFrameCreatorSeed) { _, seed in
+            consumeFrameCreatorSeed(seed)
+        }
+        .onChange(of: library.pendingWorkbenchFocus) { _, focus in
+            consumeWorkbenchFocus(focus)
         }
         .onChange(of: library.shotTimeline.visibleShots.map(\.shotId)) { _, ids in
             session.select(scenesV2ReconciledSelection(
@@ -1457,6 +1465,38 @@ struct ScenesV2WorkbenchView: View {
             return
         }
         openFrameDetail(frame, navigation: nil)
+    }
+
+    /// Media opens the creator with its selected references, retaining the
+    /// requested plan even when it is not the workbench's primary lens.
+    private func consumeFrameCreatorSeed(_ seed: FrameCreatorSeedRequest?) {
+        guard let seed else { return }
+        defer { library.clearFrameCreatorSeed() }
+        guard library.projectLenses.lenses.contains(where: { $0.lensId == seed.lensId }) else { return }
+        frameCreatorLaunch = WorkbenchFrameCreatorLaunch(
+            lensId: seed.lensId,
+            context: .blankFrame(category: .scenery),
+            referenceMediaIds: seed.mediaIds
+        )
+    }
+
+    /// Media and activity links can name a frame or just open Scenes.
+    /// Missing artifacts clear the handoff without changing saved content.
+    private func consumeWorkbenchFocus(_ focus: WorkbenchFocusRequest?) {
+        guard let focus else { return }
+        defer { library.clearWorkbenchFocus() }
+        guard let lens = library.projectLenses.lenses.first(where: { $0.lensId == focus.lensId }),
+              let frame = lens.heroImages.first(where: { $0.imageId == focus.imageId }) else { return }
+        if frame.isPlanFulfillmentCandidate {
+            frameCreatorLaunch = WorkbenchFrameCreatorLaunch(
+                lensId: lens.lensId,
+                context: .plannedFrame(frame)
+            )
+        } else if let request = HeroPreviewModalHost.request(library: library, lensId: lens.lensId, imageId: frame.imageId) {
+            heroPreviewRequest = request
+            heroPreviewNavigation = nil
+            heroBrowseSelection = nil
+        }
     }
 
     private func openFrameDetail(_ heroImage: ProjectLensHeroImage, navigation: HeroPreviewCutNavigation?) {

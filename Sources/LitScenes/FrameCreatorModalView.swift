@@ -2600,7 +2600,7 @@ struct FrameCreatorModal: View {
                 stackControls(stack)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
-        }.onReceive(NotificationCenter.default.publisher(for: .goFundingChanged)) { _ in billingRevision += 1 }
+        }.onReceive(NotificationCenter.default.publisher(for: .providerCredentialsChanged)) { _ in billingRevision += 1 }
     }
 
     private func toggleStackSelection(_ stack: RenderStack) {
@@ -3096,8 +3096,8 @@ struct FrameCreatorModal: View {
     @ViewBuilder
     private func styleSlotImage(_ slot: LensStyleTreatmentSlot) -> some View {
         let source = slot.url.trimmed
-        if source.hasPrefix("http"), let url = URL(string: source) {
-            AsyncImage(url: url) { phase in
+        if source.hasPrefix("http") || source.hasPrefix("litscenes-bundle:") {
+            CatalogImage(address: source) { phase in
                 switch phase {
                 case .success(let image):
                     image.fittedThumbnail()
@@ -3546,7 +3546,7 @@ private struct FrameCreatorStyleWheel: View {
                         .font(.system(size: 17, weight: .medium))
                         .foregroundStyle(PlateColor.inkFaint)
                 case .style(let style):
-                    AsyncImage(url: URL(string: style.url)) { phase in
+                    CatalogImage(address: style.url) { phase in
                         switch phase {
                         case .success(let image):
                             image.fittedThumbnail(circular: true)
