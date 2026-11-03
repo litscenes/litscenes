@@ -8,10 +8,10 @@ enum LitScenesReleaseChannel: String, Codable, CaseIterable, Sendable {
 
 struct LitScenesReleaseIdentity: Equatable, Sendable {
     static let publicRepositoryURL = URL(string: "https://github.com/litscenes/litscenes")!
-    static let catalogTermsURL = URL(string: "https://litscenes.ai/catalog-terms/")!
-    /// The public signup for LitScenes Pro (the hosted story service). The app
-    /// only links here — it never collects or transmits an address itself.
-    static let proInterestURL = URL(string: "https://litscenes.ai/#join")!
+    static var catalogTermsURL: URL {
+        (try? packagedResourceURL(named: "CatalogFallback/CATALOG_TERMS", extension: "md"))
+            ?? publicRepositoryURL.appendingPathComponent("blob/main/Sources/LitScenes/Resources/CatalogFallback/CATALOG_TERMS.md")
+    }
 
     var channel: LitScenesReleaseChannel
     var displayName: String
@@ -23,9 +23,6 @@ struct LitScenesReleaseIdentity: Equatable, Sendable {
     var sourceRevision: String?
 
     var usesOfficialBranding: Bool { channel == .officialCommercial }
-    /// The "Pro — coming soon" interest card shows in Development and
-    /// Community builds; the commercial build is the product it announces.
-    var showsProInterestPromotion: Bool { channel != .officialCommercial }
 
     static let current: LitScenesReleaseIdentity = resolve(
         channelValue: Bundle.main.object(forInfoDictionaryKey: "LitScenesReleaseChannel") as? String

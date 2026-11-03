@@ -718,10 +718,11 @@ struct OpenAIClient: Sendable {
         guard !key.isEmpty else {
             throw ScreenGraphError.missingAPIKey
         }
+        try LegacyManagedWork.requirePersonal(key)
         var client = OpenAIClient(apiKey: key)
         // OPENAI_BASE_URL points every environment-constructed call at an
         // OpenAI-compatible service (OpenRouter-style gateways, local servers).
-        if key != GoConnection.marker, let base = try OpenAITextEndpointSettings.baseURL() {
+        if let base = try OpenAITextEndpointSettings.baseURL() {
             client.endpoint = OpenAITextEndpointSettings.endpoint(base: base, path: "responses")
             client.imageEndpoint = OpenAITextEndpointSettings.endpoint(base: base, path: "images/generations")
             client.imageEditEndpoint = OpenAITextEndpointSettings.endpoint(base: base, path: "images/edits")
@@ -745,11 +746,7 @@ struct OpenAIClient: Sendable {
         traceArtifactType: String = "proof_image",
         traceArtifactId: String? = nil
     ) async throws -> OpenAIImageGenerationResult {
-        if apiKey == GoConnection.marker {
-            return try await GoManagedImage.generate(prompt: prompt, size: size, background: background,
-                projectId: projectId, runId: runId, workflowName: traceWorkflowName, workflowStep: traceWorkflowStep,
-                artifactType: traceArtifactType, artifactId: traceArtifactId ?? runId)
-        }
+        try LegacyManagedWork.requirePersonal(apiKey)
         let preparation = try await ImagePromptPreparation.prepare(fields: ["prompt": prompt], provider: "openai",
             endpoint: WorkflowPrivacy.url(imageEndpoint), model: model, references: [],
             metadata: InferenceTraceRequestMetadata(provider: "openai", apiFamily: "images", operation: "prepare",
@@ -926,12 +923,7 @@ struct OpenAIClient: Sendable {
         traceArtifactType: String = "image_edit",
         traceArtifactId: String = ""
     ) async throws -> OpenAIImageGenerationResult {
-        if apiKey == GoConnection.marker {
-            guard mask == nil else { throw GoServiceError(code: "unsupported_mask", message: "Exact mask edits require your own OpenAI key.") }
-            return try await GoManagedImage.generate(prompt: prompt, sources: sources, size: size, background: background,
-                projectId: projectId, runId: runId, workflowName: traceWorkflowName, workflowStep: traceWorkflowStep,
-                artifactType: traceArtifactType, artifactId: traceArtifactId)
-        }
+        try LegacyManagedWork.requirePersonal(apiKey)
         let preparation = try await ImagePromptPreparation.prepare(fields: ["prompt": prompt], provider: "openai",
             endpoint: WorkflowPrivacy.url(imageEditEndpoint), model: model, references: ImagePromptReference.sources(sources),
             metadata: InferenceTraceRequestMetadata(provider: "openai", apiFamily: "images", operation: "prepare",
@@ -1133,12 +1125,7 @@ struct OpenAIClient: Sendable {
         traceArtifactType: String = "image_responses",
         traceArtifactId: String = ""
     ) async throws -> OpenAIImageGenerationResult {
-        if apiKey == GoConnection.marker {
-            return try await GoManagedImage.generate(prompt: prompt, instructions: instructions, sources: sources,
-                size: size, background: background, projectId: projectId, runId: runId,
-                workflowName: traceWorkflowName, workflowStep: traceWorkflowStep,
-                artifactType: traceArtifactType, artifactId: traceArtifactId)
-        }
+        try LegacyManagedWork.requirePersonal(apiKey)
         let preparation = try await ImagePromptPreparation.prepare(fields: ["prompt": prompt, "instructions": instructions], provider: "openai",
             endpoint: WorkflowPrivacy.url(endpoint), model: imageModel, references: ImagePromptReference.sources(sources),
             metadata: InferenceTraceRequestMetadata(provider: "openai", apiFamily: "images", operation: "prepare",

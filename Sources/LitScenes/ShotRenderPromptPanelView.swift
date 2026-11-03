@@ -176,7 +176,7 @@ struct ShotRenderPromptPanel: View {
         // Saved results remain visible when narration becomes the next recipe.
         VStack(spacing: 0) {
             panelHeader
-            GoProviderSetupHint(provider: .fal)
+            ProviderSetupHint(provider: .fal)
             Rectangle().fill(PlateColor.hairline).frame(height: 1)
             segmentList
             Rectangle().fill(PlateColor.hairline).frame(height: 1)

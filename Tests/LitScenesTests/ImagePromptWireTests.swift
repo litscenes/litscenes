@@ -75,9 +75,7 @@ private struct ImageFixtureCredentials: LitScenesCredentialResolving {
     func credentialStatus(for provider: LitScenesProviderCredential) -> CredentialStatus {
         .init(provider: provider, source: .environment, isConfigured: true, message: "Offline fixture")
     }
-    func lensContextCredentialStatus(for credential: LensContextCredential) -> LensContextCredentialStatus {
-        .init(credential: credential, source: .missing, isConfigured: false, message: "Offline fixture")
-    }
+
 }
 
 @Suite("Offline image wire and trace provenance")

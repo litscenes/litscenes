@@ -38,7 +38,9 @@ extension ProjectLensHeroImage {
 /// - photos and frames share newest-first ordering, with updatedAt supplying
 ///   the date for loading frames that do not yet have generatedAt;
 /// - adopted rows whose photos are absent remain in the inventory;
-/// - disabled rows are not inventory; footage comes last.
+/// - deleted adoptions suppress their source-photo fallback until explicitly restored;
+/// - disabled rows and unfulfilled plans are not inventory; footage comes last.
+/// Pass raw project-wide rows so their persisted deletion markers remain available.
 /// The shared `projectPoolInputs` law is V1's and stays untouched.
 func scenesV2PoolInputs(
     displayedFrames: [ProjectLensHeroImage],
@@ -49,12 +51,19 @@ func scenesV2PoolInputs(
     // the row the stage shows.
     var adoptedByMediaId: [String: ProjectLensHeroImage] = [:]
     for frame in projectWideFrames + displayedFrames {
-        guard !frame.disabled, let mediaId = frame.adoptedPhotoMediaId else { continue }
+        guard !frame.disabled, !frame.isPlanFulfillmentCandidate,
+              let mediaId = frame.adoptedPhotoMediaId else { continue }
         adoptedByMediaId[mediaId] = frame
     }
 
+    // Hiding an adopted Frame must also hide its photo fallback. Keep the source
+    // Media item intact; an explicit re-adoption clears disabled on the same row.
+    // A live adoption in a legacy project still owns its one visible photo tile.
+    let deletedPhotoIds = Set((projectWideFrames + displayedFrames)
+        .filter(\.disabled).compactMap(\.adoptedPhotoMediaId))
+        .subtracting(adoptedByMediaId.keys)
     let photos = items
-        .filter { $0.kind == .image }
+        .filter { $0.kind == .image && !deletedPhotoIds.contains($0.mediaId) }
         .sorted { lhs, rhs in
             if lhs.modifiedAt == rhs.modifiedAt { return lhs.filename < rhs.filename }
             return lhs.modifiedAt > rhs.modifiedAt
@@ -85,7 +94,7 @@ func scenesV2PoolInputs(
     // A substituted photo owns every enabled adoption of itself — one tile per
     // photo even when a legacy multi-lens project adopted it twice.
     func belongsToFramesGroup(_ frame: ProjectLensHeroImage) -> Bool {
-        guard !frame.disabled else { return false }
+        guard !frame.disabled, !frame.isPlanFulfillmentCandidate else { return false }
         if let mediaId = frame.adoptedPhotoMediaId, substitutedMediaIds.contains(mediaId) {
             return false
         }

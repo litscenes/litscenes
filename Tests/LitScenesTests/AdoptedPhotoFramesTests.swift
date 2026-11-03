@@ -145,16 +145,16 @@ private func video(_ id: String, modifiedAt: String = "2026-08-01T00:00:00Z") ->
     #expect(inputs.map(\.assetKey) == ["frame:fAdopt", "frame:fRender"])
 }
 
-@Test func poolInputsIgnoreDisabledAdoptionsAndDropDisabledRows() {
+@Test func poolInputsKeepDeletedAdoptionsAndTheirPhotoFallbackOutOfInventory() {
     let disabled = photoRow("fGone", mediaId: "pHarbor", disabled: true)
     let inputs = scenesV2PoolInputs(
         displayedFrames: [disabled, renderRow("fRender")],
         projectWideFrames: [disabled, renderRow("fRender")],
         items: [photo("pHarbor")]
     )
-    // The photo is back to a media input (the next open re-adopts); the
-    // disabled row is not inventory anywhere.
-    #expect(inputs.map(\.assetKey) == ["clip:pHarbor", "frame:fRender"])
+    // The deleted adoption must not return as a photo tile that re-adopts
+    // itself on the next click. Original Media inventory remains untouched.
+    #expect(inputs.map(\.assetKey) == ["frame:fRender"])
 }
 
 @Test func poolInputsKeepOrphanAdoptedRowsInTheFramesGroup() {

@@ -69,7 +69,7 @@ struct StyleImagePreviewModal: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            AsyncImage(url: URL(string: request.url)) { phase in
+            CatalogImage(address: request.url) { phase in
                 switch phase {
                 case .success(let image):
                     image.resizable().aspectRatio(contentMode: .fit)
@@ -77,7 +77,7 @@ struct StyleImagePreviewModal: View {
                     VStack(spacing: 8) {
                         Image(systemName: "photo")
                             .font(.system(size: 28))
-                        Text("Image unavailable")
+                        Text("Choose a bundled style or import a local replacement.")
                             .font(CanonType.interface(12))
                     }
                     .foregroundStyle(Color.white.opacity(0.5))
@@ -128,7 +128,7 @@ struct LensTreatmentOrbitStack: View {
             ForEach(Array(slots.enumerated()), id: \.element.styleId) { index, slot in
                 let share = shares.indices.contains(index) ? Double(shares[index]) / 100 : 0
                 let side = minSide + CGFloat(share) * (maxSide - minSide)
-                AsyncImage(url: URL(string: slot.url)) { phase in
+                CatalogImage(address: slot.url) { phase in
                     switch phase {
                     case .success(let image):
                         image.fittedThumbnail(circular: true)

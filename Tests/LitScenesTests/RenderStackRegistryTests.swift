@@ -600,7 +600,11 @@ private func bundledYAMLText() throws -> String {
     let encoded = managed.including(in: #"{"prompt":"A specimen"}"#)
     #expect(encoded.contains("billing_snapshot"))
     #expect(encoded.contains("A specimen"))
-    #expect(!encoded.contains(GoConnection.marker))
+    #expect(!encoded.contains(LegacyManagedWork.marker))
+    #expect(ProviderBillingSnapshot.capture().defaultSource == .personal)
+    #expect(ProviderBillingSnapshot.capture().overrides.isEmpty)
+    #expect(throws: Error.self) { try LegacyManagedWork.requirePersonal(LegacyManagedWork.marker) }
+    #expect(throws: Never.self) { try LegacyManagedWork.requirePersonal("vendor-key") }
 }
 
 @Test func civitaiSafeLifecyclePersistsForTraceInspection() async throws {

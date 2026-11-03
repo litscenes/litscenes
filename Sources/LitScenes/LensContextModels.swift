@@ -1,4 +1,5 @@
 import Foundation
+import MeaningGraphCore
 
 enum ProjectLensContextStatus: String, Codable, Hashable, Sendable {
     case missing
@@ -35,6 +36,9 @@ struct LensContextResolveResponse: Codable, Hashable, Sendable {
     var styleCandidates: [LensContextStyleCandidate]
     var warnings: [String]
     var queryStats: LensContextQueryStats
+    var graphProvenance: MeaningGraphProvenance? = nil
+    var graphTraceId: String? = nil
+    var excludedMeaningNodeRefs: [ProjectGoalMeaningNodeRef] = []
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
@@ -48,10 +52,14 @@ struct LensContextResolveResponse: Codable, Hashable, Sendable {
         case styleCandidates
         case warnings
         case queryStats
+        case graphProvenance, graphTraceId, excludedMeaningNodeRefs
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        graphProvenance = try container.decodeIfPresent(MeaningGraphProvenance.self, forKey: .graphProvenance)
+        graphTraceId = try container.decodeIfPresent(String.self, forKey: .graphTraceId)
+        excludedMeaningNodeRefs = container.lensContextLossyArray(ProjectGoalMeaningNodeRef.self, forKey: .excludedMeaningNodeRefs)
         schemaVersion = container.lensContextString(forKey: .schemaVersion)
         userId = container.lensContextString(forKey: .userId)
         projectId = container.lensContextString(forKey: .projectId)
@@ -144,6 +152,11 @@ struct LensContextMeaningNode: Codable, Hashable, Identifiable, Sendable {
     var confidenceScore: Double
     var reuseScore: Double
     var definition: String
+    var positiveExpression: String = ""
+    var negativeExpression: String = ""
+    var boundary: String = ""
+    var provenanceKind: String = ""
+    var editorialRationale: String = ""
     var tags: [String]
     var edgeDegree: Int
 
@@ -160,7 +173,7 @@ struct LensContextMeaningNode: Codable, Hashable, Identifiable, Sendable {
         case status
         case confidenceScore
         case reuseScore
-        case definition
+        case definition, positiveExpression, negativeExpression, boundary, provenanceKind, editorialRationale
         case tags
         case edgeDegree
     }
@@ -176,6 +189,11 @@ struct LensContextMeaningNode: Codable, Hashable, Identifiable, Sendable {
         confidenceScore = container.lensContextDouble(forKey: .confidenceScore)
         reuseScore = container.lensContextDouble(forKey: .reuseScore)
         definition = container.lensContextString(forKey: .definition)
+        positiveExpression = container.lensContextString(forKey: .positiveExpression)
+        negativeExpression = container.lensContextString(forKey: .negativeExpression)
+        boundary = container.lensContextString(forKey: .boundary)
+        provenanceKind = container.lensContextString(forKey: .provenanceKind)
+        editorialRationale = container.lensContextString(forKey: .editorialRationale)
         tags = container.lensContextStringArray(forKey: .tags)
         edgeDegree = container.lensContextInt(forKey: .edgeDegree)
     }
@@ -190,11 +208,16 @@ struct LensContextMeaningEdgeNeighbor: Codable, Hashable, Sendable {
     var rationale: String
     var neighbor: LensContextMeaningNeighborNode
 
+    var edgeId: String = ""
+    var provenanceKind: String = ""
+    var editorialRationale: String = ""
+
     var isUsable: Bool {
         !selectedSlug.trimmed.isEmpty && !neighbor.slug.trimmed.isEmpty
     }
 
     private enum CodingKeys: String, CodingKey {
+        case edgeId, provenanceKind, editorialRationale
         case selectedSlug
         case direction
         case relationType
@@ -206,6 +229,9 @@ struct LensContextMeaningEdgeNeighbor: Codable, Hashable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        edgeId = container.lensContextString(forKey: .edgeId)
+        provenanceKind = container.lensContextString(forKey: .provenanceKind)
+        editorialRationale = container.lensContextString(forKey: .editorialRationale)
         selectedSlug = container.lensContextString(forKey: .selectedSlug)
         direction = container.lensContextString(forKey: .direction)
         relationType = container.lensContextString(forKey: .relationType)
@@ -226,6 +252,11 @@ struct LensContextMeaningNeighborNode: Codable, Hashable, Sendable {
     var confidenceScore: Double
     var reuseScore: Double
     var definition: String
+    var positiveExpression: String = ""
+    var negativeExpression: String = ""
+    var boundary: String = ""
+    var provenanceKind: String = ""
+    var editorialRationale: String = ""
     var tags: [String]
 
     init(
@@ -258,7 +289,7 @@ struct LensContextMeaningNeighborNode: Codable, Hashable, Sendable {
         case status
         case confidenceScore
         case reuseScore
-        case definition
+        case definition, positiveExpression, negativeExpression, boundary, provenanceKind, editorialRationale
         case tags
     }
 
@@ -272,6 +303,11 @@ struct LensContextMeaningNeighborNode: Codable, Hashable, Sendable {
         confidenceScore = container.lensContextDouble(forKey: .confidenceScore)
         reuseScore = container.lensContextDouble(forKey: .reuseScore)
         definition = container.lensContextString(forKey: .definition)
+        positiveExpression = container.lensContextString(forKey: .positiveExpression)
+        negativeExpression = container.lensContextString(forKey: .negativeExpression)
+        boundary = container.lensContextString(forKey: .boundary)
+        provenanceKind = container.lensContextString(forKey: .provenanceKind)
+        editorialRationale = container.lensContextString(forKey: .editorialRationale)
         tags = container.lensContextStringArray(forKey: .tags)
     }
 }
@@ -291,11 +327,18 @@ struct LensContextMeaningEvidence: Codable, Hashable, Sendable {
     var workTitle: String?
     var workAuthor: String?
 
+    var targetType: String = ""
+    var targetId: String = ""
+    var sourceUrl: String = ""
+    var rightsStatus: String = ""
+    var provenanceKind: String = ""
+
     var isUsable: Bool {
         !nodeSlug.trimmed.isEmpty
     }
 
     private enum CodingKeys: String, CodingKey {
+        case targetType, targetId, sourceUrl, rightsStatus, provenanceKind
         case nodeSlug
         case contextType
         case contextId
@@ -313,6 +356,11 @@ struct LensContextMeaningEvidence: Codable, Hashable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        targetType = container.lensContextString(forKey: .targetType)
+        targetId = container.lensContextString(forKey: .targetId)
+        sourceUrl = container.lensContextString(forKey: .sourceUrl)
+        rightsStatus = container.lensContextString(forKey: .rightsStatus)
+        provenanceKind = container.lensContextString(forKey: .provenanceKind)
         nodeSlug = container.lensContextString(forKey: .nodeSlug)
         contextType = container.lensContextString(forKey: .contextType)
         contextId = container.lensContextString(forKey: .contextId)
@@ -618,6 +666,7 @@ struct ProjectLensContextDocument: Codable, Hashable, Sendable {
             )
         }
         return LensContextPromptPacket(
+            excludedMeaningNodeRefs: response.excludedMeaningNodeRefs,
             goalFingerprint: response.goalFingerprint,
             status: status.rawValue,
             warnings: response.warnings,
@@ -630,6 +679,7 @@ struct ProjectLensContextDocument: Codable, Hashable, Sendable {
 }
 
 struct LensContextPromptPacket: Codable, Hashable, Sendable {
+    var excludedMeaningNodeRefs: [ProjectGoalMeaningNodeRef]? = nil
     var goalFingerprint: String
     var status: String
     var warnings: [String]
@@ -796,8 +846,9 @@ private extension KeyedDecodingContainer {
         if let value = try? decodeIfPresent(Int.self, forKey: key) {
             return value
         }
-        if let value = try? decodeIfPresent(Double.self, forKey: key), value.isFinite {
-            return Int(value)
+        if let value = try? decodeIfPresent(Double.self, forKey: key), value.isFinite,
+           let integer = Int(exactly: value.rounded(.towardZero)) {
+            return integer
         }
         if let string = lensContextOptionalString(forKey: key),
            let value = Int(string) {
@@ -810,8 +861,9 @@ private extension KeyedDecodingContainer {
         if let value = try? decodeIfPresent(Int.self, forKey: key) {
             return value
         }
-        if let value = try? decodeIfPresent(Double.self, forKey: key), value.isFinite {
-            return Int(value)
+        if let value = try? decodeIfPresent(Double.self, forKey: key), value.isFinite,
+           let integer = Int(exactly: value.rounded(.towardZero)) {
+            return integer
         }
         if let string = lensContextOptionalString(forKey: key),
            let value = Int(string) {

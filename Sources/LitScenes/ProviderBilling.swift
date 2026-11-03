@@ -7,7 +7,7 @@ enum ProviderBillingSource: String, Codable, CaseIterable, Sendable {
     var label: String { self == .go ? "Go credits" : "My API key" }
 }
 
-/// A billing choice belongs to an executable model or workflow, never just a vendor.
+/// Stable target identities preserve funding provenance in saved projects.
 struct ProviderBillingTarget: Hashable, Sendable {
     var id: String
     var provider: LitScenesProviderCredential
@@ -44,12 +44,8 @@ struct ProviderBillingSnapshot: Codable, Sendable {
     var overrides: [String: ProviderBillingSource]
 
     static func capture() -> Self {
-        let values = UserDefaults.standard.dictionary(forKey: ProviderBilling.preferenceKey) ?? [:]
-        let membershipsEnabled = GoAvailability.membershipsEnabled
-        return Self(defaultSource: GoConnection.isManaged ? .go : .personal,
-            overrides: values.reduce(into: [:]) { result, pair in
-                if let raw = pair.value as? String, let source = ProviderBillingSource(rawValue: raw) { result[pair.key] = membershipsEnabled ? source : .personal }
-            })
+        // New work always uses vendor keys. Persisted snapshots retain their payer.
+        Self(defaultSource: .personal, overrides: [:])
     }
     func source(for target: ProviderBillingTarget) -> ProviderBillingSource {
         guard target.supportsGo else { return .personal }
@@ -71,13 +67,7 @@ enum ProviderBilling {
     static func source(for target: ProviderBillingTarget) -> ProviderBillingSource {
         (snapshot ?? ProviderBillingSnapshot.capture()).source(for: target)
     }
-    static func select(_ source: ProviderBillingSource, for target: ProviderBillingTarget) {
-        guard target.supportsGo, source != .go || GoAvailability.membershipsEnabled else { return }
-        var values = UserDefaults.standard.dictionary(forKey: preferenceKey) ?? [:]
-        values[target.id] = source.rawValue
-        UserDefaults.standard.set(values, forKey: preferenceKey)
-        NotificationCenter.default.post(name: .goFundingChanged, object: nil)
-    }
+
     static func defaultTarget(for provider: LitScenesProviderCredential) -> ProviderBillingTarget {
         switch provider {
         case .openAI: return .text
@@ -87,10 +77,10 @@ enum ProviderBilling {
         }
     }
     static func credential(for target: ProviderBillingTarget, store: LitScenesCredentialResolving = LitScenesCredentialStore()) -> String {
-        source(for: target) == .go ? GoConnection.marker : store.personalCredential(for: target.provider)
+        source(for: target) == .go ? LegacyManagedWork.marker : store.personalCredential(for: target.provider)
     }
     static func isConfigured(_ target: ProviderBillingTarget, store: LitScenesCredentialResolving = LitScenesCredentialStore()) -> Bool {
-        source(for: target) == .go || store.personalCredentialStatus(for: target.provider).isConfigured
+        source(for: target) == .personal && store.personalCredentialStatus(for: target.provider).isConfigured
     }
 }
 
@@ -101,18 +91,14 @@ struct ProviderBillingControl: View {
         let _ = revision
         let source = ProviderBilling.source(for: target)
         VStack(alignment: .leading, spacing: 5) {
-            if target.supportsGo && GoAvailability.membershipsEnabled {
-                Picker("Pay with", selection: Binding(get: { source }, set: { ProviderBilling.select($0, for: target); revision += 1 })) {
-                    ForEach(ProviderBillingSource.allCases, id: \.self) { Text($0.label).tag($0) }
-                }.pickerStyle(.segmented).frame(maxWidth: 290)
-            }
-            Text(source == .go ? "Go credits · quote before generation" : "Your \(target.provider.label) account · billed separately")
+
+            Text(source == .go ? "Retired managed job · start a new run with your API key" : "Your \(target.provider.label) account · billed separately")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
             if source == .personal && !ProviderBilling.isConfigured(target) {
                 Text("Add a \(target.provider.label) key in Settings → Advanced providers.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .goFundingChanged)) { _ in revision += 1 }
+        .onReceive(NotificationCenter.default.publisher(for: .providerCredentialsChanged)) { _ in revision += 1 }
     }
 }

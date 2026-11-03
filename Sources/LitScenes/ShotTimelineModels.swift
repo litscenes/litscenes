@@ -2719,7 +2719,7 @@ struct ShotRenderStack: RawRepresentable, Codable, Hashable, Sendable {
     let generateAudio: Bool
     var civitaiRecipe: CivitAIRecipe? = nil
 
-    static var fallback: ShotRenderStack { GoConnection.isManaged ? recipe(model: .falKlingV3Pro, durationSeconds: 5) : .wan27Eight }
+    static var fallback: ShotRenderStack { .wan27Eight }
     static let wan27Five = recipe(model: .wan27, durationSeconds: 5)
     static let wan27Six = recipe(model: .wan27, durationSeconds: 6)
     static let wan27Eight = recipe(model: .wan27, durationSeconds: 8)

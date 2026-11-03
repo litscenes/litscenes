@@ -161,7 +161,7 @@ struct FALImageClient {
         if let negative = input["negative_prompt"] as? String { promptFields["negative_prompt"] = negative }
         let preparation = try await ImagePromptPreparation.prepare(
             fields: promptFields, provider: "fal", endpoint: modelId, model: modelId,
-            managed: apiKey == GoConnection.marker, references: references,
+            managed: apiKey == LegacyManagedWork.marker, references: references,
             metadata: traceMetadata(operation: "prepare", workflowStep: "fal_image_prepare", modelId: modelId,
                 parentTraceId: "", generationRequest: request, requestTextJSON: "", responseHint: "application/json"))
         request.preparedPrompt = preparation
@@ -319,7 +319,7 @@ struct FALImageClient {
             seed: seed,
             output: downloaded
         )
-        parameters.append(LensRenderRecipeParameter(key: "billing_source", value: apiKey == GoConnection.marker ? "go" : "personal"))
+        parameters.append(LensRenderRecipeParameter(key: "billing_source", value: apiKey == LegacyManagedWork.marker ? "go" : "personal"))
         return FALImageGenerationResult(
             imageData: downloaded.data,
             providerJobId: jobId,

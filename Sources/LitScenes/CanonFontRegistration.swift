@@ -15,7 +15,7 @@ enum CanonFontRegistration {
     static let displayItalicName = "Fraunces72pt-Italic"
 
     private static let registerOnce: Bool = {
-        guard let fontsURL = Bundle.module.url(forResource: "Fonts", withExtension: nil) else {
+        guard let fontsURL = try? packagedResourceURL(named: "Fonts") else {
             return false
         }
         let fontURLs = (try? FileManager.default.contentsOfDirectory(

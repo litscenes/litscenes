@@ -80,7 +80,6 @@ struct ShotContinuationReviewView: View {
                     Button("Use Kling 3 Pro with my FAL account — review price") {
                         mode = availability.targetFrame == nil ? .outFrame : .arriveAtFrame
                         stack = stack.replacingModel(.falKlingV3Pro)
-                        ProviderBilling.select(.personal, for: .video(.falKlingV3Pro))
                         billingRevision += 1
                     }.buttonStyle(.plain).underline()
                 }
@@ -303,7 +302,7 @@ struct ShotContinuationReviewView: View {
         .onChange(of: stack.model) { _, model in
             if let resolutionOverride, !Hailuo3ResolutionPreference.choices(for: model).contains(resolutionOverride) { self.resolutionOverride = nil }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .goFundingChanged)) { _ in billingRevision += 1; onRefresh() }
+        .onReceive(NotificationCenter.default.publisher(for: .providerCredentialsChanged)) { _ in billingRevision += 1; onRefresh() }
         .onChange(of: isPreparing) { _, preparing in
             if !preparing && !hasLoadedRecipe {
                 mode = availability.preferredMode

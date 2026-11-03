@@ -20,6 +20,8 @@ jobs:
         run: swift --version
       - name: Build (fetches dependencies)
         run: swift build --build-tests
+      - name: Verify bundled meaning graph
+        run: .build/debug/MeaningGraphCompiler --verify Sources/LitScenes/Resources/MeaningGraph/graph.yaml Sources/LitScenes/Resources/MeaningGraph/graph.sqlite
       # The no-telemetry claim in README.md is enforced, not asserted: the
       # whole suite runs under a network-deny sandbox. Any test or code path
       # that reaches for the network fails this job.

@@ -1160,7 +1160,7 @@ struct CivitAIWANImageProvider {
         let stack = request.stack
         if let recipe = stack.catalogRecipe { return try await generateCatalogImage(request, recipe: recipe) }
         let apiKey = credentialStore.resolvedCredential(for: .civitai)
-        guard !apiKey.isEmpty, apiKey != GoConnection.marker else {
+        guard !apiKey.isEmpty, apiKey != LegacyManagedWork.marker else {
             throw ScreenGraphError.credentials("Connect your personal CivitAI key in Advanced provider connections.")
         }
         if !request.sources.isEmpty {

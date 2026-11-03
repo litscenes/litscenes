@@ -63,9 +63,17 @@ public extension Ph {
         }
     }
 
+    private static let resourceBundle: Bundle = {
+        if let resources = Bundle.main.resourceURL,
+           let bundle = Bundle(url: resources.appendingPathComponent("PhosphorSwift_PhosphorSwift.bundle")) {
+            return bundle
+        }
+        return .module
+    }()
+
     private static func icon(_ name: String) -> Image {
         #if canImport(AppKit)
-        if let url = Bundle.module.url(
+        if let url = resourceBundle.url(
             forResource: name,
             withExtension: "svg",
             subdirectory: "Assets.xcassets/SVG/\(name).imageset"
@@ -77,7 +85,7 @@ public extension Ph {
         }
         #endif
 
-        return Image(name, bundle: .module)
+        return Image(name, bundle: resourceBundle)
             .interpolation(.medium)
             .resizable()
     }

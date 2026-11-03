@@ -1,33 +1,36 @@
 {
   "schema_version": "litscenes.catalog_manifest.v1",
-  "manifest_version": "bundled-community-starter-20260812",
-  "published_at": "2026-08-12T00:00:00Z",
-  "terms_sha256": "63cdffb7e66eb04df6dea76ce3fd3ee8300909652f04af4a36cb4b3f9b66296d",
+  "manifest_version": "bundled-starter-v1",
+  "published_at": "2026-10-26",
+  "terms_sha256": "47cb61560193bb2167550323b99779cf67d4b2a74f00bf97481ef90169f2d1ba",
   "terms": {
     "kind": "terms",
-    "path": "v1/terms/2026-08-11.md",
-    "url": "https://catalog.litscenes.ai/v1/terms/2026-08-11.md",
-    "sha256": "63cdffb7e66eb04df6dea76ce3fd3ee8300909652f04af4a36cb4b3f9b66296d",
-    "byte_size": 2336
+    "path": "CATALOG_TERMS.md",
+    "url": "litscenes-bundle://catalog/CATALOG_TERMS.md",
+    "sha256": "47cb61560193bb2167550323b99779cf67d4b2a74f00bf97481ef90169f2d1ba",
+    "byte_size": 925
   },
   "catalogs": [
     {
       "kind": "style_browse",
-      "path": "v1/catalogs/style-browse/community-starter-20260812.json",
-      "url": "https://catalog.litscenes.ai/v1/catalogs/style-browse/community-starter-20260812.json",
-      "sha256": "326546b7156391231dd488e8b05aea1e815b6222fc006733fa6b0d317b90272e",
-      "byte_size": 46484
+      "path": "style-browse.json",
+      "url": "litscenes-bundle://catalog/style-browse.json",
+      "sha256": "b242c8c758bf97cf6092fa7a14684821abd1065ac2301a980365f417f9fd1eaa",
+      "byte_size": 45763
     },
     {
       "kind": "style_reference",
-      "path": "v1/catalogs/style-reference/community-starter-20260812.json",
-      "url": "https://catalog.litscenes.ai/v1/catalogs/style-reference/community-starter-20260812.json",
-      "sha256": "d6d411d9051c40bbc1fbb765fc4a87fc19dd25c61886b142ea30844267d5e0e1",
-      "byte_size": 36042
+      "path": "style-reference.json",
+      "url": "litscenes-bundle://catalog/style-reference.json",
+      "sha256": "9034860bec9a8d74975b896dab00fa107b27a366bad5e448cb91d81000f0eb53",
+      "byte_size": 23483
     }
   ],
   "compatibility": {
     "minimum_desktop_version": "0.1.0",
-    "client_families": ["LitScenes Desktop", "compatible AGPL clients"]
+    "client_families": [
+      "LitScenes Desktop",
+      "compatible AGPL clients"
+    ]
   }
 }

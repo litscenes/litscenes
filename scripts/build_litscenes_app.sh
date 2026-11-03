@@ -124,11 +124,13 @@ if [[ "$DISTRIBUTION" == "app-store" && "$CHANNEL" != "development" ]]; then
   UPDATE_FEED_URL=""
 fi
 
+swift build --product MeaningGraphCompiler
+"$(swift build --show-bin-path)/MeaningGraphCompiler" --verify Sources/LitScenes/Resources/MeaningGraph/graph.yaml Sources/LitScenes/Resources/MeaningGraph/graph.sqlite
 swift build --product LitScenes
 BIN_DIR="$(swift build --show-bin-path)"
 APP_DIR="$ROOT/dist/$APP_NAME.app"
 EXECUTABLE="$APP_DIR/Contents/MacOS/LitScenes"
-RESOURCE_BUNDLE="$BIN_DIR/LitScenes_LitScenes.bundle"
+RESOURCE_BUNDLE_NAMES=("LitScenes_LitScenes.bundle" "PhosphorSwift_PhosphorSwift.bundle")
 
 if [[ -e "$APP_DIR" ]]; then
   DEPRECATED_DIR="$ROOT/dist/.deprecated_${APP_NAME// /_}.app_$(date -u +%Y%m%dT%H%M%SZ)"
@@ -138,7 +140,13 @@ mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
 cp "$BIN_DIR/LitScenes" "$EXECUTABLE"
 chmod +x "$EXECUTABLE"
-cp -R "$RESOURCE_BUNDLE" "$APP_DIR/Contents/Resources/LitScenes_LitScenes.bundle"
+for RESOURCE_BUNDLE_NAME in "${RESOURCE_BUNDLE_NAMES[@]}"; do
+  if [[ ! -d "$BIN_DIR/$RESOURCE_BUNDLE_NAME" ]]; then
+    echo "Missing required resource bundle: $RESOURCE_BUNDLE_NAME" >&2
+    exit 66
+  fi
+  cp -R "$BIN_DIR/$RESOURCE_BUNDLE_NAME" "$APP_DIR/Contents/Resources/$RESOURCE_BUNDLE_NAME"
+done
 
 ICONSET_DIR="$ROOT/dist/${APP_NAME// /_}.iconset"
 if [[ -e "$ICONSET_DIR" ]]; then
@@ -216,12 +224,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <string>1</string>
   <key>LSMinimumSystemVersion</key>
   <string>15.0</string>
-  <key>SKIncludeConsumableInAppPurchaseHistory</key>
-  <true/>
   <key>LitScenesDistribution</key>
   <string>$DISTRIBUTION</string>
-  <key>LitScenesGoServiceURL</key>
-  <string>https://api.litscenes.ai/v1/desktop</string>
   <key>LitScenesReleaseChannel</key>
   <string>$CHANNEL</string>
   <key>LitScenesCorrespondingSourceURL</key>

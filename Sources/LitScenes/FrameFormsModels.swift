@@ -1,4 +1,5 @@
 import Foundation
+import MeaningGraphCore
 
 // MARK: - Wire models for POST /frame-forms/generate
 // Wire is snake_case via JSONCoding's key strategies.
@@ -93,6 +94,8 @@ struct LensFrameFormOption: Codable, Hashable, Identifiable, Sendable {
 }
 
 struct FrameFormsGenerateResponse: Codable, Hashable, Sendable {
+    var graphProvenance: MeaningGraphProvenance? = nil
+    var traceId: String? = nil
     var schemaVersion: String = ""
     var userId: String = ""
     var projectId: String = ""
@@ -108,6 +111,7 @@ struct FrameFormsGenerateResponse: Codable, Hashable, Sendable {
     var usageOutputTokens: Int = 0
 
     private enum CodingKeys: String, CodingKey {
+        case graphProvenance, traceId
         case schemaVersion
         case userId
         case projectId
@@ -123,6 +127,8 @@ struct FrameFormsGenerateResponse: Codable, Hashable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        graphProvenance = try container.decodeIfPresent(MeaningGraphProvenance.self, forKey: .graphProvenance)
+        traceId = try container.decodeIfPresent(String.self, forKey: .traceId)
         schemaVersion = try container.decodeIfPresent(String.self, forKey: .schemaVersion) ?? ""
         userId = try container.decodeIfPresent(String.self, forKey: .userId) ?? ""
         projectId = try container.decodeIfPresent(String.self, forKey: .projectId) ?? ""
@@ -144,6 +150,8 @@ struct FrameFormsGenerateResponse: Codable, Hashable, Sendable {
 /// One trio of Form options: the GOAL-time initial generation, or an expansion
 /// branched from a selected option (route exploration).
 struct LensFrameFormGeneration: Codable, Hashable, Identifiable, Sendable {
+    var graphProvenance: MeaningGraphProvenance? = nil
+    var traceId: String? = nil
     var generationId: String = ""
     var mode: String = ""
     var parentOptionId: String = ""
@@ -153,6 +161,7 @@ struct LensFrameFormGeneration: Codable, Hashable, Identifiable, Sendable {
     var id: String { generationId }
 
     private enum CodingKeys: String, CodingKey {
+        case graphProvenance, traceId
         case generationId
         case mode
         case parentOptionId
@@ -176,6 +185,8 @@ struct LensFrameFormGeneration: Codable, Hashable, Identifiable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        graphProvenance = try container.decodeIfPresent(MeaningGraphProvenance.self, forKey: .graphProvenance)
+        traceId = try container.decodeIfPresent(String.self, forKey: .traceId)
         generationId = try container.decodeIfPresent(String.self, forKey: .generationId) ?? ""
         mode = try container.decodeIfPresent(String.self, forKey: .mode) ?? ""
         parentOptionId = try container.decodeIfPresent(String.self, forKey: .parentOptionId) ?? ""
@@ -192,6 +203,7 @@ struct ProjectFrameFormsDocument: Codable, Hashable, Sendable {
     var projectId: String = ""
     var goalFingerprint: String = ""
     var status: String = "missing"
+    var warnings: [String] = []
     var generations: [LensFrameFormGeneration] = []
     var updatedAt: String = ""
 
@@ -216,6 +228,7 @@ struct ProjectFrameFormsDocument: Codable, Hashable, Sendable {
         case projectId
         case goalFingerprint
         case status
+        case warnings
         case generations
         case updatedAt
     }
@@ -242,6 +255,7 @@ struct ProjectFrameFormsDocument: Codable, Hashable, Sendable {
         projectId = try container.decodeIfPresent(String.self, forKey: .projectId) ?? ""
         goalFingerprint = try container.decodeIfPresent(String.self, forKey: .goalFingerprint) ?? ""
         status = try container.decodeIfPresent(String.self, forKey: .status) ?? "missing"
+        warnings = try container.decodeIfPresent([String].self, forKey: .warnings) ?? []
         generations = try container.decodeIfPresent([LensFrameFormGeneration].self, forKey: .generations) ?? []
         updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt) ?? ""
     }

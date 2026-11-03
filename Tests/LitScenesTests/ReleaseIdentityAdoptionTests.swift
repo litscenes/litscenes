@@ -21,18 +21,10 @@ import Testing
         ]).count == 3)
     }
 
-    @Test func proInterestPromotionShowsEverywhereButTheCommercialBuild() {
-        let development = LitScenesReleaseIdentity.resolve(channelValue: "development")
-        let community = LitScenesReleaseIdentity.resolve(channelValue: "community-release")
-        let official = LitScenesReleaseIdentity.resolve(
-            channelValue: "official-commercial-release",
-            bundleIdentifier: "ai.litscenes.official"
-        )
-
-        #expect(development.showsProInterestPromotion)
-        #expect(community.showsProInterestPromotion)
-        #expect(!official.showsProInterestPromotion)
-        #expect(LitScenesReleaseIdentity.proInterestURL.absoluteString == "https://litscenes.ai/#join")
+    @Test func catalogNoticeIsBundled() throws {
+        let url = LitScenesReleaseIdentity.catalogTermsURL
+        #expect(url.isFileURL)
+        #expect(try String(contentsOf: url, encoding: .utf8).contains("AGPL-3.0-only"))
     }
 
     @Test func developmentMigratesBothLegacyPreferenceDomainsOnce() throws {

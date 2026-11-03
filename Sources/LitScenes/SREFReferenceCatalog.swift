@@ -198,33 +198,17 @@ actor SREFReferenceImageCache {
 
     func cachedFileURL(for reference: SREFStyleImageReference) async throws -> URL {
         let normalized = reference.normalized()
-        guard let remoteURL = URL(string: normalized.url), !normalized.sha256.isEmpty else {
-            throw ScreenGraphError.capture("SREF style reference is missing a valid URL or SHA-256.")
+        guard normalized.sha256.count == 64, normalized.sha256.allSatisfy({ "0123456789abcdef".contains($0) }) else {
+            throw ScreenGraphError.capture("Style reference is missing a valid SHA-256.")
         }
-
+        if normalized.url.hasPrefix("litscenes-bundle:") {
+            return try BundledCatalogAsset.url(for: normalized.url, expectedSHA256: normalized.sha256)
+        }
         let outputURL = cacheURL(for: normalized)
-        if FileManager.default.fileExists(atPath: outputURL.path) {
-            let existingData = try Data(contentsOf: outputURL)
-            if sha256Hex(existingData) == normalized.sha256 {
-                return outputURL
-            }
-            try? FileManager.default.removeItem(at: outputURL)
+        if let data = try? Data(contentsOf: outputURL), sha256Hex(data) == normalized.sha256 {
+            return outputURL
         }
-
-        try ensureDirectory(outputURL.deletingLastPathComponent())
-        let startedAt = Date()
-        let (data, response) = try await URLSession.shared.data(from: remoteURL)
-        guard let http = response as? HTTPURLResponse,
-              (200..<300).contains(http.statusCode) else {
-            throw ScreenGraphError.capture("SREF style image download failed.")
-        }
-        guard sha256Hex(data) == normalized.sha256 else {
-            throw ScreenGraphError.capture("SREF style image SHA-256 verification failed.")
-        }
-        try data.write(to: outputURL, options: [.atomic])
-        let durationMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-        print("[sref_reference_cache] completed item_id=\(normalized.itemId) bytes=\(data.count) duration_ms=\(durationMs)")
-        return outputURL
+        throw ScreenGraphError.capture("This older style reference is not cached on this Mac. Choose a bundled style or import a local reference image, then start a new run. Existing images are unchanged.")
     }
 
     private func cacheURL(for reference: SREFStyleImageReference) -> URL {
@@ -247,7 +231,7 @@ extension LensStyleIngredient {
             enabled: true,
             title: normalized.title.isEmpty ? "SREF style reference" : normalized.title,
             role: "style_reference",
-            narrativeUse: "Use this generated SREF composite as a visual style anchor for Lens image generation.",
+            narrativeUse: "Use this selected image as a visual style anchor for Lens image generation.",
             presentationUse: uniqueNonEmpty(["SREF \(normalized.srefCode)", normalized.variantName]).joined(separator: " · "),
             notes: normalized.url,
             paletteTerms: [],

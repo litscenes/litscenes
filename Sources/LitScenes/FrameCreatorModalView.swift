@@ -326,6 +326,8 @@ struct FrameCreatorModal: View {
     /// Render refuses while more stacks are selected than lanes are free.
     var takeLaneFreeSlots: Int = .max
     let formGenerations: [[LensFrameFormOption]]
+    var formWarnings: [String]
+    var onReviewGoal: (() -> Void)?
     /// True while the library's media analysis pass is running (drives the
     /// mini spinners on un-analyzed mood tiles).
     var isAnalyzingMoods: Bool = false
@@ -464,6 +466,8 @@ struct FrameCreatorModal: View {
         renderBlockerHelp: String?,
         takeLaneFreeSlots: Int = .max,
         formGenerations: [[LensFrameFormOption]] = [],
+        formWarnings: [String] = [],
+        onReviewGoal: (() -> Void)? = nil,
         isAnalyzingMoods: Bool = false,
         onAutoAnalyzeMoods: @escaping () -> Void = {},
         onOpenAppSettings: (() -> Void)?,
@@ -495,6 +499,8 @@ struct FrameCreatorModal: View {
         self.renderBlockerHelp = renderBlockerHelp
         self.takeLaneFreeSlots = takeLaneFreeSlots
         self.formGenerations = formGenerations
+        self.formWarnings = formWarnings
+        self.onReviewGoal = onReviewGoal
         self.isAnalyzingMoods = isAnalyzingMoods
         self.onAutoAnalyzeMoods = onAutoAnalyzeMoods
         self.onOpenAppSettings = onOpenAppSettings
@@ -1181,6 +1187,15 @@ struct FrameCreatorModal: View {
                 Spacer()
                 if !formPages.isEmpty {
                     formCycler
+                }
+            }
+            if !formWarnings.isEmpty {
+                ForEach(Array(formWarnings.enumerated()), id: \.offset) { _, warning in
+                    Text(warning).font(.caption).foregroundStyle(.secondary)
+                }
+                if let onReviewGoal {
+                    Button("Review Goal") { onCancel(); onReviewGoal() }
+                        .buttonStyle(.link)
                 }
             }
             if let caption = activeFormCaption {
@@ -2600,7 +2615,7 @@ struct FrameCreatorModal: View {
                 stackControls(stack)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
-        }.onReceive(NotificationCenter.default.publisher(for: .goFundingChanged)) { _ in billingRevision += 1 }
+        }.onReceive(NotificationCenter.default.publisher(for: .providerCredentialsChanged)) { _ in billingRevision += 1 }
     }
 
     private func toggleStackSelection(_ stack: RenderStack) {
@@ -3096,8 +3111,8 @@ struct FrameCreatorModal: View {
     @ViewBuilder
     private func styleSlotImage(_ slot: LensStyleTreatmentSlot) -> some View {
         let source = slot.url.trimmed
-        if source.hasPrefix("http"), let url = URL(string: source) {
-            AsyncImage(url: url) { phase in
+        if source.hasPrefix("http") || source.hasPrefix("litscenes-bundle:") {
+            CatalogImage(address: source) { phase in
                 switch phase {
                 case .success(let image):
                     image.fittedThumbnail()
@@ -3546,7 +3561,7 @@ private struct FrameCreatorStyleWheel: View {
                         .font(.system(size: 17, weight: .medium))
                         .foregroundStyle(PlateColor.inkFaint)
                 case .style(let style):
-                    AsyncImage(url: URL(string: style.url)) { phase in
+                    CatalogImage(address: style.url) { phase in
                         switch phase {
                         case .success(let image):
                             image.fittedThumbnail(circular: true)
