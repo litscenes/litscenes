@@ -1775,6 +1775,10 @@ final class LibraryEngine: ObservableObject {
     @Published private(set) var projectGoalV2: ProjectGoalDocumentV2 = .empty()
     @Published private(set) var projectMeaningGraphSelection: ProjectMeaningGraphSelection?
     @Published private(set) var lensContext: ProjectLensContextDocument = .empty()
+    @Published private(set) var goalReviewRequestID: UUID?
+
+    func requestGoalReview() { goalReviewRequestID = UUID() }
+
     /// Story-route Form options from the knowledge-graph lambda: the initial trio
     /// lands at GOAL time, expansions branch from selected options. Hot-loaded with
     /// the project so the Frame Creator opens with forms ready.
@@ -2618,6 +2622,7 @@ final class LibraryEngine: ObservableObject {
 
     var hasFreshLensContextForActiveGoal: Bool {
         guard let version = projectGoalV2.activeVersion, let selection = projectMeaningGraphSelection,
+              lensContext.response?.schemaVersion == LocalMeaningGraphResolver.schemaVersion,
               lensContext.response?.graphProvenance?.effectiveHash == selection.effectiveHash else { return false }
         return lensContext.isReady(
             forGoalVersionId: version.versionId,
@@ -3381,9 +3386,10 @@ final class LibraryEngine: ObservableObject {
     }
 
     func retryLensContextRetrieval() {
+        let isContractRepair = lensContext.response != nil && lensContext.response?.schemaVersion != LocalMeaningGraphResolver.schemaVersion
         lensContextRetrievalTask?.cancel()
         lensContextRetrievalTask = followUpTask { [self] in
-            await refreshLensContextForActiveGoal()
+            await refreshLensContextForActiveGoal(runAutomation: !isContractRepair)
         }
     }
 
@@ -22006,6 +22012,13 @@ final class LibraryEngine: ObservableObject {
         projectGoalV2 = contextStore.loadProjectGoalV2(for: project)
         lensContext = contextStore.loadLensContext(for: project)
         frameForms = contextStore.loadFrameForms(for: project)
+        if lensContext.response != nil, lensContext.response?.schemaVersion != LocalMeaningGraphResolver.schemaVersion {
+            lensContextRetrievalTask?.cancel()
+            lensContextRetrievalTask = followUpTask { [self] in
+                guard currentProject?.projectId == project.projectId else { return }
+                await refreshLensContextForActiveGoal(runAutomation: false)
+            }
+        }
         projectLenses = lensSetWithRefreshedRelations(contextStore.loadProjectLenses(for: project), for: project)
         projectCharacters = contextStore.loadProjectCharacters(for: project)
         projectCharacterChats = contextStore.loadProjectCharacterChats(for: project)
@@ -24035,12 +24048,17 @@ final class LibraryEngine: ObservableObject {
                   projectGoalV2.activeVersion?.versionId == goalVersionId else {
                 return
             }
+            if response.options.isEmpty {
+                try saveFrameFormWarnings(response.warnings, project: project, goalFingerprint: goalFingerprint)
+                return
+            }
             var document = ProjectFrameFormsDocument(
                 projectId: projectId,
                 goalFingerprint: goalFingerprint,
                 status: "ready",
                 updatedAt: DateFormats.now()
             )
+            document.warnings = response.warnings
             document.generations = [frameFormGeneration(mode: "initial", parentOptionId: "", response: response)]
             guard document.hasInitialGeneration else {
                 print("[frame_forms] initial returned no options project_id=\(projectId)")
@@ -24081,7 +24099,7 @@ final class LibraryEngine: ObservableObject {
             let priorGists = frameForms.allOptions.suffix(12).map { String($0.prompt.prefix(600)).trimmed }
             let request = FrameFormsGenerateRequest(
                 projectId: project.projectId,
-                goalFingerprint: frameForms.goalFingerprint.trimmed.nilIfEmpty ?? currentLensContextGoalFingerprint,
+                goalFingerprint: currentLensContextGoalFingerprint,
                 goalSummary: goalBriefV2StyleSummary(version.brief),
                 styleFitLine: styleFitLine?.trimmed ?? "",
                 meaningNodeRefs: version.brief.meaningNodeRefs,
@@ -24097,12 +24115,18 @@ final class LibraryEngine: ObservableObject {
                 let client = try StoryInferenceService.fromEnvironment(for: project, projectLibrary: projectLibrary)
                 let response = try await client.generateFrameForms(request)
                 try Task.checkCancellation()
-                guard currentProject?.projectId == project.projectId, !response.options.isEmpty else { return [] }
+                guard currentProject?.projectId == project.projectId,
+                      projectGoalV2.activeVersion?.versionId == version.versionId else { return [] }
+                if response.options.isEmpty {
+                    try saveFrameFormWarnings(response.warnings, project: project, goalFingerprint: currentLensContextGoalFingerprint)
+                    return []
+                }
                 guard !frameForms.hasExpansion(fromOptionId: selectedId) else { return [] }
                 let generation = frameFormGeneration(mode: "expansion", parentOptionId: selectedId, response: response)
                 var document = frameForms
                 document.projectId = project.projectId
                 document.status = "ready"
+                document.warnings = response.warnings
                 document.generations.append(generation)
                 document.updatedAt = DateFormats.now()
                 try contextStore.saveFrameForms(document, for: project)
@@ -24115,6 +24139,16 @@ final class LibraryEngine: ObservableObject {
                 return []
             }
         }
+    }
+
+    private func saveFrameFormWarnings(_ warnings: [String], project: ProjectRecord, goalFingerprint: String) throws {
+        var document = frameForms.projectId == project.projectId ? frameForms : .empty(projectId: project.projectId)
+        document.goalFingerprint = goalFingerprint
+        document.warnings = warnings
+        document.status = document.allOptions.isEmpty ? "unavailable" : "ready"
+        document.updatedAt = DateFormats.now()
+        try contextStore.saveFrameForms(document, for: project)
+        frameForms = document
     }
 
     /// Frame Forms fire automatically after Frame Context, so their spend must

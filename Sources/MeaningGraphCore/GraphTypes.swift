@@ -114,6 +114,9 @@ public struct MeaningGraphPack: Codable, Sendable {
               !pack.version.isEmpty, !pack.title.isEmpty else {
             throw MeaningGraphError("Unsupported graph pack format or missing pack identity.")
         }
+        for (table, rows) in pack.tables {
+            for row in rows { try GraphIntegerValidation.validate(row, context: "\(table)/\(row.text("id"))") }
+        }
         return pack
     }
 }
@@ -144,6 +147,11 @@ public struct MeaningGraphOverlay: Codable, Sendable {
               !pack.packId.isEmpty, !pack.version.isEmpty, !pack.title.isEmpty else {
             throw MeaningGraphError("Unsupported overlay format or missing identity.")
         }
+        for operation in pack.operations {
+            if let fields = operation.fields {
+                try GraphIntegerValidation.validate(fields, context: "\(operation.table)/\(operation.id)")
+            }
+        }
         return pack
     }
 }
@@ -166,5 +174,18 @@ public struct GraphAestheticTerm: Sendable {
     public var weight: Double
     public init(term: String, attributeKey: String, source: String, weight: Double) {
         self.term = term; self.attributeKey = attributeKey; self.source = source; self.weight = weight
+    }
+}
+
+/// Numeric fields consumed as machine integers must be safe before installation.
+enum GraphIntegerValidation {
+    static func validate(_ row: GraphRecord, context: String) throws {
+        for key in ["rank", "primary_rank", "passage_index"] {
+            guard let value = row[key] else { continue }
+            guard case .number(let number) = value, number.isFinite, number >= 0,
+                  Int(exactly: number) != nil else {
+                throw MeaningGraphError("\(context): \(key) must be a non-negative integer representable as Int.")
+            }
+        }
     }
 }

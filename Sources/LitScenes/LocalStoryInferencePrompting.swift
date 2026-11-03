@@ -105,6 +105,8 @@ enum LocalStoryInferencePrompts {
         4. Optional meaning line and meaning_guidance.
         5. Novelty.
 
+        meaning_exclusions are explicit user constraints: do not use their concepts as motifs,
+        narrative devices, or positive inspiration. They override meaning_guidance and historical examples.
         meaning_guidance offers bounded, optional conceptual inspiration. Its definitions,
         boundaries, expressions, and directed relationships are possibilities, not required
         plot events or factual claims. Use only what serves the user's intent. Never turn a
@@ -240,6 +242,9 @@ enum LocalStoryInferencePrompts {
         var text = """
         You are the LitScenes Frame Form Generator. Return only JSON matching the strict schema.
 
+        meaning_exclusions are explicit user constraints. Do not use those concepts as motifs,
+        narrative devices, or positive inspiration, even if historical forms contain them.
+
         For each of the three option slots, write a story-rich single-image scene description
         (2-4 sentences): a concrete subject caught mid-action or mid-consequence, a specific
         place, and one readable dramatic tension drawn from the slot's meaning node and pole
@@ -333,6 +338,7 @@ enum LocalSceneStoryProjection {
         return [
             "creative_brief": creativeBrief,
             "meaning_guidance": meaningGuidance(wire.lensContext),
+            "meaning_exclusions": LocalMeaningSelection.promptExclusions(wire.lensContext.excludedMeaningNodeRefs),
             "visual_treatment": visualTreatment(wire),
             "story_task": storyTask,
             "task_controls": taskControls,
@@ -344,9 +350,10 @@ enum LocalSceneStoryProjection {
     /// Only explicit selections and their direct neighbors cross the creative boundary.
     /// Evidence and source-specific rationales stay in graph review; only abstract editorial relationship notes enter Story.
     static func meaningGuidance(_ context: LensContextResolveResponse) -> [String: Any] {
+        let excluded = Set(context.excludedMeaningNodeRefs.map { $0.slug.lowercased() })
         var seenNodes = Set<String>()
         let selected = Array(context.selectedMeaningNodes.filter {
-            $0.isUsable && seenNodes.insert($0.slug).inserted
+            $0.isUsable && !excluded.contains($0.slug.lowercased()) && seenNodes.insert($0.slug).inserted
         }.prefix(6))
         let nodes: [[String: Any]] = selected.map { node in
             ["slug": node.slug, "kind": node.kind,
@@ -357,7 +364,7 @@ enum LocalSceneStoryProjection {
              "negative_expression": localCompactString(node.negativeExpression, limit: 200)]
         }
         let queues = selected.map { node in
-            context.meaningEdgeNeighbors.filter { $0.selectedSlug == node.slug && $0.isUsable }
+            context.meaningEdgeNeighbors.filter { $0.selectedSlug == node.slug && $0.isUsable && !excluded.contains($0.neighbor.slug.lowercased()) }
                 .sorted {
                     if $0.strength != $1.strength { return $0.strength > $1.strength }
                     if $0.confidenceScore != $1.confidenceScore { return $0.confidenceScore > $1.confidenceScore }
@@ -469,7 +476,7 @@ enum LocalSceneStoryProjection {
     }
 
     private static func meaningLine(_ wire: SceneStoryGenerateRequest) -> String {
-        for ref in wire.goal.meaningNodeRefs where !isTensionRef(ref) {
+        for ref in wire.goal.meaningNodeRefs where ref.role != .avoidance && !isTensionRef(ref) {
             let line = localCompactString(ref.evidence, limit: LocalProjectionLimits.constraintItemRunes)
             if !line.isEmpty { return line }
         }
@@ -477,7 +484,7 @@ enum LocalSceneStoryProjection {
     }
 
     private static func meaningTension(_ wire: SceneStoryGenerateRequest) -> String {
-        for ref in wire.goal.meaningNodeRefs where isTensionRef(ref) {
+        for ref in wire.goal.meaningNodeRefs where ref.role != .avoidance && isTensionRef(ref) {
             let line = localCompactString(ref.evidence, limit: LocalProjectionLimits.constraintItemRunes)
             if !line.isEmpty { return line }
         }
@@ -1401,8 +1408,10 @@ enum LocalFrameFormSelection {
     static func candidates(request: FrameFormsGenerateRequest, mode: String, graph supplied: MeaningGraphSnapshot? = nil) -> ([LocalFrameFormCandidate], [String]) {
         do {
             let graph = try supplied ?? MeaningGraphSnapshot.open(packagedResourceURL(named: "MeaningGraph/graph", extension: "sqlite"))
+            let selection = try LocalMeaningSelection(request.meaningNodeRefs, graph: graph)
             let nodes = try graph.records("nodes").map(LocalMeaningIndexNode.init(record:))
-            var warnings: [String] = []
+                .filter { !selection.excludedSlugs.contains($0.slug.lowercased()) }
+            var warnings = selection.warnings
             let catalog = nodes.sorted {
                 let left = $0.confidenceScore + $0.reuseScore, right = $1.confidenceScore + $1.reuseScore
                 if left != right { return left > right }
@@ -1415,12 +1424,13 @@ enum LocalFrameFormSelection {
             func mentioned(_ node: LocalMeaningIndexNode) -> Bool {
                 prior.contains { $0.contains(node.slug.lowercased()) || (!node.name.isEmpty && $0.contains(node.name.lowercased())) }
             }
-            if mode == "expansion", let parent = request.selectedForm {
+            if mode == "expansion", let parent = request.selectedForm,
+               !selection.excludedSlugs.contains((try graph.node(parent.meaningSlug)?.text("slug") ?? parent.meaningSlug).lowercased()) {
                 seen.insert(parent.meaningSlug)
                 let firstPole = parent.pole == "positive" ? "negative" : "positive"
                 for edge in try graph.neighbors(of: parent.meaningSlug, limit: 120, divergent: true) {
                     let node = LocalMeaningIndexNode(record: edge["neighbor"]?.object ?? [:])
-                    guard !seen.contains(node.slug), !mentioned(node) else { continue }
+                    guard !selection.excludedSlugs.contains(node.slug.lowercased()), !seen.contains(node.slug), !mentioned(node) else { continue }
                     seen.insert(node.slug)
                     let wanted = candidates.count % 2 == 0 ? firstPole : opposite(firstPole)
                     candidates.append(candidate(node, wanted: wanted, role: "branch", relation: edge.text("relation_type"), warnings: &warnings))
@@ -1436,7 +1446,7 @@ enum LocalFrameFormSelection {
                 }
             } else {
                 var pool: [LocalMeaningIndexNode] = []
-                for ref in request.meaningNodeRefs.prefix(32) {
+                for ref in selection.positive.prefix(32) {
                     if let row = try graph.node(ref.slug) {
                         let node = LocalMeaningIndexNode(record: row)
                         if seen.insert(node.slug).inserted { pool.append(node) }
@@ -1477,6 +1487,9 @@ enum LocalFrameFormSelection {
                     candidates.append(candidate(source.node, wanted: opposite(source.pole), role: source.roleHint, relation: source.relationToParent, warnings: &warnings))
                 }
                 warnings.append("This graph has limited coverage; some alternatives share a concept.")
+            }
+            if candidates.isEmpty {
+                warnings.append("No usable Frame Form concepts remain for this Goal. Review its exclusions or write a frame manually; no generation was charged.")
             }
             return (candidates, uniqueNonEmpty(warnings))
         } catch {
@@ -1536,9 +1549,10 @@ enum LocalFrameFormSelection {
             slots.append(slot)
         }
         var input: [String: Any] = [
-            "prompt_version": "litscenes.frame_forms_prompt.v0.1-local",
+            "prompt_version": "litscenes.frame_forms_prompt.v0.2-local",
             "mode": mode,
             "goal_summary": String(request.goalSummary.trimmed.prefix(2000)),
+            "meaning_exclusions": LocalMeaningSelection.promptExclusions(request.meaningNodeRefs.filter { $0.role == .avoidance }),
             "slots": slots
         ]
         let styleFit = String(request.styleFitLine.trimmed.prefix(300))

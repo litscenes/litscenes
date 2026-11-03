@@ -203,6 +203,7 @@ struct ProjectFrameFormsDocument: Codable, Hashable, Sendable {
     var projectId: String = ""
     var goalFingerprint: String = ""
     var status: String = "missing"
+    var warnings: [String] = []
     var generations: [LensFrameFormGeneration] = []
     var updatedAt: String = ""
 
@@ -227,6 +228,7 @@ struct ProjectFrameFormsDocument: Codable, Hashable, Sendable {
         case projectId
         case goalFingerprint
         case status
+        case warnings
         case generations
         case updatedAt
     }
@@ -253,6 +255,7 @@ struct ProjectFrameFormsDocument: Codable, Hashable, Sendable {
         projectId = try container.decodeIfPresent(String.self, forKey: .projectId) ?? ""
         goalFingerprint = try container.decodeIfPresent(String.self, forKey: .goalFingerprint) ?? ""
         status = try container.decodeIfPresent(String.self, forKey: .status) ?? "missing"
+        warnings = try container.decodeIfPresent([String].self, forKey: .warnings) ?? []
         generations = try container.decodeIfPresent([LensFrameFormGeneration].self, forKey: .generations) ?? []
         updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt) ?? ""
     }

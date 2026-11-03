@@ -203,6 +203,8 @@ struct LensGenerationTheaterView: View {
     var onVersionsSliceVisibilityChanged: ((Bool) -> Void)? = nil
     /// Story-route Form option trios for the Frame Creator's cycler.
     var formGenerations: [[LensFrameFormOption]] = []
+    var formWarnings: [String] = []
+    var onReviewGoal: (() -> Void)? = nil
     var onExpandFormOption: ((LensFrameFormOption, String?) async -> [LensFrameFormOption])? = nil
     /// The Frame Creator's refine chat: (currentPrompt, directive, priorDirectives).
     var onTransformFormPrompt: ((String, String, [String]) async -> LensFormPromptTransform?)? = nil
@@ -471,6 +473,8 @@ struct LensGenerationTheaterView: View {
                 renderBlockerHelp: renderBlockerHelp,
                 takeLaneFreeSlots: takeLaneFreeSlots,
                 formGenerations: formGenerations,
+                formWarnings: formWarnings,
+                onReviewGoal: onReviewGoal,
                 isAnalyzingMoods: isAnalyzingMoods,
                 onAutoAnalyzeMoods: onAutoAnalyzeMoods,
                 onOpenAppSettings: onOpenAppSettings,

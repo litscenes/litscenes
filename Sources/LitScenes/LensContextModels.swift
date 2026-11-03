@@ -38,6 +38,7 @@ struct LensContextResolveResponse: Codable, Hashable, Sendable {
     var queryStats: LensContextQueryStats
     var graphProvenance: MeaningGraphProvenance? = nil
     var graphTraceId: String? = nil
+    var excludedMeaningNodeRefs: [ProjectGoalMeaningNodeRef] = []
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
@@ -51,13 +52,14 @@ struct LensContextResolveResponse: Codable, Hashable, Sendable {
         case styleCandidates
         case warnings
         case queryStats
-        case graphProvenance, graphTraceId
+        case graphProvenance, graphTraceId, excludedMeaningNodeRefs
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         graphProvenance = try container.decodeIfPresent(MeaningGraphProvenance.self, forKey: .graphProvenance)
         graphTraceId = try container.decodeIfPresent(String.self, forKey: .graphTraceId)
+        excludedMeaningNodeRefs = container.lensContextLossyArray(ProjectGoalMeaningNodeRef.self, forKey: .excludedMeaningNodeRefs)
         schemaVersion = container.lensContextString(forKey: .schemaVersion)
         userId = container.lensContextString(forKey: .userId)
         projectId = container.lensContextString(forKey: .projectId)
@@ -664,6 +666,7 @@ struct ProjectLensContextDocument: Codable, Hashable, Sendable {
             )
         }
         return LensContextPromptPacket(
+            excludedMeaningNodeRefs: response.excludedMeaningNodeRefs,
             goalFingerprint: response.goalFingerprint,
             status: status.rawValue,
             warnings: response.warnings,
@@ -676,6 +679,7 @@ struct ProjectLensContextDocument: Codable, Hashable, Sendable {
 }
 
 struct LensContextPromptPacket: Codable, Hashable, Sendable {
+    var excludedMeaningNodeRefs: [ProjectGoalMeaningNodeRef]? = nil
     var goalFingerprint: String
     var status: String
     var warnings: [String]
@@ -842,8 +846,9 @@ private extension KeyedDecodingContainer {
         if let value = try? decodeIfPresent(Int.self, forKey: key) {
             return value
         }
-        if let value = try? decodeIfPresent(Double.self, forKey: key), value.isFinite {
-            return Int(value)
+        if let value = try? decodeIfPresent(Double.self, forKey: key), value.isFinite,
+           let integer = Int(exactly: value.rounded(.towardZero)) {
+            return integer
         }
         if let string = lensContextOptionalString(forKey: key),
            let value = Int(string) {
@@ -856,8 +861,9 @@ private extension KeyedDecodingContainer {
         if let value = try? decodeIfPresent(Int.self, forKey: key) {
             return value
         }
-        if let value = try? decodeIfPresent(Double.self, forKey: key), value.isFinite {
-            return Int(value)
+        if let value = try? decodeIfPresent(Double.self, forKey: key), value.isFinite,
+           let integer = Int(exactly: value.rounded(.towardZero)) {
+            return integer
         }
         if let string = lensContextOptionalString(forKey: key),
            let value = Int(string) {

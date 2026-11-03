@@ -2872,6 +2872,8 @@ struct LensWorkbenchView: View {
             },
             onVersionsSliceVisibilityChanged: onVersionsSliceVisibilityChanged,
             formGenerations: library.frameForms.generations.map(\.options).filter { !$0.isEmpty },
+            formWarnings: library.frameForms.warnings,
+            onReviewGoal: { library.requestGoalReview() },
             onExpandFormOption: { option, styleFitLine in
                 await library.expandFrameForms(from: option, styleFitLine: styleFitLine)
             },
@@ -2982,6 +2984,8 @@ struct LensWorkbenchView: View {
             renderBlockerHelp: library.frameSubmissionBlockReason ?? library.lensHeroTakeStartBlockReason,
             takeLaneFreeSlots: library.lensHeroTakeLaneFreeSlots,
             formGenerations: library.frameForms.generations.map(\.options).filter { !$0.isEmpty },
+            formWarnings: library.frameForms.warnings,
+            onReviewGoal: { library.requestGoalReview() },
             isAnalyzingMoods: library.isAnalyzingMedia,
             onAutoAnalyzeMoods: {
                 Task {

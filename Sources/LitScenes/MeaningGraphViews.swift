@@ -94,7 +94,16 @@ private struct MeaningGraphProjectSheet: View {
                         Text("Preview").font(.headline)
                         Text(preview.counts.sorted(by: { $0.key < $1.key }).map { "\($0.value) \($0.key)" }.joined(separator: " · "))
                         ForEach(preview.changes, id: \.self) { Text($0).font(.callout) }
-                        if preview.changes.isEmpty { Text("No graph records change.").font(.callout) }
+                        switch preview.comparison {
+                        case .complete:
+                            if preview.changes.isEmpty { Text("No graph records change.").font(.callout) }
+                        case .unavailable(let reason):
+                            Text("Previous graph unavailable; differences cannot be calculated. This replacement is valid. Saved stories and frames are unchanged.")
+                                .font(.callout).foregroundStyle(.orange)
+                            Text(reason).font(.caption).foregroundStyle(.secondary)
+                        case .noPreviousSelection:
+                            Text("This will be the project's first graph selection.").font(.callout)
+                        }
                     }
                 }
             }

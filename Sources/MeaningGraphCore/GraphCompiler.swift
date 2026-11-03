@@ -166,7 +166,7 @@ public enum MeaningGraphCompiler {
                 throw MeaningGraphError("An aesthetic assignment references a missing aesthetic or term.")
             }
         }
-        for rows in tables.values {
+        for (table, rows) in tables {
             for row in rows.values {
                 for key in ["id", "slug", "name", "kind", "definition", "abstraction_level", "positive_expression", "negative_expression", "boundary",
                             "source_node_id", "target_node_id", "relation_type", "target_type", "target_id", "node_id", "aesthetic_id", "term_id", "facet_type"] {
@@ -180,13 +180,7 @@ public enum MeaningGraphCompiler {
                         }
                     }
                 }
-                for key in ["rank", "primary_rank", "passage_index"] {
-                    if let value = row[key] {
-                        guard case .number(let number) = value, number.isFinite, number >= 0, number.rounded() == number else {
-                            throw MeaningGraphError("\(key) must be a non-negative integer.")
-                        }
-                    }
-                }
+                try GraphIntegerValidation.validate(row, context: "\(table)/\(row.text("id"))")
                 for key in ["confidence_score", "reuse_score", "strength", "weight"] {
                     if let value = row[key] {
                         guard case .number(let number) = value, number.isFinite, (0...1).contains(number) else {

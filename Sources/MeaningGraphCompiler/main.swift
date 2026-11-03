@@ -8,7 +8,7 @@ do {
         let bytes = try Data(contentsOf: baseURL)
         let manifest = try JSONDecoder().decode(GraphRecord.self, from: Data(contentsOf: baseURL.deletingLastPathComponent().appendingPathComponent("manifest.json")))
         guard manifest.text("schema_version") == "litscenes.meaning_graph_manifest.v1",
-              manifest.text("sha256") == GraphCoding.hash(bytes), Int(manifest.number("byte_size")) == bytes.count else {
+              manifest.text("sha256") == GraphCoding.hash(bytes), Int(exactly: manifest.number("byte_size")) == bytes.count else {
             throw MeaningGraphError("Graph release manifest does not match its YAML source.")
         }
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("meaning-verify-\(UUID().uuidString).sqlite")

@@ -199,3 +199,11 @@
 2026-10-26T19:43:49Z Removing the legacy Scenes tab also requires moving its pending Frame Creator and frame-preview consumers, otherwise Media and activity links can navigate without opening the requested artifact.
 
 2026-10-26T19:54:15Z Native navigation validation found that a project loaded before the root view appeared skipped tab restoration; initial project observation must restore the preference while an empty library must leave that restoration pending.
+
+2026-11-02T18:04:51Z Explicit avoidance must survive aliases and cached context; unavailable previous sources prevent comparison, not valid replacement.
+
+2026-11-02T20:46:52Z Exclusion identities must also filter incident edge evidence; an excluded historical form remains saved but cannot seed new suggestions. Cached context upgrades resolve locally without paid automation.
+
+2026-11-03T17:57:53Z The pool drops disabled adoption rows before computing photo substitution, so a deleted Frame returns as its original photo and opening the tile restores it. Preserve the deletion marker in inventory projection without deleting original media.
+
+2026-11-03T18:01:34Z Deleting a photo Frame suppresses its pool fallback while retaining original Media. Explicit re-adoption reuses the existing identity; live legacy adoptions still receive one tile.

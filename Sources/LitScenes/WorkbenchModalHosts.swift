@@ -67,7 +67,7 @@ struct ShotPlayerSheetHost: View {
 
     private var tailInputs: [StageInput] {
         scenesV2PoolInputs(displayedFrames: [],
-            projectWideFrames: scenesV2PoolSourceFrames(Array(library.projectWideFrameLookup.values)),
+            projectWideFrames: Array(library.projectWideFrameLookup.values),
             items: scenesV2SourceMaterialItems(library.browsableMediaItems))
     }
 
@@ -775,6 +775,8 @@ struct FrameCreatorModalHost: View {
             renderBlockerHelp: library.frameSubmissionBlockReason ?? library.lensHeroTakeStartBlockReason,
             takeLaneFreeSlots: library.lensHeroTakeLaneFreeSlots,
             formGenerations: library.frameForms.generations.map(\.options).filter { !$0.isEmpty },
+            formWarnings: library.frameForms.warnings,
+            onReviewGoal: { library.requestGoalReview() },
             isAnalyzingMoods: library.isAnalyzingMedia,
             onAutoAnalyzeMoods: {
                 Task {

@@ -130,7 +130,7 @@ extension LocalMeaningIndexNode {
             id: record.text("id"), abstractionLevel: record.text("abstraction_level"),
             positiveExpression: record.text("positive_expression"), negativeExpression: record.text("negative_expression"),
             boundary: record.text("boundary"), confidenceScore: record.number("confidence_score"),
-            reuseScore: record.number("reuse_score"), edgeDegree: Int(record.number("edge_degree")))
+            reuseScore: record.number("reuse_score"), edgeDegree: Int(exactly: record.number("edge_degree")) ?? 0)
     }
 }
 
@@ -221,14 +221,18 @@ struct LocalStoryInferenceClient: Sendable {
         let generatedAt = DateFormats.now()
         let request = normalizedLocalSceneStoryRequest(payload)
         let graph = try await MeaningGraphRuntime.shared.snapshot(graphSelection)
-        if request.wire.lensContext.graphProvenance?.effectiveHash != graph.provenance.effectiveHash {
+        if request.wire.lensContext.graphProvenance?.effectiveHash != graph.provenance.effectiveHash
+            || request.wire.lensContext.schemaVersion != LocalMeaningGraphResolver.schemaVersion
+            || request.wire.lensContext.goalFingerprint != payload.goalFingerprint {
             request.wire.lensContext = try await resolve(LensContextResolveRequest(projectId: payload.projectId,
                 goalFingerprint: payload.goalFingerprint, meaningNodeRefs: payload.goal.meaningNodeRefs,
                 aestheticTermRefs: payload.goal.aestheticTermRefs, styleTermRefs: payload.goal.styleTermRefs,
                 limits: LensContextResolveLimits()))
         }
+        let meaningSelection = try LocalMeaningSelection(request.wire.goal.meaningNodeRefs, graph: graph)
+        request.wire.goal.meaningNodeRefs = meaningSelection.positive + meaningSelection.excluded
         var provenance = SceneStoryGenerationProvenance(
-            lambdaPromptVersion: "litscenes.scene_story_prompt.v0.8-local",
+            lambdaPromptVersion: "litscenes.scene_story_prompt.v0.9-local",
             desktopInstructionVersion: "litscenes.scene_story_slot_instructions.v0.2",
             validatorVersion: "litscenes.scene_story_validator.v0.3-local",
             dialoguePolicyVersion: "litscenes.dialogue_policy.v0.1"
@@ -322,16 +326,25 @@ struct LocalStoryInferenceClient: Sendable {
     // MARK: Frame Forms generation (direct)
 
     func generateFrameForms(_ payload: FrameFormsGenerateRequest) async throws -> FrameFormsGenerateResponse {
+        let sourcePayload = payload
         let mode = payload.selectedForm == nil ? "initial" : "expansion"
         let graph = try await MeaningGraphRuntime.shared.snapshot(graphSelection)
-        var (candidates, warnings) = await Task.detached { LocalFrameFormSelection.candidates(request: payload, mode: mode, graph: graph) }.value
-        guard candidates.count >= 3 else {
-            throw ScreenGraphError.openAI("The selected graph has no usable frame concepts. Review its graph configuration.")
+        let selection = try LocalMeaningSelection(payload.meaningNodeRefs, graph: graph)
+        var payload = payload
+        payload.meaningNodeRefs = selection.positive + selection.excluded
+        var selectionWarnings = selection.warnings
+        if let parent = payload.selectedForm,
+           selection.excludedSlugs.contains((try graph.node(parent.meaningSlug)?.text("slug") ?? parent.meaningSlug).lowercased()) {
+            payload.selectedForm = nil
+            selectionWarnings.append("The saved parent concept is now excluded; alternatives use eligible concepts instead.")
         }
+        let selectionPayload = payload
+        var (candidates, warnings) = await Task.detached { LocalFrameFormSelection.candidates(request: selectionPayload, mode: mode, graph: graph) }.value
+        warnings = uniqueNonEmpty(selectionWarnings + warnings)
         candidates = Array(candidates.prefix(3))
         var selectionRequest = URLRequest(url: URL(string: "litscenes-local://meaning/frame-selection")!)
         selectionRequest.httpMethod = "POST"
-        selectionRequest.httpBody = try JSONCoding.encoder.encode(payload)
+        selectionRequest.httpBody = try JSONCoding.encoder.encode(sourcePayload)
         let selectionJSON = inferenceTraceJSONString(LocalFrameFormSelection.modelInput(request: payload, candidates: candidates, mode: mode, retryCorrection: ""))
         let selectionTrace = await InferenceTraceStore.shared.recordEvent(request: selectionRequest,
             metadata: InferenceTraceRequestMetadata(provider: "local", apiFamily: "meaning_graph", operation: "frame_selection",
@@ -341,6 +354,20 @@ struct LocalStoryInferenceClient: Sendable {
                 responseTextJSON: selectionJSON))
         await InferenceTraceStore.shared.enrich(traceId: selectionTrace, parsedOutputJSON: selectionJSON)
 
+        if candidates.isEmpty {
+            var response = FrameFormsGenerateResponse()
+            response.schemaVersion = "litscenes.frame_forms.v0.1"
+            response.userId = Self.localUserID
+            response.projectId = payload.projectId
+            response.mode = mode
+            response.generatedAt = DateFormats.now()
+            response.graphProvenance = graph.provenance
+            response.traceId = selectionTrace
+            response.warnings = warnings
+            await InferenceTraceStore.shared.enrich(traceId: selectionTrace,
+                parsedOutputJSON: String(decoding: try JSONCoding.encoder.encode(response), as: UTF8.self))
+            return response
+        }
         var priorUsage = (input: 0, output: 0)
         var options: [LensFrameFormOption]
         var call: LocalResponsesCallResult
@@ -377,7 +404,7 @@ struct LocalStoryInferenceClient: Sendable {
     ) async throws -> ([LensFrameFormOption], LocalResponsesCallResult) {
         let call = try await performResponsesCall(
             model: frameFormModel,
-            instructions: LocalStoryInferencePrompts.frameFormsInstructions(expansion: mode == "expansion"),
+            instructions: LocalStoryInferencePrompts.frameFormsInstructions(expansion: mode == "expansion" && payload.selectedForm != nil),
             schemaName: "frame_forms",
             schema: LocalStoryInferenceSchemas.frameForms(candidates: candidates),
             input: LocalFrameFormSelection.modelInput(

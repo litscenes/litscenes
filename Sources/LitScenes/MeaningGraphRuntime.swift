@@ -207,7 +207,14 @@ enum MeaningGraphProjectStore {
     }
 }
 
+enum MeaningGraphComparison: Sendable {
+    case complete
+    case unavailable(String)
+    case noPreviousSelection
+}
+
 struct MeaningGraphChangePreview: Sendable {
+    var comparison: MeaningGraphComparison = .noPreviousSelection
     var counts: [String: Int]
     var changes: [String]
     var provenance: MeaningGraphProvenance
@@ -272,19 +279,33 @@ actor MeaningGraphRuntime {
 
     func preview(_ selection: ProjectMeaningGraphSelection, replacing previous: ProjectMeaningGraphSelection?) throws -> MeaningGraphChangePreview {
         let next = try snapshot(selection)
-        var changes: [String] = []
+        // Candidate reads must succeed independently of previous-source recovery.
+        var afterTables: [String: [String: GraphRecord]] = [:]
+        for table in MeaningGraphCompiler.tableNames {
+            afterTables[table] = Dictionary(uniqueKeysWithValues: try next.records(table).map { ($0.text("id"), $0) })
+        }
+        var preview = MeaningGraphChangePreview(counts: next.provenance.counts, changes: [], provenance: next.provenance)
         if let previous {
-            let old = try snapshot(previous)
-            for table in MeaningGraphCompiler.tableNames {
-                let before = Dictionary(uniqueKeysWithValues: try old.records(table).map { ($0.text("id"), $0) })
-                let after = Dictionary(uniqueKeysWithValues: try next.records(table).map { ($0.text("id"), $0) })
-                let added = Set(after.keys).subtracting(before.keys).count
-                let removed = Set(before.keys).subtracting(after.keys).count
-                let changed = after.filter { before[$0.key] != nil && before[$0.key] != $0.value }.count
-                if added + removed + changed > 0 { changes.append("\(table.capitalized): \(added) added, \(changed) changed, \(removed) disabled or removed") }
+            do {
+                let old = try snapshot(previous)
+                var changes: [String] = []
+                for table in MeaningGraphCompiler.tableNames {
+                    let before = Dictionary(uniqueKeysWithValues: try old.records(table).map { ($0.text("id"), $0) })
+                    let after = afterTables[table] ?? [:]
+                    let added = Set(after.keys).subtracting(before.keys).count
+                    let removed = Set(before.keys).subtracting(after.keys).count
+                    let changed = after.filter { before[$0.key] != nil && before[$0.key] != $0.value }.count
+                    if added + removed + changed > 0 { changes.append("\(table.capitalized): \(added) added, \(changed) changed, \(removed) disabled or removed") }
+                }
+                preview.comparison = .complete
+                preview.changes = changes
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                preview.comparison = .unavailable(error.localizedDescription)
             }
         }
-        return MeaningGraphChangePreview(counts: next.provenance.counts, changes: changes, provenance: next.provenance)
+        return preview
     }
 
     /// Installed sources whose YAML is present on this Mac. Metadata files that

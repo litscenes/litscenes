@@ -217,3 +217,13 @@
 2026-10-26T20:19:18Z retire-scenes-v1: owner authorized committing the completed tab removal; stage only its source, existing assertions and documentation, preserving the unrelated provider/graph migration. No push or merge is authorized.
 
 2026-10-26T20:21:05Z independent-desktop-graph: owner expanded commit authorization to all remaining public Desktop changes, including the graph/provider migration, starter assets, packaging and navigation documentation. Scenes V1 source is committed as 62a91aa; publication, merge and private integration remain separate.
+
+2026-11-02T18:04:51Z public-meaning-p2-repairs: implement approved avoidance, missing-source recovery, and numeric-safety fixes.
+
+2026-11-02T20:46:52Z public-meaning-p2-repairs: completed explicit avoidance, recoverable graph comparison and safe integer validation/decoding; verified build, graph integrity, source hygiene and offline behavior. Changes remain uncommitted.
+
+2026-11-03T17:57:53Z frame-delete-pool: fix imported-photo Frames returning to the source pool after successful soft deletion.
+
+2026-11-03T18:01:34Z frame-delete-pool: completed imported-photo deletion visibility fix; raw deletion markers reach both Scenes pool and add-to-Scene inventory. Build, existing suite, hygiene and delete/reload/restore verification passed.
+
+2026-11-03T18:17:07Z public-meaning-p2-repairs / frame-delete-pool: owner approved committing and pushing the completed fixes on feature/local-meaning after local testing. Final source hygiene and whitespace checks passed; remote branch matches the reviewed base.

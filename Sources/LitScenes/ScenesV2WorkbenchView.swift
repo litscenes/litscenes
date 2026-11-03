@@ -168,7 +168,7 @@ struct ScenesV2WorkbenchView: View {
         // ONE Frame tile — THE ADOPTED PHOTO LAW (AdoptedPhotoFrames.swift).
         let poolInputs = scenesV2PoolInputs(
             displayedFrames: scenesV2PoolSourceFrames(primaryLens?.heroImages(mediaVersion: newestVersionId) ?? []),
-            projectWideFrames: scenesV2PoolSourceFrames(Array(frameLookup.values)),
+            projectWideFrames: Array(frameLookup.values),
             items: scenesV2SourceMaterialItems(library.browsableMediaItems)
         )
         let actions = boxActions(frameLookup: frameLookup, mediaLookup: mediaLookup)

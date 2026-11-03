@@ -334,6 +334,10 @@ struct LibraryRootView: View {
                     .onChange(of: proxy.size) { _, size in rootWorkspaceSize = size }
             }
         )
+        .onChange(of: library.goalReviewRequestID) { _, _ in
+            rootFrameCreatorLaunch = nil
+            selectWorkspaceTab(.goal)
+        }
         .sheet(item: $rootFrameCreatorLaunch) { launch in
             if let lens = library.projectLenses.lenses.first(where: { $0.lensId == launch.lensId }) {
                 FrameCreatorModalHost(

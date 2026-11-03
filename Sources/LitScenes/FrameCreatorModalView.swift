@@ -326,6 +326,8 @@ struct FrameCreatorModal: View {
     /// Render refuses while more stacks are selected than lanes are free.
     var takeLaneFreeSlots: Int = .max
     let formGenerations: [[LensFrameFormOption]]
+    var formWarnings: [String]
+    var onReviewGoal: (() -> Void)?
     /// True while the library's media analysis pass is running (drives the
     /// mini spinners on un-analyzed mood tiles).
     var isAnalyzingMoods: Bool = false
@@ -464,6 +466,8 @@ struct FrameCreatorModal: View {
         renderBlockerHelp: String?,
         takeLaneFreeSlots: Int = .max,
         formGenerations: [[LensFrameFormOption]] = [],
+        formWarnings: [String] = [],
+        onReviewGoal: (() -> Void)? = nil,
         isAnalyzingMoods: Bool = false,
         onAutoAnalyzeMoods: @escaping () -> Void = {},
         onOpenAppSettings: (() -> Void)?,
@@ -495,6 +499,8 @@ struct FrameCreatorModal: View {
         self.renderBlockerHelp = renderBlockerHelp
         self.takeLaneFreeSlots = takeLaneFreeSlots
         self.formGenerations = formGenerations
+        self.formWarnings = formWarnings
+        self.onReviewGoal = onReviewGoal
         self.isAnalyzingMoods = isAnalyzingMoods
         self.onAutoAnalyzeMoods = onAutoAnalyzeMoods
         self.onOpenAppSettings = onOpenAppSettings
@@ -1181,6 +1187,15 @@ struct FrameCreatorModal: View {
                 Spacer()
                 if !formPages.isEmpty {
                     formCycler
+                }
+            }
+            if !formWarnings.isEmpty {
+                ForEach(Array(formWarnings.enumerated()), id: \.offset) { _, warning in
+                    Text(warning).font(.caption).foregroundStyle(.secondary)
+                }
+                if let onReviewGoal {
+                    Button("Review Goal") { onCancel(); onReviewGoal() }
+                        .buttonStyle(.link)
                 }
             }
             if let caption = activeFormCaption {

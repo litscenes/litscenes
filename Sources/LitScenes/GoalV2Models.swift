@@ -426,7 +426,8 @@ private func isGoalEntityNameCharacter(_ character: Character) -> Bool {
 private func uniqueMeaningNodeRefs(_ refs: [ProjectGoalMeaningNodeRef], limit: Int) -> [ProjectGoalMeaningNodeRef] {
     var seen = Set<String>()
     var output: [ProjectGoalMeaningNodeRef] = []
-    for ref in refs {
+    let prioritized = refs.filter { $0.role == .avoidance } + refs.filter { $0.role != .avoidance }
+    for ref in prioritized {
         let normalized = ref.normalized()
         let key = normalized.slug.lowercased()
         guard !normalized.slug.isEmpty, !normalized.name.isEmpty, !seen.contains(key) else { continue }
