@@ -227,3 +227,5 @@
 2026-11-03T18:01:34Z frame-delete-pool: completed imported-photo deletion visibility fix; raw deletion markers reach both Scenes pool and add-to-Scene inventory. Build, existing suite, hygiene and delete/reload/restore verification passed.
 
 2026-11-03T18:17:07Z public-meaning-p2-repairs / frame-delete-pool: owner approved committing and pushing the completed fixes on feature/local-meaning after local testing. Final source hygiene and whitespace checks passed; remote branch matches the reviewed base.
+
+2026-11-03T18:17:42Z public-meaning-p2-repairs / frame-delete-pool: implementation committed as f6ed6daaf9bf9fb183445d0567d78ad0e7c9b1c4; record this revision in the requirements and work logs before the authorized feature-branch push.

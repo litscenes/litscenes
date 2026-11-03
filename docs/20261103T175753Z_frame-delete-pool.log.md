@@ -12,3 +12,5 @@
 Validation: swift build --build-tests passed; 1,368 existing tests passed together and the known shared-temp audio cancellation test passed separately (1,369 total). Source hygiene and git diff --check passed. A disposable-project probe verified immediate disappearance, persistence after reload, unchanged original bytes, retained copied pixels, identity-preserving restoration, legacy live-adoption deduplication and planned-frame filtering. The old delete callback was also exercised in a disposable native preview, confirming the user's clarification that deletion itself succeeds.
 
 Prior public-meaning fixes remain intact. No paid provider calls, schema migrations, commits, pushes or merges.
+
+2026-11-03T18:17:42Z Owner authorized commit and push after local testing. Implementation committed as f6ed6daaf9bf9fb183445d0567d78ad0e7c9b1c4 on feature/local-meaning.
