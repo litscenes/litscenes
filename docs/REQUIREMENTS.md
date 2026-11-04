@@ -22,6 +22,8 @@ LitScenes Desktop is the public, canonical macOS application for turning persona
 - Full graph pack: 1,915 concepts, 1,775 relationships, 3,046 evidence records, 708 aesthetics, 5,958 terms, 10,360 assignments. Raw corpora, private curation history and purchased reference composites remain excluded; the separately inventoried generated starter previews are public assets. See [formats and operation](meaning-graph.md).
 - The core engine is recorded in `b7dd3ad`; the curated edition and independent-provider changes are included in the local release branch. No release asset or app release is claimed, and the previous hosted service remains an operational cutover concern.
 
+- The README shows the bundled graph with figures generated from the compiled cache by `scripts/render_meaning_graph_figures.py` (standard library only) into `docs/media/`: a whole-graph chord overview and one concept's full neighbourhood, each in light and dark. Regenerate them whenever the bundled pack changes so the README never describes a graph the app does not ship.
+
 ## Independent provider setup and starter assets
 
 - New work always captures personal-provider funding. API keys is the default Settings tab; retain OpenAI Save & Test, FAL, optional ElevenLabs, and additional providers/endpoints in Advanced providers.

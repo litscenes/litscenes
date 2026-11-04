@@ -207,3 +207,5 @@
 2026-11-03T17:57:53Z The pool drops disabled adoption rows before computing photo substitution, so a deleted Frame returns as its original photo and opening the tile restores it. Preserve the deletion marker in inventory projection without deleting original media.
 
 2026-11-03T18:01:34Z Deleting a photo Frame suppresses its pool fallback while retaining original Media. Explicit re-adoption reuses the existing identity; live legacy adoptions still receive one tile.
+
+2026-11-04T01:26:53Z The README should show the graph rather than describe it, so the figures are generated from the compiled SQLite cache, not hand-drawn: they stay truthful when the pack changes. Four relationship families colour the chords; three hues validate for every colour-vision pair and the fourth (contrasts/transforms) is dashed ink, so no relationship relies on hue alone. A CI badge was removed rather than shipped red: the hygiene job needs ripgrep on the ubuntu runner and the build job is also failing, which is CI work, not README work.

@@ -83,4 +83,4 @@ Lookup resolves exact IDs/slugs before unambiguous aliases. Search weights name,
 
 Context, frame selection, provider calls and validation outcomes use the canonical trace store, with project/run/group/parent IDs and graph provenance. Story and frame artifacts preserve the exact graph identity. Old documents remain readable without inventing historical graph versions. Source and provider-bound prompts, structured outputs and failures remain inspectable in Traces.
 
-The implementation is uncommitted pending explicit publication authorization. Graph release assets must be published before **Download official update** can install this version. Bundled use is fully offline. Cloud service retirement is an operational cutover after Desktop release; it does not happen merely by editing this repository.
+Graph release assets must be published before **Download official update** can install this version. Bundled use is fully offline. Cloud service retirement is an operational cutover after Desktop release; it does not happen merely by editing this repository.
